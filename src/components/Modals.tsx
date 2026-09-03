@@ -249,6 +249,8 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
 function NodeRow({
   node,
   busy,
+  localName,
+  onLocalName,
   onRename,
   onToggle,
   onPair,
@@ -256,6 +258,8 @@ function NodeRow({
 }: {
   node: NodeStatus;
   busy: boolean;
+  localName: string;
+  onLocalName: (name: string) => void;
   onRename: (name: string) => void;
   onToggle: () => void;
   onPair: () => void;
@@ -274,7 +278,13 @@ function NodeRow({
         {local ? "this machine" : node.enabled ? (node.online ? "online" : "offline") : "off"}
       </span>
       {local ? (
-        <span className="nodename">{node.name}</span>
+        <input
+          className="nodename"
+          value={localName}
+          placeholder="the host name"
+          aria-label="Name of this machine"
+          onChange={(e) => onLocalName(e.target.value)}
+        />
       ) : (
         <input
           className="nodename"
@@ -326,7 +336,17 @@ function NodeRow({
   );
 }
 
-function NodesSection({ nodes, onNodesChanged }: { nodes: NodeStatus[]; onNodesChanged: () => void }) {
+function NodesSection({
+  nodes,
+  onNodesChanged,
+  localName,
+  onLocalName,
+}: {
+  nodes: NodeStatus[];
+  onNodesChanged: () => void;
+  localName: string;
+  onLocalName: (name: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [host, setHost] = useState("");
@@ -358,7 +378,8 @@ function NodesSection({ nodes, onNodesChanged }: { nodes: NodeStatus[]; onNodesC
     <div className="section">
       <h5>Nodes</h5>
       <div className="hint">
-        kari connects over an SSH port forward and reads the node's token once. The node must run <code>kari-node serve</code>.
+        kari connects over an SSH port forward and reads the node's token once. The node must run <code>kari-node serve</code>. A name is how the other kari
+        instances see the machine. Empty means the host name.
       </div>
       <div className="nodelist">
         {nodes.map((n) => (
@@ -366,6 +387,8 @@ function NodesSection({ nodes, onNodesChanged }: { nodes: NodeStatus[]; onNodesC
             key={n.id}
             node={n}
             busy={busy}
+            localName={localName}
+            onLocalName={onLocalName}
             onRename={(newName) => change(() => api.updateNode(n.id, { name: newName }))}
             onToggle={() => change(() => api.updateNode(n.id, { enabled: !n.enabled }))}
             onPair={() => change(() => api.pairNode(n.id))}
@@ -442,11 +465,6 @@ export function SettingsModal({
         </>
       }
     >
-      <div className="field">
-        <label>Node name</label>
-        <input value={s.node_name ?? ""} onChange={(e) => setS({ ...s, node_name: e.target.value })} />
-        <div className="hint">How other kari instances see this machine. Empty means the host name.</div>
-      </div>
       <div className="grid2">
         <div className="field">
           <label>History window (days)</label>
@@ -493,7 +511,7 @@ export function SettingsModal({
           </select>
         </div>
       </div>
-      <NodesSection nodes={nodes} onNodesChanged={onNodesChanged} />
+      <NodesSection nodes={nodes} onNodesChanged={onNodesChanged} localName={s.node_name ?? ""} onLocalName={(name) => setS({ ...s, node_name: name })} />
       <div className="section">
         <h5>Live hooks</h5>
         <div className="hint">
