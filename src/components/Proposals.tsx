@@ -11,12 +11,15 @@ const TRIGGER_LABEL: Record<string, string> = {
 
 interface Props {
   proposal: Proposal;
+  nodeId: string;
+  /** Shown in the header when the board has more than one node. */
+  nodeName?: string;
   onClose: () => void;
   onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
   onSelectCard: (cardId: string) => void;
 }
 
-export function ProposalPanel({ proposal: p, onClose, onAction, onSelectCard }: Props) {
+export function ProposalPanel({ proposal: p, nodeId, nodeName, onClose, onAction, onSelectCard }: Props) {
   const runnable = p.items.filter((i) => !i.job_id);
   const [picked, setPicked] = useState<string[]>(() => runnable.map((i) => i.card_id));
   const accepted = p.state === "accepted";
@@ -32,6 +35,7 @@ export function ProposalPanel({ proposal: p, onClose, onAction, onSelectCard }: 
       <header>
         <h3>
           {accepted ? (p.auto ? "Autopilot started these" : "Started these") : TRIGGER_LABEL[p.trigger] ?? "Plan"}
+          {nodeName ? <span className="on-node"> on {nodeName}</span> : null}
         </h3>
         <div className="spacer" />
         <button className="btn ghost sm" onClick={onClose} aria-label="Close">
@@ -79,7 +83,7 @@ export function ProposalPanel({ proposal: p, onClose, onAction, onSelectCard }: 
             <button
               className="btn danger sm"
               disabled={started.length === 0}
-              onClick={() => onAction(() => api.stopProposal(p.id), "Stopped the started jobs")}
+              onClick={() => onAction(() => api.stopProposal(nodeId, p.id), "Stopped the started jobs")}
             >
               ■ Stop these jobs
             </button>
@@ -90,14 +94,14 @@ export function ProposalPanel({ proposal: p, onClose, onAction, onSelectCard }: 
           </>
         ) : (
           <>
-            <button className="btn primary sm" disabled={picked.length === 0} onClick={() => onAction(() => api.acceptProposal(p.id, picked), "Started")}>
+            <button className="btn primary sm" disabled={picked.length === 0} onClick={() => onAction(() => api.acceptProposal(nodeId, p.id, picked), "Started")}>
               ▶ Start {picked.length === p.items.length ? "all" : `${picked.length}`}
             </button>
-            <button className="btn sm" onClick={() => onAction(() => api.snoozeProposal(p.id, 60), "Snoozed for an hour")}>
+            <button className="btn sm" onClick={() => onAction(() => api.snoozeProposal(nodeId, p.id, 60), "Snoozed for an hour")}>
               Snooze 1 hour
             </button>
             <div className="spacer" />
-            <button className="btn ghost sm" onClick={() => onAction(() => api.dismissProposal(p.id), "Dismissed")}>
+            <button className="btn ghost sm" onClick={() => onAction(() => api.dismissProposal(nodeId, p.id), "Dismissed")}>
               Dismiss
             </button>
           </>

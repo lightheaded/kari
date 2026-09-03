@@ -60,6 +60,9 @@ jobs:
                 'xattr -dr com.apple.quarantine /Applications/kari.app',
                 '```',
                 '',
+                'A Linux host can run the headless node from `kari-node-<tag>-x86_64-unknown-linux-gnu.tar.gz`.',
+                'Start it with `kari-node serve` and add it under Settings, Nodes in the app.',
+                '',
                 'See the README for requirements and setup.',
               ].join('\n'),
               draft: true,
@@ -101,8 +104,36 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }}
 
+  node-binary:
+    # The headless node for a Linux host. The desktop app connects to it over
+    # an SSH port forward. Attached to the release as a tarball.
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: release-node
+
+      - name: Build the node
+        run: cargo build --release -p kari-cli
+
+      - name: Pack and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name="kari-node-${{ github.ref_name }}-x86_64-unknown-linux-gnu"
+          mkdir -p "$name"
+          cp target/release/kari-node LICENSE README.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+          gh release upload "${{ github.ref_name }}" "$name.tar.gz" --clobber
+
   publish-release:
-    needs: [create-release, build]
+    needs: [create-release, build, node-binary]
     runs-on: ubuntu-latest
     steps:
       - name: Publish the release

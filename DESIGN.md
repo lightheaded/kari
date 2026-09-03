@@ -41,9 +41,10 @@ Goals:
 
 Non-goals for version 1:
 
-- Multi-machine merge of boards.
 - Automatic starts without confirmation.
 - Replacing herdr or the Claude Code agent view.
+
+Multi-machine work arrived in version 2. See "Remote nodes".
 
 ## 4. Platform choice: Tauri 2 with a Rust core
 
@@ -220,22 +221,134 @@ The terminal (iTerm2, Terminal or Ghostty, set in Settings) is driven with `osas
 ## 12. Architecture
 
 ```
-crates/kari-core   plain Rust: readers, parser, inference, quota, planner, herdr client, launcher, sqlite store
-src-tauri          Tauri app: commands, events to the UI, tray, notifications, hook receiver (axum on 127.0.0.1)
-src                React UI: board, card drawer, quota bar, proposals, settings
+crates/kari-core   plain Rust: readers, parser, inference, quota, planner, herdr client, launcher,
+                   sqlite store, the HTTP API (axum), the API client, the hub, the SSH tunnel
+crates/kari-cli    `kari-node`: the same engine without a window, plus the installers
+src-tauri          Tauri app: commands over the hub, events to the UI, tray, notifications
+src                React UI: board, card drawer, quota bars, proposals, settings, nodes
 scripts            statusline wrapper, version bump
 ```
 
-Flow: watchers and pollers in `kari-core` emit domain events on a channel. A reducer updates the store and computes derived state. The Tauri layer forwards a `board_changed` event to the UI, which re-fetches the board through a command. The UI never reads files.
+Flow: watchers and pollers in `kari-core` emit domain events on a channel. A reducer updates the store and computes derived state. The hub turns an event of the local engine, or of a remote node, into a `board_changed` event for the UI, which re-fetches the merged board through one command. The UI never reads files and never opens a socket.
 
 ## 13. Milestones
 
 1. Board from local data: registry, transcripts, herdr mapping, configurable columns, backlog cards, manual moves, jump in, quota bar from the status line. Read only, no Claude calls.
 2. Hooks receiver, decision and approval detection, Haiku summaries, notifications, tray. Built 2026-09-02. The relay is a `command` hook, not an `http` hook, so a closed kari never shows an error in a session.
 3. Estimates and calibration, proposals, background runs, job tracking, kill switch. Built 2026-09-03.
-4. Automatic starts on a schedule, herdr as a launch target. Built 2026-09-03. Multi-machine merge is still open.
+4. Automatic starts on a schedule, herdr as a launch target. Built 2026-09-03.
+5. Remote nodes: the headless node, the hub, one board over many hosts. Built 2026-09-03. See "Remote nodes".
 
-## 14. Risks
+## 14. Remote nodes
+
+A developer works on more than one machine: a laptop and a server that runs
+unattended jobs. Version 2 shows every machine on one board.
+
+### Parts
+
+| Part | Runs where | Does |
+|---|---|---|
+| Node daemon `kari-node serve` | every host, including a server without a screen | The same `kari-core` engine, without a window. Serves the board and every action over HTTP on `127.0.0.1`. |
+| Hub | inside the desktop app | Holds the local engine and one client per remote node. Merges the boards. Routes each action to the node that owns the card. |
+| Desktop app | the machine the user sits at | The board, the drawer, the tray, the notifications. |
+
+The engine did not change. The Tauri layer wraps each engine method in one
+command, and the node wraps the same methods in one HTTP route.
+
+### Transport
+
+The node binds loopback only. The desktop app opens an SSH port forward to it:
+
+```
+ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 \
+    -L 127.0.0.1:<free local port>:127.0.0.1:47311 <host>
+```
+
+The host is an alias from `~/.ssh/config`, so keys, user names and jump hosts
+stay in one place. A node needs no open port, no certificate and no new secret.
+`kari-node serve` refuses an address that is not loopback unless the flag
+`--allow-remote` names one.
+
+A client that cannot open an SSH forward, such as a phone app, can reach a node
+over a private network instead. The node then needs `--allow-remote` and a bind
+that keeps loopback, for example `0.0.0.0`, because the hook relay posts to
+127.0.0.1. The token is the only guard on that path, so the private network is
+what carries the trust.
+
+Pairing is one SSH call: the app reads `~/.config/kari/hook-token` from the
+node and keeps it in the macOS keychain, one item per node under the service
+`kari-node`. SSH is the authentication. The token then keeps other local
+processes on the node out, the same job it does on the desktop.
+
+The hub restarts a dead forward with a backoff from 1 s to 60 s. A node that
+does not answer shows as offline, and its last board stays on the screen,
+dimmed, with the time it was last seen.
+
+### API v1
+
+`GET /kari/health` answers without a token: node id, node name, platform,
+version and `api_version`. The hub refuses a node with a different API version
+and says so in Settings. Every other route needs the token in the
+`x-kari-token` header:
+
+| Route | Engine method |
+|---|---|
+| `GET /kari/v1/board` | `board()` |
+| `GET /kari/v1/events` | server-sent events: `board_changed`, `notice` |
+| `POST /kari/v1/cards` | `add_task()` |
+| `PATCH`, `DELETE /kari/v1/cards/{id}` | `patch_card()`, `delete_card()` |
+| `POST /kari/v1/cards/{id}/move`, `/start`, `/stop`, `/summarize`, `/jump` | the card actions |
+| `GET /kari/v1/cards/{id}/jobs` | `job_log()` |
+| `GET`, `PUT /kari/v1/columns`, `/settings` | columns and settings |
+| `/kari/v1/proposal`, `/proposals/{id}/accept`, `/snooze`, `/dismiss`, `/stop` | the proposal methods |
+| `GET /kari/v1/quota`, `/calibration`, `/projects` | quota, calibration, projects |
+| `POST /kari/v1/stop-all` | `stop_all()` |
+
+`/kari/hook` keeps taking hook payloads, and the old `/kari/board` stays for
+scripts.
+
+### One board
+
+The board the UI receives holds the columns of the local node, a status per
+node, and every card with its node id and node name. Rules:
+
+- A card is `(node id, card id)`. Every action routes by node.
+- Each card shows a node badge. A chip row filters the board to one node.
+- Columns come from the desktop. The hub pushes them to each node on connect
+  and on every change. A remote card that carries an unknown column falls back
+  to the column that accepts its state.
+- A task belongs to the host that holds its project directory. Cards do not
+  move between nodes.
+
+### Jump in
+
+The node works out what to run and does the part that lives there, such as
+focusing a herdr pane. The desktop app then opens its terminal and runs the
+plan over SSH, for example
+`ssh -t <host> -- sh -lc 'cd <project> && claude --resume <session>'`.
+
+### Quota per node
+
+Each node has its own Claude Code login, so each keeps its own windows,
+calibration, backlog and proposals. The header shows one quota bar per node.
+The plan panel shows every open proposal with its node name. The tray kill
+switch stops kari-started jobs on every node.
+
+The gain: a node with unused quota can work through its backlog while the
+machine the user sits at is busy.
+
+### Deployment
+
+`kari-node serve` reads the same files as the app: the session registry, the
+transcripts, the job state, the herdr socket, the status line samples. On a
+host with many sessions, install both quota sources: the status line wrapper
+with `kari-node statusline install`, and the usage endpoint with
+`--usage-endpoint`. `kari-node hooks install` registers the hook relay, and
+`--install-hooks` does it at every start, which suits a service that a
+configuration manager rebuilds. Deployment of the node is managed outside this
+repository.
+
+## 15. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -244,8 +357,9 @@ Flow: watchers and pollers in `kari-core` emit domain events on a channel. A red
 | `bypassPermissions` chosen for unattended runs | Worktree isolation by background agents, explicit `auto_run` per card, kill switch, a run log per job |
 | Percent-to-token calibration is noisy | Confidence bands, conservative headroom, the planner never fills past 85 percent of a window |
 | Haiku summaries spend quota | Hard throttle, heuristics fallback, off switch |
+| A remote node exposes a board and a way to start jobs | Loopback bind, an SSH forward as the only transport, a token on every route, a refusal to bind a public address without a flag |
 
-## 15. Decisions
+## 16. Decisions
 
 Made on 2026-09-02:
 
@@ -253,7 +367,15 @@ Made on 2026-09-02:
 - Stack: Tauri 2 with a Rust core, React and TypeScript frontend.
 - Runner: Claude Code background agents (`claude --bg`).
 - Default permission mode for unattended runs: `auto` since 2026-09-03 (before: `bypassPermissions`), overridable in Settings and per card.
-- Scope: this Mac only. Sync later.
+- Scope: this Mac only. Sync later. Since 2026-09-03: remote nodes over SSH, see "Remote nodes".
 - Jump in: herdr pane when present, else iTerm2.
 - Scheduler: propose, the user confirms.
 - Summaries: throttled Haiku.
+
+Made on 2026-09-03:
+
+- Remote hosts join as nodes that run `kari-node serve`. The desktop app is the hub.
+- Transport: an SSH port forward to a loopback port. No new open port, no TLS, no new secret.
+- The node token lives in the macOS keychain, one item per node.
+- Node names are set by the user. The default is the SSH host, else the host name.
+- Quota, planner and summaries stay per node, because each node has its own login.

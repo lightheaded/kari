@@ -23,11 +23,13 @@ function Meter({ label, w }: { label: string; w: QuotaWindow | null }) {
 interface Props {
   quota: QuotaSample | null;
   calibration?: Calibration | null;
+  /** Node name. Shown before the meters when the board has more than one node. */
+  label?: string;
   onHelp: () => void;
   onFill?: () => void;
 }
 
-export function QuotaBar({ quota, calibration, onHelp, onFill }: Props) {
+export function QuotaBar({ quota, calibration, label, onHelp, onFill }: Props) {
   if (!quota) {
     return (
       <div className="quota">
@@ -46,6 +48,7 @@ export function QuotaBar({ quota, calibration, onHelp, onFill }: Props) {
     : "";
   return (
     <div className="quota" title={`sampled ${relTime(quota.at)} ago via ${quota.source}${cal ? `\n${cal}` : ""}`}>
+      {label && <span className="qlabel">{label}</span>}
       <Meter label="5-hour" w={quota.five_hour} />
       <Meter label="7-day" w={quota.seven_day} />
       {stale && (

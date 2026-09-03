@@ -1,4 +1,4 @@
-import type { CardView, DerivedState, TokenTotals } from "./types";
+import type { CardView, DerivedState, NodeStatus, TokenTotals } from "./types";
 
 export function relTime(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return "—";
@@ -97,4 +97,10 @@ export function sortCards(a: CardView, b: CardView): number {
 
 export function shortId(id: string | null | undefined): string {
   return id ? id.slice(0, 8) : "";
+}
+
+/** Class for the status dot of a node: accent when online, muted when offline, hollow when off. */
+export function nodeDot(n: NodeStatus): string {
+  if (!n.enabled) return "dot disabled";
+  return n.online ? "dot online" : "dot offline";
 }

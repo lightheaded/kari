@@ -1146,16 +1146,15 @@ impl Engine {
     }
 
     /// Open the session where it lives. Returns a short description of what happened.
-    pub fn jump_in(&self, card_id: &str) -> anyhow::Result<String> {
+    /// Work out what "Jump in" must do for a card, and do the part that lives on
+    /// this node: focus or open a herdr pane. The returned command, when not
+    /// empty, must run in a terminal where the user sits.
+    pub fn jump_plan(&self, card_id: &str) -> anyhow::Result<JumpPlan> {
         let settings = self.settings();
         let board = self.board();
         let Some(cv) = board.cards.iter().find(|c| c.card.id == card_id) else {
             anyhow::bail!("card not found")
         };
-        if let Some(h) = &cv.herdr {
-            launcher::focus_herdr(h, &settings.terminal_app)?;
-            return Ok(format!("focused herdr pane {}", h.pane_id));
-        }
         let cwd = cv
             .card
             .project_cwd
@@ -1163,13 +1162,22 @@ impl Engine {
             .or_else(|| cv.session.as_ref().and_then(|s| s.cwd.clone()))
             .or_else(|| cv.live.as_ref().map(|l| l.cwd.clone()))
             .unwrap_or_else(|| paths::home().to_string_lossy().into_owned());
+        if let Some(h) = &cv.herdr {
+            herdr::focus(h)?;
+            return Ok(JumpPlan {
+                cwd,
+                command: String::new(),
+                herdr_pane: Some(h.pane_id.clone()),
+                message: format!("focused herdr pane {}", h.pane_id),
+            });
+        }
         if let Some(job) = cv.bg_job.as_ref().and_then(|j| j.id.clone()) {
-            launcher::open_in_terminal(
-                &settings.terminal_app,
-                &cwd,
-                &launcher::attach_command(&job),
-            )?;
-            return Ok(format!("attached to background job {job}"));
+            return Ok(JumpPlan {
+                cwd,
+                command: launcher::attach_command(&job),
+                herdr_pane: None,
+                message: format!("attached to background job {job}"),
+            });
         }
         // herdr is the better home for a new pane when it runs.
         let herdr_ok = settings.prefer_herdr && self.snap.read().unwrap().herdr_ok;
@@ -1187,30 +1195,101 @@ impl Engine {
                 Ok(p) => {
                     self.scan_herdr();
                     self.emit_changed();
-                    return Ok(format!("opened a herdr pane {}", p.pane_id));
+                    return Ok(JumpPlan {
+                        cwd,
+                        command: String::new(),
+                        herdr_pane: Some(p.pane_id.clone()),
+                        message: format!("opened a herdr pane {}", p.pane_id),
+                    });
                 }
                 Err(e) => warn!("herdr launch: {e}"),
             }
         }
         if let Some(sid) = &cv.card.session_id {
-            launcher::open_in_terminal(
-                &settings.terminal_app,
-                &cwd,
-                &launcher::resume_command(sid, model.as_deref()),
-            )?;
-            return Ok(format!(
-                "opened {} in {}",
-                short(sid),
-                settings.terminal_app
-            ));
+            return Ok(JumpPlan {
+                cwd,
+                command: launcher::resume_command(sid, model.as_deref()),
+                herdr_pane: None,
+                message: format!("opened {}", short(sid)),
+            });
         }
         // A task without a session: open a fresh Claude Code in the project.
-        launcher::open_in_terminal(
-            &settings.terminal_app,
-            &cwd,
-            &launcher::new_command(model.as_deref()),
-        )?;
-        Ok(format!("opened a new session in {cwd}"))
+        Ok(JumpPlan {
+            cwd: cwd.clone(),
+            command: launcher::new_command(model.as_deref()),
+            herdr_pane: None,
+            message: format!("opened a new session in {cwd}"),
+        })
+    }
+
+    /// Jump in on this machine: run the plan in the configured terminal.
+    pub fn jump_in(&self, card_id: &str) -> anyhow::Result<String> {
+        let settings = self.settings();
+        let plan = self.jump_plan(card_id)?;
+        if plan.herdr_pane.is_some() {
+            launcher::raise_terminal(&settings.terminal_app);
+            return Ok(plan.message);
+        }
+        launcher::open_in_terminal(&settings.terminal_app, &plan.cwd, &plan.command)?;
+        Ok(format!("{} in {}", plan.message, settings.terminal_app))
+    }
+
+    // ---------------------------------------------------------------- node identity
+
+    /// A stable id for this node, made on first use.
+    pub fn node_id(&self) -> String {
+        let store = self.store.lock().unwrap();
+        if let Ok(Some(id)) = store.kv_get("node_id") {
+            return id;
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let _ = store.kv_set("node_id", &id);
+        id
+    }
+
+    /// The name other kari instances show for this node.
+    pub fn node_name(&self) -> String {
+        let s = self.settings();
+        if !s.node_name.trim().is_empty() {
+            return s.node_name.trim().to_string();
+        }
+        paths::hostname()
+    }
+
+    pub fn identity(&self) -> NodeIdentity {
+        NodeIdentity {
+            ok: true,
+            app: "kari".into(),
+            version: crate::version().into(),
+            api_version: API_VERSION,
+            node_id: self.node_id(),
+            node_name: self.node_name(),
+            platform: std::env::consts::OS.into(),
+        }
+    }
+
+    // ---------------------------------------------------------------- remote nodes (hub side)
+
+    pub fn list_nodes(&self) -> Vec<NodeRecord> {
+        self.store.lock().unwrap().list_nodes().unwrap_or_default()
+    }
+
+    pub fn save_node(&self, n: &NodeRecord) -> anyhow::Result<()> {
+        self.store.lock().unwrap().upsert_node(n)
+    }
+
+    pub fn delete_node(&self, id: &str) -> anyhow::Result<()> {
+        self.store.lock().unwrap().delete_node(id)
+    }
+
+    pub fn node_cache(&self, id: &str) -> Option<(BoardView, DateTime<Utc>)> {
+        self.store.lock().unwrap().node_cache(id).ok().flatten()
+    }
+
+    pub fn save_node_cache(&self, id: &str, board: &BoardView) {
+        if let Err(e) = self.store.lock().unwrap().save_node_cache(id, board) {
+            warn!("node cache: {e}");
+        }
     }
 
     /// Start a card as a background job. Task cards start fresh; session cards resume.

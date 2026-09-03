@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-kari (Estonian: herd) is a macOS tray app that shows every Claude Code session as a card on a Kanban board. The board updates itself from local Claude Code state. Backlog tasks can start as background sessions when quota is left over.
+kari (Estonian: herd) is a macOS tray app that shows every Claude Code session as a card on a Kanban board. The board updates itself from local Claude Code state. Backlog tasks can start as background sessions when quota is left over. More than one machine can share the board: a Linux or macOS host runs the headless node, and the app reaches it over SSH.
 
 kari works with the tools you already use. It reads what Claude Code writes to disk and never writes there. When [herdr](https://github.com/herdrdev/herdr) runs, kari maps sessions to herdr panes and can open new sessions in them.
 
@@ -41,13 +41,13 @@ xattr -dr com.apple.quarantine /Applications/kari.app
 - Model per card: a task can name the model it runs with, for example Fable for a deep review and Sonnet for operational work.
 - Run log and kill switch: every background job kari starts writes a state history on its card. The tray stops all jobs after a confirm click.
 - Autopilot (off by default): a weekly-reset plan can start by itself, with a notice and a Stop button.
-
-Not yet built: multi-machine merge.
+- Remote nodes: another host runs `kari-node serve` and its cards join the same board, with their own quota meters. See "Remote nodes".
 
 ## Requirements
 
 - macOS 12 or later, Claude Code 2.1 or later, `jq`.
 - Optional: herdr 0.8 or later for pane mapping.
+- For a remote node: an SSH login on that host, plus `kari-node` and Claude Code there.
 - To build from source: Rust toolchain (`rustup`), Bun.
 
 ## Build from source
@@ -125,15 +125,36 @@ Autopilot is off by default. When it is on, a plan from the weekly-reset trigger
 
 When herdr runs and "Open new sessions in a herdr pane" is on, Jump in creates a herdr tab in the project directory and starts Claude Code in its pane, with `--resume` for a session card. If herdr refuses, kari falls back to the terminal. An existing pane is always focused instead.
 
+## Remote nodes
+
+A second machine can join the board. The app stays the only window; the other host runs the headless node.
+
+On the other host:
+
+```
+kari-node serve                 # the engine and the API on 127.0.0.1:47311
+kari-node hooks install         # live session events (optional)
+kari-node statusline install    # quota meters (optional)
+```
+
+In the app, open Settings, Nodes, and add the host. Give the SSH host, which is an alias from `~/.ssh/config`. kari opens an SSH port forward to the node's loopback port and reads the node's token once over the same connection. The token goes to the macOS keychain, and the forward comes back by itself after a network break.
+
+What this needs on the other host: an SSH login and a Claude Code that is logged in. It needs no open port, no certificate and no new secret. The node refuses to bind an address that is not loopback unless you pass `--allow-remote`.
+
+What you see: every card carries a node badge, and a chip row filters the board to one node. Each node keeps its own quota windows, backlog and plans, because each has its own Claude Code login. Jump in on a remote card opens your terminal and runs `ssh -t <host> ... claude --resume <session>`. The tray kill switch stops jobs on every node.
+
+Deployment of the node is managed outside this repository. `flake.nix` builds it for a NixOS host, and each release carries a Linux tarball.
+
 ## Data
 
-- Database: `~/.config/kari/kari.db` (SQLite).
+- Database: `~/.config/kari/kari.db` (SQLite). It also holds the remote nodes. Node tokens live in the keychain, never in the database.
 - kari reads `~/.claude/sessions`, `~/.claude/projects`, `~/.claude/jobs` and the herdr socket. It never writes to those directories. The hook and status line installers edit `~/.claude/settings.json` only when you ask, and keep a backup.
 
 ## Layout
 
 ```
-crates/kari-core   readers, parser, inference, store, launcher
+crates/kari-core   readers, parser, inference, store, launcher, HTTP API, hub, SSH tunnel
+crates/kari-cli    kari-node: the engine without a window
 src-tauri          Tauri shell: commands, events, tray, notifications
 src                React UI
 scripts            status line installer, version bump, demo board, screenshots
@@ -150,9 +171,11 @@ cargo run -p kari-core --example estimates    # calibration and per-card estimat
 cargo run -p kari-core --example plan -- /tmp # build a plan from temporary cards
 cargo run -p kari-core --example jobrun -- /tmp   # start one background job and follow it
 cargo run -p kari-core --example herdr_open -- /tmp   # open and close a herdr pane
+cargo run -p kari-core --example node_api     # serve the local engine and call it as a node
+cargo run -p kari-core --example hub_node     # add a real node to the hub, read both boards, remove it
 ```
 
-The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project.
+The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project. `hub_node` starts a node with its own home directory and removes it again; it needs `cargo build -p kari-cli` first.
 
 `bun run demo` opens the UI in a browser with the dummy board from `docs/demo`. No Rust toolchain and no Claude Code state are needed for that.
 

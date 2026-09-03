@@ -101,6 +101,38 @@
       "hidden": false
     }
   ],
+  "nodes": [
+    {
+      "id": "local",
+      "name": "studio",
+      "kind": "local",
+      "online": true,
+      "enabled": true,
+      "paired": true,
+      "ssh_host": null,
+      "remote_port": 0,
+      "version": "0.1.0",
+      "api_version": 1,
+      "remote_node_id": null,
+      "last_seen": "2026-09-03T10:00:00.000Z",
+      "error": null
+    },
+    {
+      "id": "lab",
+      "name": "lab",
+      "kind": "remote",
+      "online": true,
+      "enabled": true,
+      "paired": true,
+      "ssh_host": "lab",
+      "remote_port": 47311,
+      "version": "0.1.0",
+      "api_version": 1,
+      "remote_node_id": "node_lab",
+      "last_seen": "2026-09-03T09:59:00.000Z",
+      "error": null
+    }
+  ],
   "cards": [
     {
       "card": {
@@ -149,7 +181,9 @@
         "sessions": 9
       },
       "last_activity_at": "2026-08-29T10:00:00.000Z",
-      "reason": "task without a session"
+      "reason": "task without a session",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -198,7 +232,9 @@
         "sessions": 31
       },
       "last_activity_at": "2026-08-31T10:00:00.000Z",
-      "reason": "task without a session"
+      "reason": "task without a session",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -247,7 +283,9 @@
         "sessions": 6
       },
       "last_activity_at": "2026-09-02T10:00:00.000Z",
-      "reason": "may run unattended, prompt set"
+      "reason": "may run unattended, prompt set",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -296,7 +334,9 @@
         "sessions": 9
       },
       "last_activity_at": "2026-09-02T14:00:00.000Z",
-      "reason": "may run unattended, prompt set"
+      "reason": "may run unattended, prompt set",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -345,7 +385,9 @@
         "sessions": 6
       },
       "last_activity_at": "2026-09-02T04:00:00.000Z",
-      "reason": "may run unattended, prompt set"
+      "reason": "may run unattended, prompt set",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -460,7 +502,9 @@
       },
       "estimate": null,
       "last_activity_at": "2026-09-03T09:59:00.000Z",
-      "reason": "registry status busy"
+      "reason": "registry status busy",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -520,7 +564,9 @@
         "sessions": 4
       },
       "last_activity_at": "2026-09-03T09:57:00.000Z",
-      "reason": "background job working"
+      "reason": "background job working",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -624,13 +670,16 @@
       },
       "estimate": null,
       "last_activity_at": "2026-09-03T09:54:00.000Z",
-      "reason": "process idle, turn finished"
+      "reason": "process idle, turn finished",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
         "id": "sess_auth",
         "kind": "session",
         "title": null,
+        "session_id": "c3d5e7f9-2a4b-4c6d-8e0f-1a3b5c7d9e1f",
         "project_cwd": null,
         "priority": 0,
         "auto_run": false,
@@ -656,7 +705,8 @@
       "locked": false,
       "project_name": "atlas-api",
       "session": {
-        "transcript_path": "/Users/dev/.claude/projects/-Users-dev-src-atlas-api/undefined.jsonl",
+        "session_id": "c3d5e7f9-2a4b-4c6d-8e0f-1a3b5c7d9e1f",
+        "transcript_path": "/Users/dev/.claude/projects/-Users-dev-src-atlas-api/c3d5e7f9-2a4b-4c6d-8e0f-1a3b5c7d9e1f.jsonl",
         "cwd": "/Users/dev/src/atlas-api",
         "ai_title": "Migrate the auth middleware to the new token format",
         "custom_title": null,
@@ -704,6 +754,7 @@
       },
       "live": {
         "pid": 47355,
+        "session_id": "c3d5e7f9-2a4b-4c6d-8e0f-1a3b5c7d9e1f",
         "cwd": "/Users/dev/src/atlas-api",
         "name": null,
         "name_source": null,
@@ -729,7 +780,9 @@
       },
       "estimate": null,
       "last_activity_at": "2026-09-03T09:48:00.000Z",
-      "reason": "AskUserQuestion pending"
+      "reason": "AskUserQuestion pending",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -822,7 +875,9 @@
       },
       "estimate": null,
       "last_activity_at": "2026-09-03T09:58:00.000Z",
-      "reason": "permission prompt pending"
+      "reason": "permission prompt pending",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -907,7 +962,9 @@
       "hooks": null,
       "estimate": null,
       "last_activity_at": "2026-09-03T05:00:00.000Z",
-      "reason": "summary judged waiting on others"
+      "reason": "summary judged waiting on others",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -1012,7 +1069,9 @@
         "sessions": 3
       },
       "last_activity_at": "2026-09-03T09:35:00.000Z",
-      "reason": "background job done"
+      "reason": "background job done",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
@@ -1084,13 +1143,16 @@
       "hooks": null,
       "estimate": null,
       "last_activity_at": "2026-09-02T10:00:00.000Z",
-      "reason": "manual move"
+      "reason": "manual move",
+      "node_id": "local",
+      "node_name": "studio"
     },
     {
       "card": {
         "id": "sess_keys",
         "kind": "session",
         "title": null,
+        "session_id": "1234abcd-5678-4ef0-9abc-def012345678",
         "project_cwd": null,
         "priority": 0,
         "auto_run": false,
@@ -1116,7 +1178,8 @@
       "locked": false,
       "project_name": "docs-site",
       "session": {
-        "transcript_path": "/Users/dev/.claude/projects/-Users-dev-src-docs-site/undefined.jsonl",
+        "session_id": "1234abcd-5678-4ef0-9abc-def012345678",
+        "transcript_path": "/Users/dev/.claude/projects/-Users-dev-src-docs-site/1234abcd-5678-4ef0-9abc-def012345678.jsonl",
         "cwd": "/Users/dev/src/docs-site",
         "ai_title": "Rename the config keys to snake case",
         "custom_title": null,
@@ -1154,106 +1217,447 @@
       "hooks": null,
       "estimate": null,
       "last_activity_at": "2026-08-30T10:00:00.000Z",
-      "reason": "no activity for 3 days, judged done"
+      "reason": "no activity for 3 days, judged done",
+      "node_id": "local",
+      "node_name": "studio"
+    },
+    {
+      "card": {
+        "id": "task_scheduler",
+        "kind": "task",
+        "title": "Move the nightly job to the new scheduler",
+        "session_id": null,
+        "project_cwd": "/home/dev/src/batch-jobs",
+        "priority": 1,
+        "auto_run": false,
+        "run_prompt": null,
+        "permission_mode": null,
+        "model": null,
+        "estimate_weighted_tokens": null,
+        "manual_column": null,
+        "manual_lock_priority": null,
+        "tags": [],
+        "notes": null,
+        "archived": false,
+        "bg_job_id": null,
+        "last_job_state": null,
+        "last_job_at": null,
+        "created_at": "2026-08-30T10:00:00.000Z",
+        "updated_at": "2026-09-03T09:00:00.000Z",
+        "done_at": null
+      },
+      "title": "Move the nightly job to the new scheduler",
+      "state": "backlog",
+      "column_id": "backlog",
+      "locked": false,
+      "project_name": "batch-jobs",
+      "session": null,
+      "live": null,
+      "bg_job": null,
+      "herdr": null,
+      "summary": null,
+      "hooks": null,
+      "estimate": {
+        "weighted_tokens": 900000,
+        "low": 540000,
+        "high": 1530000,
+        "pct_five_hour": 1.71,
+        "pct_low": 1.026,
+        "pct_high": 2.907,
+        "source": "global",
+        "sessions": 31
+      },
+      "last_activity_at": "2026-08-30T10:00:00.000Z",
+      "reason": "task without a session",
+      "node_id": "lab",
+      "node_name": "lab"
+    },
+    {
+      "card": {
+        "id": "task_retrain",
+        "kind": "task",
+        "title": "Retrain the ranking model on the new dataset",
+        "session_id": null,
+        "project_cwd": "/home/dev/src/ranker",
+        "priority": 2,
+        "auto_run": true,
+        "run_prompt": "Retrain the ranking model on the September dataset. Report the offline metrics in RESULTS.md.",
+        "permission_mode": null,
+        "model": "sonnet",
+        "estimate_weighted_tokens": null,
+        "manual_column": null,
+        "manual_lock_priority": null,
+        "tags": [],
+        "notes": null,
+        "archived": false,
+        "bg_job_id": null,
+        "last_job_state": null,
+        "last_job_at": null,
+        "created_at": "2026-09-02T10:00:00.000Z",
+        "updated_at": "2026-09-03T09:00:00.000Z",
+        "done_at": null
+      },
+      "title": "Retrain the ranking model on the new dataset",
+      "state": "ready",
+      "column_id": "ready",
+      "locked": false,
+      "project_name": "ranker",
+      "session": null,
+      "live": null,
+      "bg_job": null,
+      "herdr": null,
+      "summary": null,
+      "hooks": null,
+      "estimate": {
+        "weighted_tokens": 2800000,
+        "low": 1680000,
+        "high": 4760000,
+        "pct_five_hour": 5.319999999999999,
+        "pct_low": 3.1919999999999997,
+        "pct_high": 9.043999999999999,
+        "source": "project",
+        "sessions": 5
+      },
+      "last_activity_at": "2026-09-02T20:00:00.000Z",
+      "reason": "may run unattended, prompt set",
+      "node_id": "lab",
+      "node_name": "lab"
+    },
+    {
+      "card": {
+        "id": "sess_batch",
+        "kind": "session",
+        "title": null,
+        "session_id": "2c4e6a8b-0d1f-4325-9687-a1b2c3d4e5f6",
+        "project_cwd": null,
+        "priority": 0,
+        "auto_run": false,
+        "run_prompt": null,
+        "permission_mode": null,
+        "model": null,
+        "estimate_weighted_tokens": null,
+        "manual_column": null,
+        "manual_lock_priority": null,
+        "tags": [],
+        "notes": null,
+        "archived": false,
+        "bg_job_id": null,
+        "last_job_state": null,
+        "last_job_at": null,
+        "created_at": "2026-09-03T06:00:00.000Z",
+        "updated_at": "2026-09-03T09:58:00.000Z",
+        "done_at": null
+      },
+      "title": "Cut the memory use of the batch job",
+      "state": "working",
+      "column_id": "working",
+      "locked": false,
+      "project_name": "batch-jobs",
+      "session": {
+        "session_id": "2c4e6a8b-0d1f-4325-9687-a1b2c3d4e5f6",
+        "transcript_path": "/Users/dev/.claude/projects/-Users-dev-src-batch-jobs/2c4e6a8b-0d1f-4325-9687-a1b2c3d4e5f6.jsonl",
+        "cwd": "/home/dev/src/batch-jobs",
+        "ai_title": "Cut the memory use of the batch job",
+        "custom_title": null,
+        "first_prompt": "The nightly batch job needs 14 GB. Find where the memory goes and cut it.",
+        "last_prompt": "Good. Now stream the parquet files instead of loading them.",
+        "last_assistant_text": null,
+        "first_at": "2026-09-03T06:00:00.000Z",
+        "last_at": "2026-09-03T09:58:00.000Z",
+        "last_user_at": "2026-09-03T09:58:00.000Z",
+        "last_assistant_at": "2026-09-03T09:58:00.000Z",
+        "turns": 16,
+        "tokens": {
+          "input": 180000,
+          "output": 33000,
+          "cache_read": 4200000,
+          "cache_write": 260000,
+          "messages": 84
+        },
+        "models": [
+          "claude-opus-5"
+        ],
+        "git_branch": "perf/stream-parquet",
+        "version": "2.1.4",
+        "pr_links": [],
+        "pending_tools": [],
+        "turn_closed": false,
+        "permission_mode": "default",
+        "file_mtime": "2026-09-03T09:58:00.000Z",
+        "bytes_parsed": 480000
+      },
+      "live": {
+        "pid": 8842,
+        "session_id": "2c4e6a8b-0d1f-4325-9687-a1b2c3d4e5f6",
+        "cwd": "/home/dev/src/batch-jobs",
+        "name": null,
+        "name_source": null,
+        "status": "busy",
+        "kind": "interactive",
+        "started_at": "2026-09-03T08:00:00.000Z",
+        "status_updated_at": "2026-09-03T09:59:00.000Z",
+        "alive": true
+      },
+      "bg_job": null,
+      "herdr": null,
+      "summary": {
+        "session_id": "2c4e6a8b-0d1f-4325-9687-a1b2c3d4e5f6",
+        "narrative": "The job loaded every parquet file at once. The session rewrites the reader to stream and measures the peak again.",
+        "open_questions": [],
+        "next_step": null,
+        "judged_state": "working",
+        "confidence": 0.88,
+        "generated_at": "2026-09-03T09:54:00.000Z",
+        "source": "haiku",
+        "based_on_at": "2026-09-03T09:54:00.000Z",
+        "model": "haiku"
+      },
+      "hooks": null,
+      "estimate": null,
+      "last_activity_at": "2026-09-03T09:58:00.000Z",
+      "reason": "registry status busy",
+      "node_id": "lab",
+      "node_name": "lab"
+    },
+    {
+      "card": {
+        "id": "task_smoke",
+        "kind": "task",
+        "title": "Add a smoke test for the deploy script",
+        "session_id": "7b6a5948-3726-4150-8d9e-f0a1b2c3d4e5",
+        "project_cwd": "/home/dev/src/batch-jobs",
+        "priority": 1,
+        "auto_run": true,
+        "run_prompt": "Add a smoke test that runs the deploy script against the staging config. It must fail on a missing secret.",
+        "permission_mode": null,
+        "model": null,
+        "estimate_weighted_tokens": null,
+        "manual_column": null,
+        "manual_lock_priority": null,
+        "tags": [],
+        "notes": null,
+        "archived": false,
+        "bg_job_id": "job_5c1d80",
+        "last_job_state": "done",
+        "last_job_at": "2026-09-03T09:42:00.000Z",
+        "created_at": "2026-09-01T10:00:00.000Z",
+        "updated_at": "2026-09-03T09:00:00.000Z",
+        "done_at": null
+      },
+      "title": "Add a smoke test for the deploy script",
+      "state": "validate",
+      "column_id": "validate",
+      "locked": false,
+      "project_name": "batch-jobs",
+      "session": {
+        "session_id": "7b6a5948-3726-4150-8d9e-f0a1b2c3d4e5",
+        "transcript_path": "/Users/dev/.claude/projects/-Users-dev-src-batch-jobs/7b6a5948-3726-4150-8d9e-f0a1b2c3d4e5.jsonl",
+        "cwd": "/home/dev/src/batch-jobs",
+        "ai_title": "Add a smoke test for the deploy script",
+        "custom_title": null,
+        "first_prompt": "Add a smoke test that runs the deploy script against the staging config.",
+        "last_prompt": "Add a smoke test that runs the deploy script against the staging config.",
+        "last_assistant_text": "The test runs the script with a staging config and fails when a secret is missing. It runs in 9 seconds.",
+        "first_at": "2026-09-03T09:16:00.000Z",
+        "last_at": "2026-09-03T09:42:00.000Z",
+        "last_user_at": "2026-09-03T09:42:00.000Z",
+        "last_assistant_at": "2026-09-03T09:42:00.000Z",
+        "turns": 1,
+        "tokens": {
+          "input": 21000,
+          "output": 4100,
+          "cache_read": 540000,
+          "cache_write": 33000,
+          "messages": 12
+        },
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "git_branch": "test/deploy-smoke",
+        "version": "2.1.4",
+        "pr_links": [],
+        "pending_tools": [],
+        "turn_closed": true,
+        "permission_mode": "bypassPermissions",
+        "file_mtime": "2026-09-03T09:42:00.000Z",
+        "bytes_parsed": 480000
+      },
+      "live": null,
+      "bg_job": {
+        "id": "job_5c1d80",
+        "session_id": "7b6a5948-3726-4150-8d9e-f0a1b2c3d4e5",
+        "cwd": "/home/dev/src/batch-jobs",
+        "kind": "background",
+        "state": "done",
+        "status": "completed",
+        "waiting_for": null,
+        "name": "Add a smoke test for the deploy script",
+        "pid": null,
+        "started_at": "2026-09-03T09:16:00.000Z"
+      },
+      "herdr": null,
+      "summary": {
+        "session_id": "7b6a5948-3726-4150-8d9e-f0a1b2c3d4e5",
+        "narrative": "A smoke test for the deploy script exists and it fails when a secret is missing. Nobody checked the result yet.",
+        "open_questions": [],
+        "next_step": "Read the test and run it once against staging.",
+        "judged_state": "validate",
+        "confidence": 0.9,
+        "generated_at": "2026-09-03T09:43:00.000Z",
+        "source": "haiku",
+        "based_on_at": "2026-09-03T09:43:00.000Z",
+        "model": "haiku"
+      },
+      "hooks": null,
+      "estimate": {
+        "weighted_tokens": 800000,
+        "low": 480000,
+        "high": 1360000,
+        "pct_five_hour": 1.52,
+        "pct_low": 0.9119999999999999,
+        "pct_high": 2.584,
+        "source": "project",
+        "sessions": 3
+      },
+      "last_activity_at": "2026-09-03T09:42:00.000Z",
+      "reason": "background job done",
+      "node_id": "lab",
+      "node_name": "lab"
     }
   ],
-  "quota": {
-    "at": "2026-09-03T09:59:00.000Z",
-    "five_hour": {
-      "used_percentage": 38,
-      "resets_at": "2026-09-03T12:10:00.000Z"
+  "quotas": [
+    {
+      "node_id": "local",
+      "node_name": "studio",
+      "quota": {
+        "at": "2026-09-03T09:59:00.000Z",
+        "five_hour": {
+          "used_percentage": 38,
+          "resets_at": "2026-09-03T12:10:00.000Z"
+        },
+        "seven_day": {
+          "used_percentage": 52,
+          "resets_at": "2026-09-06T10:15:00.000Z"
+        },
+        "source": "statusline"
+      },
+      "calibration": {
+        "pct_per_mtok": 1.9,
+        "low": 1.4,
+        "high": 2.6,
+        "samples": 7,
+        "source": "learned",
+        "updated_at": "2026-09-03T07:00:00.000Z"
+      }
     },
-    "seven_day": {
-      "used_percentage": 52,
-      "resets_at": "2026-09-06T10:15:00.000Z"
-    },
-    "source": "statusline"
-  },
+    {
+      "node_id": "lab",
+      "node_name": "lab",
+      "quota": {
+        "at": "2026-09-03T09:58:00.000Z",
+        "five_hour": {
+          "used_percentage": 14,
+          "resets_at": "2026-09-03T11:36:00.000Z"
+        },
+        "seven_day": {
+          "used_percentage": 27,
+          "resets_at": "2026-09-07T10:00:00.000Z"
+        },
+        "source": "statusline"
+      },
+      "calibration": {
+        "pct_per_mtok": 1.9,
+        "low": 1.4,
+        "high": 2.6,
+        "samples": 7,
+        "source": "learned",
+        "updated_at": "2026-09-03T07:00:00.000Z"
+      }
+    }
+  ],
+  "proposals": [
+    {
+      "node_id": "local",
+      "node_name": "studio",
+      "proposal": {
+        "id": "prop_01",
+        "created_at": "2026-09-03T09:58:00.000Z",
+        "trigger": "manual",
+        "reason": "The 5-hour window has 62% free and resets in 2h 10m",
+        "items": [
+          {
+            "card_id": "task_deps",
+            "title": "Upgrade dependencies and fix the breaking changes",
+            "project_name": "storefront-web",
+            "prompt": "Upgrade every dependency to the latest minor version. Fix the breaking changes. Run the tests. Stop when they pass.",
+            "model": "sonnet",
+            "estimate": {
+              "weighted_tokens": 3400000,
+              "low": 2040000,
+              "high": 5780000,
+              "pct_five_hour": 6.46,
+              "pct_low": 3.876,
+              "pct_high": 10.982,
+              "source": "project",
+              "sessions": 6
+            },
+            "job_id": null,
+            "error": null
+          },
+          {
+            "card_id": "task_payment_review",
+            "title": "Review the payment module for race conditions",
+            "project_name": "atlas-api",
+            "prompt": "Review src/payments for race conditions and double charges. Write findings to REVIEW.md with file and line references. Do not change code.",
+            "model": "fable",
+            "estimate": {
+              "weighted_tokens": 5800000,
+              "low": 3480000,
+              "high": 9860000,
+              "pct_five_hour": 11.02,
+              "pct_low": 6.612,
+              "pct_high": 18.733999999999998,
+              "source": "project",
+              "sessions": 9
+            },
+            "job_id": null,
+            "error": null
+          },
+          {
+            "card_id": "task_checkout_tests",
+            "title": "Add screenshot tests for the checkout flow",
+            "project_name": "storefront-web",
+            "prompt": "Add Playwright screenshot tests for the three checkout pages. Reuse the existing test helpers.",
+            "model": null,
+            "estimate": {
+              "weighted_tokens": 2600000,
+              "low": 1560000,
+              "high": 4420000,
+              "pct_five_hour": 4.9399999999999995,
+              "pct_low": 2.964,
+              "pct_high": 8.398,
+              "source": "project",
+              "sessions": 6
+            },
+            "job_id": null,
+            "error": null
+          }
+        ],
+        "budget_pct": 32,
+        "used_pct_before": 38,
+        "total_pct": 22.42,
+        "used_pct_after": 60.42,
+        "skipped": 0,
+        "expires_at": "2026-09-03T10:58:00.000Z",
+        "state": "open",
+        "auto": false,
+        "accepted_at": null
+      }
+    }
+  ],
   "generated_at": "2026-09-03T10:00:00.000Z",
   "scanning": false,
   "herdr_connected": true,
   "hooks_installed": true,
-  "hooks_port": 47311,
-  "calibration": {
-    "pct_per_mtok": 1.9,
-    "low": 1.4,
-    "high": 2.6,
-    "samples": 7,
-    "source": "learned",
-    "updated_at": "2026-09-03T07:00:00.000Z"
-  },
-  "proposal": {
-    "id": "prop_01",
-    "created_at": "2026-09-03T09:58:00.000Z",
-    "trigger": "manual",
-    "reason": "The 5-hour window has 62% free and resets in 2h 10m",
-    "items": [
-      {
-        "card_id": "task_deps",
-        "title": "Upgrade dependencies and fix the breaking changes",
-        "project_name": "storefront-web",
-        "prompt": "Upgrade every dependency to the latest minor version. Fix the breaking changes. Run the tests. Stop when they pass.",
-        "model": "sonnet",
-        "estimate": {
-          "weighted_tokens": 3400000,
-          "low": 2040000,
-          "high": 5780000,
-          "pct_five_hour": 6.46,
-          "pct_low": 3.876,
-          "pct_high": 10.982,
-          "source": "project",
-          "sessions": 6
-        },
-        "job_id": null,
-        "error": null
-      },
-      {
-        "card_id": "task_payment_review",
-        "title": "Review the payment module for race conditions",
-        "project_name": "atlas-api",
-        "prompt": "Review src/payments for race conditions and double charges. Write findings to REVIEW.md with file and line references. Do not change code.",
-        "model": "fable",
-        "estimate": {
-          "weighted_tokens": 5800000,
-          "low": 3480000,
-          "high": 9860000,
-          "pct_five_hour": 11.02,
-          "pct_low": 6.612,
-          "pct_high": 18.733999999999998,
-          "source": "project",
-          "sessions": 9
-        },
-        "job_id": null,
-        "error": null
-      },
-      {
-        "card_id": "task_checkout_tests",
-        "title": "Add screenshot tests for the checkout flow",
-        "project_name": "storefront-web",
-        "prompt": "Add Playwright screenshot tests for the three checkout pages. Reuse the existing test helpers.",
-        "model": null,
-        "estimate": {
-          "weighted_tokens": 2600000,
-          "low": 1560000,
-          "high": 4420000,
-          "pct_five_hour": 4.9399999999999995,
-          "pct_low": 2.964,
-          "pct_high": 8.398,
-          "source": "project",
-          "sessions": 6
-        },
-        "job_id": null,
-        "error": null
-      }
-    ],
-    "budget_pct": 32,
-    "used_pct_before": 38,
-    "total_pct": 22.42,
-    "used_pct_after": 60.42,
-    "skipped": 0,
-    "expires_at": "2026-09-03T10:58:00.000Z",
-    "state": "open",
-    "auto": false,
-    "accepted_at": null
-  }
+  "hooks_port": 47311
 }

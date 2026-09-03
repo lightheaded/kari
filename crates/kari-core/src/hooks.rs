@@ -165,7 +165,7 @@ fn settings_path() -> PathBuf {
     paths::claude_dir().join("settings.json")
 }
 
-fn read_settings() -> anyhow::Result<Value> {
+pub(crate) fn read_settings() -> anyhow::Result<Value> {
     let p = settings_path();
     if !p.exists() {
         return Ok(json!({}));
@@ -177,7 +177,7 @@ fn read_settings() -> anyhow::Result<Value> {
     Ok(serde_json::from_str(&text)?)
 }
 
-fn write_settings(v: &Value) -> anyhow::Result<()> {
+pub(crate) fn write_settings(v: &Value) -> anyhow::Result<()> {
     let p = settings_path();
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir)?;

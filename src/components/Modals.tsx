@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Column, DerivedState, NewTask, Settings } from "../types";
+import type { Column, DerivedState, NewTask, NodeStatus, Settings } from "../types";
 import { ALL_STATES, RUN_MODELS, STATE_LABEL } from "../types";
+import { nodeDot, relTime } from "../util";
 
 function Modal({ title, children, footer, onClose }: { title: string; children: React.ReactNode; footer?: React.ReactNode; onClose: () => void }) {
   useEffect(() => {
@@ -28,16 +29,45 @@ function Modal({ title, children, footer, onClose }: { title: string; children: 
   );
 }
 
-export function AddTaskModal({ projects, onClose, onSubmit }: { projects: [string, string][]; onClose: () => void; onSubmit: (t: NewTask) => void }) {
+interface AddTaskProps {
+  nodes: NodeStatus[];
+  /** Node the picker starts on. The node filter chooses it, else the local node. */
+  defaultNode: string;
+  /** Projects taken from the cards of each node. Used until the node answers. */
+  projectsByNode: Record<string, [string, string][]>;
+  onClose: () => void;
+  onSubmit: (nodeId: string, t: NewTask) => void;
+}
+
+export function AddTaskModal({ nodes, defaultNode, projectsByNode, onClose, onSubmit }: AddTaskProps) {
+  const [node, setNode] = useState(defaultNode);
+  const [loaded, setLoaded] = useState<Record<string, [string, string][]>>({});
   const [title, setTitle] = useState("");
-  const [cwd, setCwd] = useState(projects[0]?.[0] ?? "");
+  const [cwd, setCwd] = useState("");
   const [custom, setCustom] = useState("");
   const [prompt, setPrompt] = useState("");
   const [autoRun, setAutoRun] = useState(false);
   const [priority, setPriority] = useState(0);
   const [notes, setNotes] = useState("");
   const [model, setModel] = useState("");
-  const dir = cwd === "__custom" ? custom : cwd;
+  // The node answers with its projects. Until then the cards of that node name them.
+  const projects = loaded[node] ?? projectsByNode[node] ?? [];
+  const chosen = cwd === "__custom" || projects.some(([c]) => c === cwd) ? cwd : projects[0]?.[0] ?? "";
+  const dir = chosen === "__custom" ? custom : chosen;
+
+  useEffect(() => {
+    let live = true;
+    api
+      .projects(node)
+      .then((list) => {
+        if (live && list.length > 0) setLoaded((m) => ({ ...m, [node]: list }));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [node]);
+
   return (
     <Modal
       title="New task"
@@ -51,7 +81,7 @@ export function AddTaskModal({ projects, onClose, onSubmit }: { projects: [strin
             className="btn primary"
             disabled={!title.trim()}
             onClick={() =>
-              onSubmit({
+              onSubmit(node, {
                 title: title.trim(),
                 project_cwd: dir || null,
                 run_prompt: prompt.trim() || null,
@@ -71,9 +101,22 @@ export function AddTaskModal({ projects, onClose, onSubmit }: { projects: [strin
         <label>Title</label>
         <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs to happen" />
       </div>
+      {nodes.length > 1 && (
+        <div className="field">
+          <label>Node</label>
+          <select value={node} onChange={(e) => setNode(e.target.value)}>
+            {nodes.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.name}
+                {n.online ? "" : " (offline)"}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="field">
         <label>Project directory</label>
-        <select value={cwd} onChange={(e) => setCwd(e.target.value)}>
+        <select value={chosen} onChange={(e) => setCwd(e.target.value)}>
           {projects.map(([c, n]) => (
             <option key={c} value={c}>
               {n} — {c}
@@ -81,7 +124,7 @@ export function AddTaskModal({ projects, onClose, onSubmit }: { projects: [strin
           ))}
           <option value="__custom">Other path…</option>
         </select>
-        {cwd === "__custom" && <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="/absolute/path" />}
+        {chosen === "__custom" && <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="/absolute/path" />}
       </div>
       <div className="field">
         <label>Run prompt (what Claude gets when the task starts)</label>
@@ -203,10 +246,162 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
   );
 }
 
+function NodeRow({
+  node,
+  busy,
+  onRename,
+  onToggle,
+  onPair,
+  onRemove,
+}: {
+  node: NodeStatus;
+  busy: boolean;
+  onRename: (name: string) => void;
+  onToggle: () => void;
+  onPair: () => void;
+  onRemove: () => void;
+}) {
+  const [confirm, setConfirm] = useState(false);
+  const local = node.kind === "local";
+  const rename = (e: { currentTarget: HTMLInputElement }) => {
+    const name = e.currentTarget.value.trim();
+    if (name && name !== node.name) onRename(name);
+  };
+  return (
+    <div className="noderow">
+      <span className={`pill ${node.online && node.enabled ? "on" : ""}`} title={node.enabled ? (node.online ? "online" : "offline") : "disabled"}>
+        <span className={nodeDot(node)} />
+        {local ? "this machine" : node.enabled ? (node.online ? "online" : "offline") : "off"}
+      </span>
+      {local ? (
+        <span className="nodename">{node.name}</span>
+      ) : (
+        <input
+          className="nodename"
+          defaultValue={node.name}
+          aria-label={`Name of ${node.name}`}
+          onBlur={rename}
+          onKeyDown={(e) => e.key === "Enter" && rename(e)}
+        />
+      )}
+      <span className="hint">
+        {local ? "local" : `${node.ssh_host ?? "no ssh host"} · port ${node.remote_port}`}
+        {node.version ? ` · ${node.version}` : ""}
+        {node.last_seen ? ` · seen ${relTime(node.last_seen)} ago` : ""}
+        {!local && !node.paired ? " · not paired" : ""}
+      </span>
+      {!local && (
+        <div className="nodeacts">
+          <button className="btn ghost sm" disabled={busy} onClick={onToggle}>
+            {node.enabled ? "Disable" : "Enable"}
+          </button>
+          <button className="btn ghost sm" disabled={busy} onClick={onPair}>
+            Pair again
+          </button>
+          {confirm ? (
+            <>
+              <button
+                className="btn danger sm"
+                disabled={busy}
+                onClick={() => {
+                  setConfirm(false);
+                  onRemove();
+                }}
+              >
+                Remove it
+              </button>
+              <button className="btn ghost sm" onClick={() => setConfirm(false)}>
+                Keep
+              </button>
+            </>
+          ) : (
+            <button className="btn ghost sm" disabled={busy} onClick={() => setConfirm(true)}>
+              Remove
+            </button>
+          )}
+        </div>
+      )}
+      {node.error && <div className="nodeerr">{node.error}</div>}
+    </div>
+  );
+}
+
+function NodesSection({ nodes, onNodesChanged }: { nodes: NodeStatus[]; onNodesChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [host, setHost] = useState("");
+  const [name, setName] = useState("");
+  const [port, setPort] = useState(47311);
+
+  /** Every change reloads the board, and the fresh node list comes back with it. */
+  const change = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await fn();
+      onNodesChanged();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = () =>
+    change(async () => {
+      await api.addNode({ name: name.trim() || host.trim(), ssh_host: host.trim(), remote_port: port });
+      setHost("");
+      setName("");
+    });
+
+  return (
+    <div className="section">
+      <h5>Nodes</h5>
+      <div className="hint">
+        kari connects over an SSH port forward and reads the node's token once. The node must run <code>kari-node serve</code>.
+      </div>
+      <div className="nodelist">
+        {nodes.map((n) => (
+          <NodeRow
+            key={n.id}
+            node={n}
+            busy={busy}
+            onRename={(newName) => change(() => api.updateNode(n.id, { name: newName }))}
+            onToggle={() => change(() => api.updateNode(n.id, { enabled: !n.enabled }))}
+            onPair={() => change(() => api.pairNode(n.id))}
+            onRemove={() => change(() => api.removeNode(n.id))}
+          />
+        ))}
+      </div>
+      <div className="nodeadd">
+        <div className="field">
+          <label>SSH host</label>
+          <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="ssh-host" />
+          <div className="hint">an alias from ~/.ssh/config</div>
+        </div>
+        <div className="field">
+          <label>Name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={host || "same as the SSH host"} />
+        </div>
+        <div className="field">
+          <label>Port</label>
+          <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+        </div>
+        <button className="btn sm" disabled={busy || !host.trim()} onClick={add}>
+          Add node
+        </button>
+      </div>
+      {err && <div className="nodeerr">{err}</div>}
+    </div>
+  );
+}
+
 export function SettingsModal({
   settings,
   hooksInstalled,
   hooksPort,
+  nodes,
+  onNodesChanged,
   onClose,
   onSave,
   onStopAll,
@@ -215,6 +410,8 @@ export function SettingsModal({
   settings: Settings;
   hooksInstalled: boolean;
   hooksPort: number;
+  nodes: NodeStatus[];
+  onNodesChanged: () => void;
   onClose: () => void;
   onSave: (s: Settings) => void;
   onStopAll: () => void;
@@ -245,6 +442,11 @@ export function SettingsModal({
         </>
       }
     >
+      <div className="field">
+        <label>Node name</label>
+        <input value={s.node_name ?? ""} onChange={(e) => setS({ ...s, node_name: e.target.value })} />
+        <div className="hint">How other kari instances see this machine. Empty means the host name.</div>
+      </div>
       <div className="grid2">
         <div className="field">
           <label>History window (days)</label>
@@ -291,6 +493,7 @@ export function SettingsModal({
           </select>
         </div>
       </div>
+      <NodesSection nodes={nodes} onNodesChanged={onNodesChanged} />
       <div className="section">
         <h5>Live hooks</h5>
         <div className="hint">

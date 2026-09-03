@@ -19,3 +19,10 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 libc = "0.2"
+axum.workspace = true
+tokio-stream.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true

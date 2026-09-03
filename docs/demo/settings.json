@@ -1,4 +1,5 @@
 {
+  "node_name": "studio",
   "history_days": 30,
   "done_after_days": 3,
   "stale_after_days": 14,

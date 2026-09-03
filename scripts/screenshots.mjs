@@ -6,7 +6,9 @@
 // What it does:
 // 1. Writes the dummy board to docs/demo/ (scripts/demo-fixtures.mjs).
 // 2. Starts the Vite dev server with KARI_FIXTURES=docs/demo on port 1421.
-// 3. Opens the board in headless Chromium in a 1920x1080 window.
+// 3. Opens the board in headless Chromium in a 1920x1080 window. The dummy board
+//    holds two nodes, so the images show the hub: node chips, node names on the
+//    cards and one quota bar per node.
 // 4. Pins the clock to the fixture time, so relative times read the same in every release.
 // 5. Saves one PNG per view to docs/screenshots/ and writes the app version to docs/screenshots/VERSION.
 //

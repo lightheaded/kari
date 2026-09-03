@@ -92,6 +92,22 @@ pub fn child_path() -> String {
     parts.join(":")
 }
 
+/// The machine's host name, without a domain. Falls back to "kari".
+pub fn hostname() -> String {
+    let from_cmd = std::process::Command::new("hostname")
+        .arg("-s")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    from_cmd
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|s| s.trim().split('.').next().unwrap_or("").to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "kari".into())
+}
+
 pub fn which(bin: &str) -> Option<PathBuf> {
     for dir in child_path().split(':') {
         let p = PathBuf::from(dir).join(bin);

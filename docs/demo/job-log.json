@@ -29,6 +29,29 @@
       "detail": "claude --bg accepted the job"
     }
   ],
+  "task_smoke": [
+    {
+      "at": "2026-09-03T09:42:00.000Z",
+      "job_id": "job_5c1d80",
+      "card_id": "task_smoke",
+      "state": "done",
+      "detail": "job completed, test added"
+    },
+    {
+      "at": "2026-09-03T09:30:00.000Z",
+      "job_id": "job_5c1d80",
+      "card_id": "task_smoke",
+      "state": "working",
+      "detail": "test runs against the staging config"
+    },
+    {
+      "at": "2026-09-03T09:16:00.000Z",
+      "job_id": "job_5c1d80",
+      "card_id": "task_smoke",
+      "state": "queued",
+      "detail": "claude --bg accepted the job"
+    }
+  ],
   "task_flaky": [
     {
       "at": "2026-09-03T09:57:00.000Z",
