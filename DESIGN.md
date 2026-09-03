@@ -304,6 +304,7 @@ and says so in Settings. Every other route needs the token in the
 | `GET /kari/v1/cards/{id}/jobs` | `job_log()` |
 | `GET`, `PUT /kari/v1/columns`, `/settings` | columns and settings; `PUT /columns` needs the lease |
 | `GET`, `POST`, `DELETE /kari/v1/lease` | the column lease: read, claim or renew, release |
+| `GET /kari/v1/permissions`, `POST /kari/v1/permissions/{id}` | the permission prompts a node holds, and their answer |
 | `/kari/v1/proposal`, `/proposals/{id}/accept`, `/snooze`, `/dismiss`, `/stop` | the proposal methods |
 | `GET /kari/v1/quota`, `/calibration`, `/projects` | quota, calibration, projects |
 | `POST /kari/v1/stop-all` | `stop_all()` |
@@ -346,6 +347,26 @@ intent survives a restart in the `kv` table.
 
 A hub without a local engine, `Hub::without_local`, shows only remote nodes.
 That is the phone.
+
+### Away mode: a permission prompt answered from the phone
+
+Claude Code runs a `PermissionRequest` hook before it shows a permission
+dialog. A command hook that prints a decision settles the prompt, and the
+dialog never appears. kari uses that gap. The relay script posts the payload to
+the node and, for this one event, prints the node's answer. With Away mode off
+the node answers at once with no decision, and the dialog appears as before.
+With Away mode on the node keeps the response open: it stores the prompt, sends
+a notice with the tool and the card, and waits for `POST
+/kari/v1/permissions/{id}` with `allow` or `deny`, up to `away_hold_secs` (600
+by default). A hub answers through that route; the phone shows Allow and Deny
+on the card. If nobody answers in time, or the session moves on, the response
+carries no decision and the terminal shows the dialog. Nothing is lost.
+
+While kari waits, the terminal shows a spinner and no dialog. So Away mode is
+per node, off by default, and one tap on the phone or the desktop flips it.
+Background jobs kari starts run with `bypassPermissions` and never ask. The
+hook entry for this event has a 660 s timeout; an older install lacks it, so
+"Install hooks" must run once more.
 
 ### Jump in
 
@@ -408,6 +429,8 @@ Made on 2026-09-03:
 - Columns have one owner at a time, the primary hub, decided per node by a
   lease. Any hub becomes primary with one tap. A switch adopts the columns in
   place. Nothing takes the lease without a tap (2026-09-03).
+- A permission prompt is held for a remote answer only in Away mode, per node,
+  off by default: a held prompt hides the terminal dialog (2026-09-03).
 - A node on a private network is reached by address with a pasted or scanned
   token. A laptop listens on loopback plus one chosen address, never on every
   interface (2026-09-03).

@@ -427,6 +427,30 @@ pub struct CardView {
     pub estimate: Option<Estimate>,
     pub last_activity_at: Option<DateTime<Utc>>,
     pub reason: String,
+    /// A permission prompt kari holds for a remote answer. Away mode only.
+    #[serde(default)]
+    pub permission: Option<PendingPermission>,
+}
+
+/// A permission prompt that Claude Code asked and kari holds open, so that a
+/// phone can answer it. Lives in memory until answered or timed out.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PendingPermission {
+    pub id: String,
+    pub session_id: String,
+    pub tool_name: String,
+    /// The tool's input as Claude Code sent it. Can be large.
+    pub tool_input: serde_json::Value,
+    pub message: Option<String>,
+    pub since: DateTime<Utc>,
+    /// When the hold ends and the terminal dialog appears instead.
+    pub until: DateTime<Utc>,
+}
+
+/// The answer to a held permission prompt: `allow` or `deny`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionAnswer {
+    pub behavior: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -442,6 +466,9 @@ pub struct BoardView {
     pub calibration: Calibration,
     /// The open proposal, or the last accepted one while its jobs run.
     pub proposal: Option<Proposal>,
+    /// True when this node holds permission prompts for a remote answer.
+    #[serde(default)]
+    pub away_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -498,6 +525,12 @@ pub struct Settings {
     pub weekly_warn_unused_pct: f64,
     /// Name of this node as other kari instances see it. Empty means the host name.
     pub node_name: String,
+    /// Hold permission prompts of interactive sessions for a remote answer,
+    /// such as from a phone. The terminal shows a spinner instead of the
+    /// dialog while kari waits, so this is off at the desk.
+    pub away_mode: bool,
+    /// Seconds a held permission prompt waits before the dialog appears.
+    pub away_hold_secs: u64,
     /// A second address for the API, `ip:port`, beside loopback. For a hub
     /// on a private network that cannot open an SSH forward, such as a phone
     /// over WireGuard. Empty means loopback only. Never every interface.
@@ -534,6 +567,8 @@ impl Default for Settings {
             prefer_herdr: true,
             weekly_warn_unused_pct: 25.0,
             node_name: String::new(),
+            away_mode: false,
+            away_hold_secs: 600,
             extra_listen: String::new(),
         }
     }
@@ -723,6 +758,9 @@ pub struct NodeStatus {
     /// True when this hub holds the lease on this node.
     #[serde(default)]
     pub primary: bool,
+    /// True when the node holds permission prompts for a remote answer.
+    #[serde(default)]
+    pub away_mode: bool,
 }
 
 /// Who may push columns to a node. One row per node, kept in its `kv` table.

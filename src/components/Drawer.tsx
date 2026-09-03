@@ -151,6 +151,27 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
         </div>
       </header>
       <div className="body">
+        {view.permission && (
+          <div className="section">
+            <h5>Held permission prompt</h5>
+            <div className="quote">
+              {view.permission.tool_name}
+              {"\n"}
+              {typeof view.permission.tool_input === "string" ? view.permission.tool_input : JSON.stringify(view.permission.tool_input, null, 2)}
+            </div>
+            {!offline && (
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button className="btn primary sm" onClick={() => onAction(() => api.answerPermission(node, view.permission!.id, "allow"), "Allowed")}>
+                  Allow
+                </button>
+                <button className="btn danger sm" onClick={() => onAction(() => api.answerPermission(node, view.permission!.id, "deny"), "Denied")}>
+                  Deny
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {q.length > 0 && (
           <div className="section">
             <h5>Open questions</h5>

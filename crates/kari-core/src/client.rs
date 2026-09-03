@@ -263,6 +263,29 @@ impl ApiClient {
         self.get("/kari/v1/settings")
     }
 
+    // ---- held permissions ----
+
+    pub fn permissions(&self) -> anyhow::Result<Vec<PendingPermission>> {
+        self.get("/kari/v1/permissions")
+    }
+
+    pub fn answer_permission(&self, id: &str, behavior: &str) -> anyhow::Result<()> {
+        self.post(
+            &format!("/kari/v1/permissions/{id}"),
+            Some(serde_json::json!({ "behavior": behavior })),
+        )
+    }
+
+    /// Flip Away mode on the node. Reads the settings, changes one field, writes them back.
+    pub fn set_away_mode(&self, on: bool) -> anyhow::Result<()> {
+        let mut s = self.settings()?;
+        if s.away_mode == on {
+            return Ok(());
+        }
+        s.away_mode = on;
+        self.set_settings(&s)
+    }
+
     // ---- lease ----
 
     /// The node's column lease. `Ok(None)` when free. An older node without

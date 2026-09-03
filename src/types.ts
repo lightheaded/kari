@@ -246,6 +246,16 @@ export interface Proposal {
   auto: boolean;
   accepted_at: string | null;
 }
+/** A permission prompt a node holds open for a remote answer (Away mode). */
+export interface PendingPermission {
+  id: string;
+  session_id: string;
+  tool_name: string;
+  tool_input: unknown;
+  message: string | null;
+  since: string;
+  until: string;
+}
 export interface CardView {
   card: Card;
   title: string;
@@ -262,6 +272,7 @@ export interface CardView {
   estimate: Estimate | null;
   last_activity_at: string | null;
   reason: string;
+  permission?: PendingPermission | null;
 }
 export interface BoardView {
   columns: Column[];
@@ -303,6 +314,8 @@ export interface Settings {
   autopilot_max_jobs: number;
   prefer_herdr: boolean;
   weekly_warn_unused_pct: number;
+  away_mode: boolean;
+  away_hold_secs: number;
   extra_listen: string;
 }
 export interface NewTask {
@@ -353,6 +366,8 @@ export interface NodeStatus {
   lease: Lease | null;
   /** True when this hub holds the lease on the node. */
   primary: boolean;
+  /** True when the node holds permission prompts for a remote answer. */
+  away_mode: boolean;
 }
 export interface LocalAddress {
   interface: string;

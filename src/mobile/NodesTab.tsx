@@ -88,6 +88,12 @@ export function NodesTab({ board, settings, onChanged, onSettingsChanged, onActi
               {n.primary ? " · columns: this device" : n.lease ? ` · columns: ${n.lease.hub_name}` : ""}
             </div>
             {n.error && <div className="nodeerr">{n.error}</div>}
+            {n.online && (
+              <label className="field inline">
+                <input type="checkbox" checked={n.away_mode} onChange={(e) => onAction(() => api.setAwayMode(n.id, e.target.checked), e.target.checked ? "Away mode on" : "Away mode off").then(onChanged)} />
+                <span>Away mode: hold permission prompts for this phone</span>
+              </label>
+            )}
             {n.kind === "remote" && (
               <div className="macts">
                 <button className="btn ghost sm" onClick={() => onAction(() => api.updateNode(n.id, { enabled: !n.enabled }), n.enabled ? "Disabled" : "Enabled").then(onChanged)}>

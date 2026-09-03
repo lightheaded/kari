@@ -253,6 +253,7 @@ function NodeRow({
   onLocalName,
   onRename,
   onToggle,
+  onAway,
   onPair,
   onRemove,
 }: {
@@ -262,6 +263,7 @@ function NodeRow({
   onLocalName: (name: string) => void;
   onRename: (name: string) => void;
   onToggle: () => void;
+  onAway: () => void;
   onPair: () => void;
   onRemove: () => void;
 }) {
@@ -300,7 +302,15 @@ function NodeRow({
         {node.last_seen ? ` · seen ${relTime(node.last_seen)} ago` : ""}
         {!local && !node.paired ? " · not paired" : ""}
         {node.primary ? " · columns: this device" : node.lease ? ` · columns: ${node.lease.hub_name}` : ""}
+        {node.away_mode ? " · away mode" : ""}
       </span>
+      <div className="nodeacts">
+        {node.online && (
+          <button className="btn ghost sm" disabled={busy} onClick={onAway} title="Hold permission prompts for a remote answer, such as from a phone">
+            {node.away_mode ? "Away mode off" : "Away mode on"}
+          </button>
+        )}
+      </div>
       {!local && (
         <div className="nodeacts">
           <button className="btn ghost sm" disabled={busy} onClick={onToggle}>
@@ -441,6 +451,7 @@ function NodesSection({
             onLocalName={onLocalName}
             onRename={(newName) => change(() => api.updateNode(n.id, { name: newName }))}
             onToggle={() => change(() => api.updateNode(n.id, { enabled: !n.enabled }))}
+            onAway={() => change(() => api.setAwayMode(n.id, !n.away_mode))}
             onPair={() => change(() => api.pairNode(n.id))}
             onRemove={() => change(() => api.removeNode(n.id))}
           />

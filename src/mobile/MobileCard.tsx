@@ -15,6 +15,18 @@ interface Props {
   onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
 }
 
+/** One line about a tool call: the command, the file, the URL, or the first words. */
+export function describeInput(tool: string, input: unknown): string {
+  if (!input || typeof input !== "object") return typeof input === "string" ? input : "";
+  const o = input as Record<string, unknown>;
+  const keys = tool === "Bash" ? ["command"] : ["file_path", "notebook_path", "command", "url", "query", "pattern", "description"];
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.replace(/\s+/g, " ").slice(0, 160);
+  }
+  return "";
+}
+
 /** A card the thumb can act on: tap an option, reply, mark done, stop, or open. */
 export function MobileCard({ view, columns, showNode, offline, actions, onOpen, onAction }: Props) {
   const c = view.card;
@@ -28,6 +40,8 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
   const [pending, setPending] = useState<string | null>(null);
   const doneCol = columns.find((k) => k.accepts.includes("done"));
   const canReply = !!(c.project_cwd ?? s?.cwd) && bg?.state !== "working";
+  const perm = view.permission ?? null;
+  const permText = perm ? describeInput(perm.tool_name, perm.tool_input) : "";
 
   /** A live terminal session gets a warning first: a second process writes into the same transcript. */
   const send = (text: string) => {
@@ -56,7 +70,24 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
         {view.summary?.narrative && !q && actions && <div className="mnarr">{view.summary.narrative}</div>}
         {bg?.waiting_for && <div className="mq">{bg.waiting_for}</div>}
         {q && <div className="mq">{q.question}</div>}
+        {perm && (
+          <div className="mq">
+            <b>{perm.tool_name}</b> asks for permission{permText ? `: ${permText}` : ""}
+            <div className="mhint">held until {new Date(perm.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+          </div>
+        )}
       </button>
+
+      {perm && !offline && (
+        <div className="macts">
+          <button className="btn primary sm" onClick={() => onAction(() => api.answerPermission(node, perm.id, "allow"), "Allowed")}>
+            Allow
+          </button>
+          <button className="btn danger sm" onClick={() => onAction(() => api.answerPermission(node, perm.id, "deny"), "Denied")}>
+            Deny
+          </button>
+        </div>
+      )}
 
       {actions && !offline && (
         <div className="macts">
@@ -114,8 +145,8 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
         </div>
       )}
 
-      {view.state === "needs_approval" && actions && !bg && (
-        <div className="mhint">A permission prompt waits in the terminal. Answering it from here comes with Away mode.</div>
+      {view.state === "needs_approval" && actions && !bg && !perm && (
+        <div className="mhint">A permission prompt waits in the terminal. Turn on Away mode for {view.node_name} in Nodes to answer the next one here.</div>
       )}
     </div>
   );

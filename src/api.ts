@@ -52,6 +52,7 @@ function localNode(): NodeStatus {
     error: null,
     lease: null,
     primary: true,
+    away_mode: false,
   };
 }
 
@@ -116,6 +117,9 @@ export const api = {
   removeNode: (nodeId: string) => invoke<void>("remove_node", { nodeId }),
   pairNode: (nodeId: string) => invoke<string>("pair_node", { nodeId }),
   claimPrimary: () => invoke<string>("claim_primary"),
+  answerPermission: (nodeId: string, permissionId: string, behavior: "allow" | "deny") =>
+    invoke<void>("answer_permission", { nodeId, permissionId, behavior }),
+  setAwayMode: (nodeId: string, on: boolean) => invoke<void>("set_away_mode", { nodeId, on }),
   pairingCode: () => invoke<string>("pairing_code"),
   localAddresses: () => invoke<LocalAddress[]>("local_addresses"),
   jobLog: (nodeId: string, cardId: string, limit = 40) =>

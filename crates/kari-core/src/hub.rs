@@ -651,6 +651,7 @@ impl Hub {
             error: None,
             primary: lease.as_ref().is_some_and(|l| l.hub_id == self.hub_id),
             lease,
+            away_mode: self.engine.settings().away_mode,
         }
     }
 
@@ -680,6 +681,7 @@ impl Hub {
                 .as_ref()
                 .is_some_and(|l| l.hub_id == self.hub_id && !l.expired(Utc::now())),
             lease: st.lease.clone(),
+            away_mode: st.board.as_ref().is_some_and(|b| b.away_mode),
         }
     }
 
@@ -906,6 +908,20 @@ impl Hub {
 
     pub fn stop_card(&self, node: &str, card: &str) -> anyhow::Result<()> {
         self.on_node(node, |e| e.stop_card(card), |c| c.stop_card(card))
+    }
+
+    /// Answer a permission prompt a node holds: `allow` or `deny`.
+    pub fn answer_permission(&self, node: &str, id: &str, behavior: &str) -> anyhow::Result<()> {
+        self.on_node(
+            node,
+            |e| e.answer_permission(id, behavior),
+            |c| c.answer_permission(id, behavior),
+        )
+    }
+
+    /// Hold permission prompts on a node for a remote answer, or stop holding them.
+    pub fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()> {
+        self.on_node(node, |e| e.set_away_mode(on), |c| c.set_away_mode(on))
     }
 
     pub fn summarize_card(&self, node: &str, card: &str) -> anyhow::Result<Summary> {
@@ -1333,6 +1349,7 @@ mod tests {
             estimate: None,
             last_activity_at: None,
             reason: String::new(),
+            permission: None,
         }
     }
 

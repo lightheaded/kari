@@ -120,14 +120,50 @@ async fn health(State(st): State<ApiState>) -> Json<NodeIdentity> {
     Json(st.engine.identity())
 }
 
+/// Take a hook payload. A permission request in Away mode is held: the
+/// response waits for an answer from the API, or for the hold to run out,
+/// and carries the decision the relay prints for Claude Code.
 async fn hook(
     State(st): State<ApiState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    if let Err(e) = st.engine.ingest_hook(payload) {
+    if let Err(e) = st.engine.ingest_hook(payload.clone()) {
         warn!("hook rejected: {e}");
+        return Json(serde_json::json!({}));
     }
-    Json(serde_json::json!({}))
+    let Some(rx) = st.engine.hold_permission(&payload) else {
+        return Json(serde_json::json!({}));
+    };
+    let hold = st.engine.settings().away_hold_secs.clamp(5, hooks::HELD_TIMEOUT_SECS - 30);
+    let id = st
+        .engine
+        .pending_permissions()
+        .into_iter()
+        .max_by_key(|p| p.since)
+        .map(|p| p.id);
+    match tokio::time::timeout(std::time::Duration::from_secs(hold), rx).await {
+        Ok(Ok(b)) if b == "allow" || b == "deny" => Json(hooks::decision_json(&b)),
+        // Cancelled: the session moved on, or nobody answered in time.
+        _ => {
+            if let Some(id) = id {
+                st.engine.drop_permission(&id);
+            }
+            Json(serde_json::json!({}))
+        }
+    }
+}
+
+async fn permissions(State(st): State<ApiState>) -> Json<Vec<PendingPermission>> {
+    Json(st.engine.pending_permissions())
+}
+
+async fn answer_permission(
+    State(st): State<ApiState>,
+    Path(id): Path<String>,
+    Json(a): Json<PermissionAnswer>,
+) -> R<()> {
+    let e = st.engine;
+    blocking(move || e.answer_permission(&id, &a.behavior)).await
 }
 
 async fn board(State(st): State<ApiState>) -> R<BoardView> {
@@ -387,6 +423,8 @@ pub fn router(engine: Arc<Engine>, token: String) -> Router {
             "/lease",
             get(get_lease).post(claim_lease).delete(release_lease),
         )
+        .route("/permissions", get(permissions))
+        .route("/permissions/{id}", post(answer_permission))
         .route("/settings", get(get_settings).put(set_settings))
         .route("/proposal", get(get_proposal).post(propose_now))
         .route("/proposals", get(proposal_history))

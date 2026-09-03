@@ -317,6 +317,26 @@ async fn pair_node(state: State<'_, AppState>, node_id: String) -> R<String> {
     off_thread(&state.hub, move |h| h.pair_node(&node_id)).await
 }
 
+/// Answer a permission prompt a node holds for us: allow or deny.
+#[tauri::command]
+async fn answer_permission(
+    state: State<'_, AppState>,
+    node_id: String,
+    permission_id: String,
+    behavior: String,
+) -> R<()> {
+    off_thread(&state.hub, move |h| {
+        h.answer_permission(&node_id, &permission_id, &behavior)
+    })
+    .await
+}
+
+/// Hold permission prompts on a node for a remote answer, or stop.
+#[tauri::command]
+async fn set_away_mode(state: State<'_, AppState>, node_id: String, on: bool) -> R<()> {
+    off_thread(&state.hub, move |h| h.set_away_mode(&node_id, on)).await
+}
+
 /// Take the column lease on every node. This device then pushes columns.
 #[tauri::command]
 async fn claim_primary(state: State<'_, AppState>) -> R<String> {
@@ -496,6 +516,8 @@ macro_rules! handlers {
             remove_node,
             pair_node,
             claim_primary,
+            answer_permission,
+            set_away_mode,
             pairing_code,
             local_addresses
         ]
