@@ -155,19 +155,21 @@ Deployment of the node is managed outside this repository. `flake.nix` builds it
 
 ### A node over a private network
 
-A hub that cannot open an SSH forward, such as the phone, reaches a node by address. The node then listens on loopback for the hook relay and on one more address for that hub:
+A hub that cannot open an SSH forward, such as the phone, reaches a node by address. The node then answers on loopback for the hook relay and on the private addresses of the machine as well:
 
 ```
-kari-node serve --listen 127.0.0.1:47311 --listen <vpn-ip>:47311 --allow-remote
+kari-node serve --private
 ```
 
-The desktop app does the same with "Also listen on" in Settings. Pick the VPN interface, never a public one. The token is the only guard on that path, so the private network carries the trust.
+The desktop app has the same switch in Settings, Nodes: "Let a phone reach this machine". A public address is never bound, and the list is read again every 20 seconds, so a VPN that comes up later needs no restart. The token is the only guard on that path, so the private network carries the trust. To name one address instead, use `kari-node serve --listen 127.0.0.1:47311 --listen <vpn-ip>:47311 --allow-remote`.
+
+Each node reports the addresses it answers on. The desktop learns them over the SSH connection it has already, and puts them in the pairing code, so the phone types no address.
 
 ## The phone
 
 The same app builds for Android and runs as a second hub. It joins the private network, talks to every node directly, and shows the board, a "Needs you" inbox, the plans, and a task form. It runs no Claude Code, so it has no node of its own.
 
-- Install `kari-latest.apk` from the release page, or add `https://github.com/lightheaded/kari` to Obtainium: the asset name never carries the version and the signing key never changes, so an update installs over the previous build. Then open Nodes and paste the pairing code from the desktop (Settings, Nodes, "Show pairing code"). The code holds the node tokens: show it at home and hide it when done. Fill in the address of a node the code does not know.
+- Install `kari-latest.apk` from the release page, or add `https://github.com/lightheaded/kari` to Obtainium: the asset name never carries the version and the signing key never changes, so an update installs over the previous build. Then open Nodes and paste the pairing code from the desktop (Settings, Nodes, "Show pairing code"), and press "Add". The code carries each node's name, token and addresses, so there is nothing to type. The code holds the node tokens: show it at home and hide it when done. Turn on "Let a phone reach this machine" on the desktop first, else its own address is missing from the code.
 - "Needs you" lists every card in approval, decision, my turn, validate and waiting, with the actions on the card: an option of an open question, a reply, stop, done. A reply to a session that is alive in a terminal gets a warning first, because a second process writes into the same transcript.
 - Notifications arrive while the app is open. Android stops the app in the background after a while; a foreground service is a later step.
 

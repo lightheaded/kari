@@ -349,12 +349,6 @@ async fn pairing_code(state: State<'_, AppState>) -> R<String> {
     off_thread(&state.hub, |h| h.pairing_code()).await
 }
 
-/// Addresses this machine has, for the "also listen on" picker in Settings.
-#[tauri::command]
-fn local_addresses() -> Vec<kari_core::net::LocalAddress> {
-    kari_core::net::local_addresses()
-}
-
 // ---------------------------------------------------------------- shell
 
 #[cfg(desktop)]
@@ -519,7 +513,6 @@ macro_rules! handlers {
             answer_permission,
             set_away_mode,
             pairing_code,
-            local_addresses
         ]
     };
 }
@@ -579,22 +572,12 @@ pub fn run() {
         .setup(move |app| {
             // The API serves the hook relay on this Mac and, over an SSH
             // forward, any other kari that treats this Mac as a node.
-            let settings = engine.settings();
-            let port = settings.hooks_port;
-            // A second address, such as a WireGuard one, lets a hub on a phone reach this node.
-            let extra = match settings.extra_listen.trim() {
-                "" => None,
-                a => match a.parse::<std::net::SocketAddr>() {
-                    Ok(sa) => Some(sa),
-                    Err(e) => {
-                        tracing::warn!("extra listen address {a:?} ignored: {e}");
-                        None
-                    }
-                },
-            };
+            let port = engine.settings().hooks_port;
+            // The settings decide whether the private addresses are bound too,
+            // for a hub on a phone. The listener follows a change on its own.
             let e = Arc::clone(&engine);
             tauri::async_runtime::spawn(async move {
-                kari_core::api::spawn(e, port, extra);
+                kari_core::api::spawn(e, port);
             });
             forward_events(app.handle().clone(), Arc::clone(&hub));
 

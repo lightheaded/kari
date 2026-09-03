@@ -381,6 +381,7 @@ impl Hub {
         stop: Arc<AtomicBool>,
     ) {
         let mut backoff = 1u64;
+        let mut rec = rec;
         let label = rec
             .ssh_host
             .clone()
@@ -388,6 +389,10 @@ impl Hub {
             .unwrap_or_else(|| format!("127.0.0.1:{}", rec.remote_port));
         while !stop.load(Ordering::Relaxed) {
             let started = Instant::now();
+            // A learned address, or a changed one, applies to the next attempt.
+            if let Some(fresh) = self.record_of(&rec.id) {
+                rec = fresh;
+            }
             match self.connect_once(&rec, &state, &stop) {
                 Ok(()) => {}
                 Err(e) => {
@@ -428,42 +433,60 @@ impl Hub {
             anyhow::bail!("not paired: no token for this node; use Pair in Settings");
         };
         state.lock().unwrap().paired = true;
-        let base = match (&rec.ssh_host, &rec.address) {
-            (Some(host), _) => {
+        // Three ways to reach a node: an SSH forward, one of its addresses on a
+        // private network, or a loopback port in a test. A direct connection
+        // tries every candidate address, so a node that moved is found again.
+        let mut probed = None;
+        let base = match &rec.ssh_host {
+            Some(host) => {
                 let t = Tunnel::open(host, rec.remote_port)?;
                 let p = t.local_port;
                 state.lock().unwrap().tunnel = Some(t);
                 format!("http://127.0.0.1:{p}")
             }
-            (None, Some(addr)) => format!("http://{addr}"),
-            (None, None) => format!("http://127.0.0.1:{}", rec.remote_port),
+            None if !Self::candidates(rec, None).is_empty() => {
+                let (addr, id) = self.pick_address(rec, &token, stop)?;
+                probed = Some(id);
+                format!("http://{addr}")
+            }
+            None => format!("http://127.0.0.1:{}", rec.remote_port),
         };
         let client = ApiClient::at(&base, &token).with_hub(&self.hub_id);
         // The forward needs a moment. Poll health, and give up when ssh exits.
         let deadline = Instant::now() + Duration::from_secs(20);
-        let identity = loop {
-            if stop.load(Ordering::Relaxed) {
-                anyhow::bail!("stopped");
-            }
-            match client.health() {
-                Ok(id) => break id,
-                Err(e) => {
-                    let mut st = state.lock().unwrap();
-                    if let Some(t) = st.tunnel.as_mut() {
-                        if !t.alive() {
-                            let msg = t.exit_message().unwrap_or_else(|| "ssh exited".into());
-                            drop(st);
-                            anyhow::bail!("ssh forward failed: {msg}");
-                        }
-                    }
-                    drop(st);
-                    if Instant::now() > deadline {
-                        anyhow::bail!("node did not answer health: {e}");
-                    }
-                    std::thread::sleep(Duration::from_millis(500));
+        let identity = match probed {
+            Some(id) => id,
+            None => loop {
+                if stop.load(Ordering::Relaxed) {
+                    anyhow::bail!("stopped");
                 }
-            }
+                match client.health() {
+                    Ok(id) => break id,
+                    Err(e) => {
+                        let mut st = state.lock().unwrap();
+                        if let Some(t) = st.tunnel.as_mut() {
+                            if !t.alive() {
+                                let msg = t.exit_message().unwrap_or_else(|| "ssh exited".into());
+                                drop(st);
+                                anyhow::bail!("ssh forward failed: {msg}");
+                            }
+                        }
+                        drop(st);
+                        if Instant::now() > deadline {
+                            anyhow::bail!("node did not answer health: {e}");
+                        }
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                }
+            },
         };
+        // The node says where else it answers. Keep it: this is how the desktop
+        // learns a node's private address without a typed one, and how a
+        // pairing code can carry it to a phone.
+        let working = base
+            .strip_prefix("http://")
+            .filter(|_| rec.ssh_host.is_none());
+        self.remember_addresses(&rec.id, working, &identity.addresses);
         if identity.api_version != API_VERSION {
             anyhow::bail!(
                 "node speaks api v{} but this app needs v{API_VERSION}; update kari on one side",
@@ -631,6 +654,92 @@ impl Hub {
             .unwrap_or_else(|| format!("node {}", &rec.id[..8.min(rec.id.len())]))
     }
 
+    /// Every address worth trying for a node, best first: the one in use, then
+    /// the ones it answered on before, then the ones it advertises now.
+    fn candidates(rec: &NodeRecord, identity: Option<&NodeIdentity>) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut push = |a: &str| {
+            let a = a.trim();
+            if !a.is_empty() && !out.iter().any(|x| x == a) {
+                out.push(a.to_string());
+            }
+        };
+        if let Some(a) = &rec.address {
+            push(a);
+        }
+        for a in &rec.addresses {
+            push(a);
+        }
+        for a in identity.map(|i| i.addresses.as_slice()).unwrap_or(&[]) {
+            push(a);
+        }
+        out
+    }
+
+    /// Keep what the node told us about itself: the address that answered, and
+    /// the ones it advertises. The next connection starts from the working one,
+    /// and a pairing code carries the list to a phone.
+    fn remember_addresses(&self, id: &str, working: Option<&str>, advertised: &[String]) {
+        let mut rs = self.remotes.write().unwrap();
+        let Some(r) = rs.iter_mut().find(|r| r.rec.id == id) else {
+            return;
+        };
+        let before = r.rec.clone();
+        if let Some(w) = working {
+            r.rec.address = Some(w.to_string());
+        }
+        let mut list = Self::candidates(&r.rec, None);
+        for a in advertised {
+            let a = a.trim();
+            if !a.is_empty() && !list.iter().any(|x| x == a) {
+                list.push(a.to_string());
+            }
+        }
+        r.rec.addresses = list;
+        if r.rec == before {
+            return;
+        }
+        let rec = r.rec.clone();
+        drop(rs);
+        if let Err(e) = self.engine.save_node(&rec) {
+            warn!("node {id}: addresses not saved: {e}");
+        }
+    }
+
+    fn record_of(&self, id: &str) -> Option<NodeRecord> {
+        self.remotes
+            .read()
+            .unwrap()
+            .iter()
+            .find(|r| r.rec.id == id)
+            .map(|r| r.rec.clone())
+    }
+
+    /// The first candidate address that answers, with what it answered.
+    fn pick_address(
+        &self,
+        rec: &NodeRecord,
+        token: &str,
+        stop: &AtomicBool,
+    ) -> anyhow::Result<(String, NodeIdentity)> {
+        let cands = Self::candidates(rec, None);
+        let mut last = String::from("no address to try");
+        for addr in &cands {
+            if stop.load(Ordering::Relaxed) {
+                anyhow::bail!("stopped");
+            }
+            let client = ApiClient::at(&format!("http://{addr}"), token);
+            match client.probe(3) {
+                Ok(id) => return Ok((addr.clone(), id)),
+                Err(e) => last = format!("{addr}: {e}"),
+            }
+        }
+        anyhow::bail!(
+            "no address answered ({} tried); last error {last}",
+            cands.len()
+        )
+    }
+
     fn local_status(&self) -> NodeStatus {
         let lease = self.engine.lease();
         NodeStatus {
@@ -651,6 +760,7 @@ impl Hub {
             primary: lease.as_ref().is_some_and(|l| l.hub_id == self.hub_id),
             lease,
             away_mode: self.engine.settings().away_mode,
+            addresses: crate::net::bound_reachable(),
         }
     }
 
@@ -681,6 +791,7 @@ impl Hub {
                 .is_some_and(|l| l.hub_id == self.hub_id && !l.expired(Utc::now())),
             lease: st.lease.clone(),
             away_mode: st.board.as_ref().is_some_and(|b| b.away_mode),
+            addresses: Self::candidates(&r.rec, st.identity.as_ref()),
         }
     }
 
@@ -1140,14 +1251,15 @@ impl Hub {
     /// knows, with its address and token, plus this machine when it listens on
     /// a second address. Nodes reached over SSH carry no address; the other
     /// hub asks for one. The code holds tokens: show it at home, on demand.
+    /// What a phone needs to reach every node this hub knows: the names, the
+    /// tokens, and every address the nodes answer on. Version 2 carries a list
+    /// per node, so the phone types no address at all.
     pub fn pairing_code(&self) -> anyhow::Result<String> {
         let mut nodes = vec![];
         if self.with_local {
-            let settings = self.engine.settings();
-            let address = settings.extra_listen.trim().to_string();
             nodes.push(serde_json::json!({
                 "name": self.engine.node_name(),
-                "address": if address.is_empty() { serde_json::Value::Null } else { address.into() },
+                "addresses": crate::net::bound_reachable(),
                 "token": crate::hooks::token()?,
             }));
         }
@@ -1158,12 +1270,12 @@ impl Hub {
             let st = r.state.lock().unwrap();
             nodes.push(serde_json::json!({
                 "name": self.node_name_of(&r.rec, st.identity.as_ref()),
-                "address": r.rec.address.clone(),
+                "addresses": Self::candidates(&r.rec, st.identity.as_ref()),
                 "token": token,
             }));
         }
         Ok(serde_json::to_string(
-            &serde_json::json!({ "kari": 1, "nodes": nodes }),
+            &serde_json::json!({ "kari": 2, "nodes": nodes }),
         )?)
     }
 
@@ -1187,11 +1299,20 @@ impl Hub {
             .address
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+        let mut addresses: Vec<String> = Vec::new();
+        for a in address.iter().cloned().chain(n.addresses) {
+            let a = a.trim().to_string();
+            if !a.is_empty() && !addresses.contains(&a) {
+                addresses.push(a);
+            }
+        }
+        let address = address.or_else(|| addresses.first().cloned());
         let rec = NodeRecord {
             id: uuid::Uuid::new_v4().to_string(),
             name: n.name.trim().to_string(),
             ssh_host,
             address,
+            addresses,
             remote_port: if n.remote_port == 0 {
                 47311
             } else {
@@ -1249,6 +1370,18 @@ impl Hub {
         }
         if let Some(a) = p.address {
             rec.address = a.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            if let Some(a) = &rec.address {
+                if !rec.addresses.contains(a) {
+                    rec.addresses.insert(0, a.clone());
+                }
+            }
+        }
+        if let Some(list) = p.addresses {
+            rec.addresses = list
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
         }
         if let Some(port) = p.remote_port {
             if port != 0 {
@@ -1302,6 +1435,32 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidates_start_with_the_address_in_use() {
+        let rec = NodeRecord {
+            id: "n1".into(),
+            address: Some("a:1".into()),
+            addresses: vec!["a:1".into(), "b:2".into()],
+            ..Default::default()
+        };
+        let identity = NodeIdentity {
+            ok: true,
+            app: "kari".into(),
+            version: "0".into(),
+            api_version: API_VERSION,
+            node_id: "x".into(),
+            node_name: "x".into(),
+            platform: "linux".into(),
+            addresses: vec!["b:2".into(), "c:3".into()],
+        };
+        // The one in use first, then the known ones, then what the node says.
+        // No address twice, so a probe never dials the same address again.
+        assert_eq!(
+            Hub::candidates(&rec, Some(&identity)),
+            vec!["a:1".to_string(), "b:2".into(), "c:3".into()]
+        );
+    }
 
     fn col(id: &str, accepts: &[DerivedState]) -> Column {
         Column {

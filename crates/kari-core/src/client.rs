@@ -164,6 +164,17 @@ impl ApiClient {
         self.json(r)
     }
 
+    /// Health with a short timeout, for trying one candidate address after
+    /// another. A blocked address must not hold the whole list.
+    pub fn probe(&self, secs: u64) -> anyhow::Result<NodeIdentity> {
+        let r = self
+            .http
+            .get(format!("{}/kari/health", self.base))
+            .timeout(Duration::from_secs(secs))
+            .send()?;
+        self.json(r)
+    }
+
     pub fn board(&self) -> anyhow::Result<BoardView> {
         self.get("/kari/v1/board")
     }

@@ -531,10 +531,10 @@ pub struct Settings {
     pub away_mode: bool,
     /// Seconds a held permission prompt waits before the dialog appears.
     pub away_hold_secs: u64,
-    /// A second address for the API, `ip:port`, beside loopback. For a hub
-    /// on a private network that cannot open an SSH forward, such as a phone
-    /// over WireGuard. Empty means loopback only. Never every interface.
-    pub extra_listen: String,
+    /// Answer on every private address of this machine, not on loopback only.
+    /// A hub on a phone needs it, because a phone cannot open an SSH forward.
+    /// Public addresses are never bound. Off by default.
+    pub listen_private: bool,
 }
 
 impl Default for Settings {
@@ -569,7 +569,7 @@ impl Default for Settings {
             node_name: String::new(),
             away_mode: false,
             away_hold_secs: 600,
-            extra_listen: String::new(),
+            listen_private: false,
         }
     }
 }
@@ -663,6 +663,11 @@ pub struct NodeIdentity {
     pub node_id: String,
     pub node_name: String,
     pub platform: String,
+    /// `ip:port` of every private address the node listens on now. A hub that
+    /// cannot open an SSH forward, such as a phone, connects to one of them.
+    /// The list is how the desktop learns where a node is, without a typed IP.
+    #[serde(default)]
+    pub addresses: Vec<String>,
 }
 
 /// A remote kari node the desktop app connects to. Stored in the local database.
@@ -679,6 +684,11 @@ pub struct NodeRecord {
     /// cannot open an SSH forward, such as a phone. Wins over `remote_port`
     /// when `ssh_host` is None.
     pub address: Option<String>,
+    /// Every address the node answered on or advertised, in the order to try.
+    /// `address` holds the one in use; a failed connection walks this list, so
+    /// a node that moves to another address is found again without a re-pair.
+    #[serde(default)]
+    pub addresses: Vec<String>,
     /// Port of the node's API on its own loopback interface.
     pub remote_port: u16,
     pub enabled: bool,
@@ -692,6 +702,7 @@ impl Default for NodeRecord {
             name: String::new(),
             ssh_host: None,
             address: None,
+            addresses: Vec::new(),
             remote_port: 47311,
             enabled: true,
             created_at: Utc::now(),
@@ -706,6 +717,9 @@ pub struct NewNode {
     pub ssh_host: Option<String>,
     /// `host:port` for a direct connection over a private network.
     pub address: Option<String>,
+    /// Addresses to try, from a pairing code. The hub keeps the one that answers.
+    #[serde(default)]
+    pub addresses: Vec<String>,
     pub remote_port: u16,
     /// The node's token, when the caller has it already, for example from a
     /// pairing QR code. None means: read it over SSH, or pair later by hand.
@@ -718,6 +732,7 @@ impl Default for NewNode {
             name: String::new(),
             ssh_host: None,
             address: None,
+            addresses: Vec::new(),
             remote_port: 47311,
             token: None,
         }
@@ -730,6 +745,7 @@ pub struct NodePatch {
     pub name: Option<String>,
     pub ssh_host: Option<Option<String>>,
     pub address: Option<Option<String>>,
+    pub addresses: Option<Vec<String>>,
     pub remote_port: Option<u16>,
     pub enabled: Option<bool>,
 }
@@ -761,6 +777,10 @@ pub struct NodeStatus {
     /// True when the node holds permission prompts for a remote answer.
     #[serde(default)]
     pub away_mode: bool,
+    /// Addresses this node advertised or answered on. The UI shows them, and a
+    /// pairing code carries them to the phone.
+    #[serde(default)]
+    pub addresses: Vec<String>,
 }
 
 /// Who may push columns to a node. One row per node, kept in its `kv` table.

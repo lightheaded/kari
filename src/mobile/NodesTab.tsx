@@ -14,14 +14,19 @@ interface Props {
 /** One node in a pairing code. The desktop writes it; the phone reads it. */
 interface PairEntry {
   name: string;
-  address: string | null;
+  /** Every address the node answers on. The hub keeps the one that works. */
+  addresses: string[];
   token: string;
 }
 
+/** Read a code of version 1 (one address) or version 2 (a list). */
 function parseCode(text: string): PairEntry[] {
-  const v = JSON.parse(text) as { kari?: number; nodes?: PairEntry[] };
-  if (v.kari !== 1 || !Array.isArray(v.nodes)) throw new Error("not a kari pairing code");
-  return v.nodes.map((n) => ({ name: String(n.name ?? ""), address: n.address ? String(n.address) : null, token: String(n.token ?? "") }));
+  const v = JSON.parse(text) as { kari?: number; nodes?: { name?: string; address?: string | null; addresses?: string[]; token?: string }[] };
+  if (!v.kari || v.kari > 2 || !Array.isArray(v.nodes)) throw new Error("not a kari pairing code");
+  return v.nodes.map((n) => {
+    const list = [...(n.address ? [String(n.address)] : []), ...(Array.isArray(n.addresses) ? n.addresses.map(String) : [])];
+    return { name: String(n.name ?? ""), addresses: list.filter((a, i) => a.trim() && list.indexOf(a) === i), token: String(n.token ?? "") };
+  });
 }
 
 /** Status per node, the primary control, pairing, and this device's name. */
@@ -42,12 +47,14 @@ export function NodesTab({ board, settings, onChanged, onSettingsChanged, onActi
     }
   };
 
+  const ready = (e: PairEntry) => e.addresses.length > 0 && !!e.token;
+
   const addAll = () =>
     onAction(async () => {
       let n = 0;
       for (const e of entries ?? []) {
-        if (!e.address || !e.token) continue;
-        await api.addNode({ name: e.name, ssh_host: null, address: e.address, remote_port: 47311, token: e.token });
+        if (!ready(e)) continue;
+        await api.addNode({ name: e.name, ssh_host: null, address: e.addresses[0], addresses: e.addresses, remote_port: 47311, token: e.token });
         n++;
       }
       setEntries(null);
@@ -87,6 +94,7 @@ export function NodesTab({ board, settings, onChanged, onSettingsChanged, onActi
               {n.last_seen ? ` · seen ${relTime(n.last_seen)} ago` : ""}
               {n.primary ? " · columns: this device" : n.lease ? ` · columns: ${n.lease.hub_name}` : ""}
             </div>
+            {(n.addresses ?? []).length > 1 && <div className="hint">also tries {n.addresses.filter((a) => a !== n.address).join(", ")}</div>}
             {n.error && <div className="nodeerr">{n.error}</div>}
             {n.online && (
               <label className="field inline">
@@ -123,7 +131,7 @@ export function NodesTab({ board, settings, onChanged, onSettingsChanged, onActi
       <div className="msection">
         <h5>Pair with a code</h5>
         <div className="hint">On the desktop: Settings → Nodes → Show pairing code. Paste it here. The code holds the node tokens, so paste it at home and nowhere else.</div>
-        <textarea value={code} onChange={(e) => setCode(e.target.value)} rows={4} placeholder='{"kari":1,"nodes":[…]}' />
+        <textarea value={code} onChange={(e) => setCode(e.target.value)} rows={4} placeholder='{"kari":2,"nodes":[…]}' />
         <div className="macts">
           <button className="btn sm" disabled={!code.trim()} onClick={read}>
             Read the code
@@ -138,18 +146,22 @@ export function NodesTab({ board, settings, onChanged, onSettingsChanged, onActi
                   <span className="mnode-name">{e.name || "node"}</span>
                   <span className="hint">{e.token ? "token ok" : "no token"}</span>
                 </div>
-                <div className="field">
-                  <label>Address</label>
-                  <input
-                    value={e.address ?? ""}
-                    placeholder="ip:47311, the node's VPN address"
-                    onChange={(ev) => setEntries((all) => (all ?? []).map((x, j) => (j === i ? { ...x, address: ev.target.value || null } : x)))}
-                  />
-                </div>
+                {e.addresses.length > 0 ? (
+                  <div className="hint">{e.addresses.join(", ")}</div>
+                ) : (
+                  <div className="field">
+                    <label>Address</label>
+                    <input
+                      placeholder="ip:47311, the node's address on the VPN"
+                      onChange={(ev) => setEntries((all) => (all ?? []).map((x, j) => (j === i ? { ...x, addresses: ev.target.value.trim() ? [ev.target.value.trim()] : [] } : x)))}
+                    />
+                    <div className="hint">This node carried no address. Turn on "Let a phone reach this machine" on the desktop, then show the code again.</div>
+                  </div>
+                )}
               </div>
             ))}
-            <button className="btn primary" disabled={!entries.some((e) => e.address && e.token)} onClick={addAll}>
-              Add {entries.filter((e) => e.address && e.token).length} node(s)
+            <button className="btn primary" disabled={!entries.some(ready)} onClick={addAll}>
+              Add {entries.filter(ready).length} node(s)
             </button>
           </div>
         )}

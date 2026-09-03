@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, onBoardChanged, onNotice } from "../api";
 import type { HubBoard, HubCard, Settings } from "../types";
 import type { Picked } from "../components/Board";
@@ -10,6 +10,23 @@ import { NodesTab } from "./NodesTab";
 import "./mobile.css";
 
 type Tab = "inbox" | "board" | "add" | "nodes";
+
+/** Stands in until the first board arrives, so pairing works at once. */
+const EMPTY_BOARD: HubBoard = {
+  columns: [],
+  hub_id: "",
+  hub_name: "",
+  primary: false,
+  nodes: [],
+  cards: [],
+  quotas: [],
+  proposals: [],
+  generated_at: "",
+  scanning: false,
+  herdr_connected: false,
+  hooks_installed: false,
+  hooks_port: 47311,
+};
 
 interface Toast {
   id: number;
@@ -26,6 +43,7 @@ export default function MobileApp() {
   const [selected, setSelected] = useState<Picked | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [waited, setWaited] = useState(0);
 
   const toast = useCallback((text: string, err = false, card: Picked | null = null) => {
     const id = Date.now() + Math.random();
@@ -33,15 +51,24 @@ export default function MobileApp() {
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), err ? 7000 : card ? 8000 : 3500);
   }, []);
 
-  const load = useCallback(async () => {
-    try {
-      const b = await api.board();
-      setBoard(b);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
+  // The hub may still be opening its store when the first call goes out. A
+  // failed call comes back in a moment, not at the next poll thirty seconds
+  // later, which is what made the first screen look stuck.
+  const retry = useRef<number | null>(null);
+  const load = useCallback(
+    async function run(attempt = 0): Promise<void> {
+      try {
+        const b = await api.board();
+        setBoard(b);
+        setError(null);
+      } catch (e) {
+        setError(String(e));
+        if (retry.current !== null) window.clearTimeout(retry.current);
+        retry.current = window.setTimeout(() => void run(attempt + 1), Math.min(8000, 400 * 2 ** attempt));
+      }
+    },
+    [],
+  );
 
   const loadSettings = useCallback(() => api.settings().then(setSettings).catch(() => {}), []);
 
@@ -55,6 +82,7 @@ export default function MobileApp() {
       un1();
       un2();
       window.clearInterval(t);
+      if (retry.current !== null) window.clearTimeout(retry.current);
     };
   }, [load, loadSettings, toast]);
 
@@ -70,6 +98,12 @@ export default function MobileApp() {
     },
     [load, toast],
   );
+
+  useEffect(() => {
+    if (board) return;
+    const t = window.setInterval(() => setWaited((w) => w + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [board]);
 
   const nodes = useMemo(() => board?.nodes ?? [], [board]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
@@ -97,10 +131,10 @@ export default function MobileApp() {
     <div className="mapp">
       <main className="mmain">
         {error && <div className="merr">{error}</div>}
-        {!board && !error && <div className="empty">Loading the herd…</div>}
+        {!board && !error && tab !== "nodes" && <div className="empty">Loading the herd… {waited > 2 ? `${waited}s` : ""}</div>}
         {board && tab === "inbox" && <Inbox board={board} onOpen={open} onAction={run} />}
         {board && tab === "board" && <BoardTab board={board} onOpen={open} onAction={run} />}
-        {board && tab === "nodes" && <NodesTab board={board} settings={settings} onChanged={load} onSettingsChanged={loadSettings} onAction={run} />}
+        {tab === "nodes" && <NodesTab board={board ?? EMPTY_BOARD} settings={settings} onChanged={load} onSettingsChanged={loadSettings} onAction={run} />}
         {tab === "add" && board && (
           <AddTaskModal
             nodes={nodes}
