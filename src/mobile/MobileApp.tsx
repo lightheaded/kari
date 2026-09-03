@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, onBoardChanged, onNotice } from "../api";
 import type { HubBoard, HubCard, Settings } from "../types";
 import type { Picked } from "../components/Board";
@@ -51,15 +51,24 @@ export default function MobileApp() {
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), err ? 7000 : card ? 8000 : 3500);
   }, []);
 
-  const load = useCallback(async () => {
-    try {
-      const b = await api.board();
-      setBoard(b);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
+  // The hub may still be opening its store when the first call goes out. A
+  // failed call comes back in a moment, not at the next poll thirty seconds
+  // later, which is what made the first screen look stuck.
+  const retry = useRef<number | null>(null);
+  const load = useCallback(
+    async function run(attempt = 0): Promise<void> {
+      try {
+        const b = await api.board();
+        setBoard(b);
+        setError(null);
+      } catch (e) {
+        setError(String(e));
+        if (retry.current !== null) window.clearTimeout(retry.current);
+        retry.current = window.setTimeout(() => void run(attempt + 1), Math.min(8000, 400 * 2 ** attempt));
+      }
+    },
+    [],
+  );
 
   const loadSettings = useCallback(() => api.settings().then(setSettings).catch(() => {}), []);
 
@@ -73,6 +82,7 @@ export default function MobileApp() {
       un1();
       un2();
       window.clearInterval(t);
+      if (retry.current !== null) window.clearTimeout(retry.current);
     };
   }, [load, loadSettings, toast]);
 
