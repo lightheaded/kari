@@ -316,7 +316,7 @@ export interface Settings {
   weekly_warn_unused_pct: number;
   away_mode: boolean;
   away_hold_secs: number;
-  extra_listen: string;
+  listen_private: boolean;
 }
 export interface NewTask {
   title: string;
@@ -368,11 +368,8 @@ export interface NodeStatus {
   primary: boolean;
   /** True when the node holds permission prompts for a remote answer. */
   away_mode: boolean;
-}
-export interface LocalAddress {
-  interface: string;
-  ip: string;
-  private: boolean;
+  /** Addresses the node answers on, best first. A pairing code carries them. */
+  addresses: string[];
 }
 export interface HubCard extends CardView {
   node_id: string;
@@ -411,12 +408,15 @@ export interface NewNode {
   ssh_host: string | null;
   /** host:port on a private network, when there is no SSH forward. */
   address?: string | null;
+  /** Every address to try, from a pairing code. */
+  addresses?: string[];
   remote_port: number;
   /** The node's token, when known already, for example from a pairing code. */
   token?: string | null;
 }
 export interface NodePatch {
   name?: string;
+  addresses?: string[];
   ssh_host?: string | null;
   address?: string | null;
   remote_port?: number;

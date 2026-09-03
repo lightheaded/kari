@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Column, DerivedState, LocalAddress, NewTask, NodeStatus, Settings } from "../types";
+import type { Column, DerivedState, NewTask, NodeStatus, Settings } from "../types";
 import { ALL_STATES, RUN_MODELS, STATE_LABEL } from "../types";
 import { nodeDot, relTime } from "../util";
 
@@ -304,6 +304,7 @@ function NodeRow({
         {node.primary ? " · columns: this device" : node.lease ? ` · columns: ${node.lease.hub_name}` : ""}
         {node.away_mode ? " · away mode" : ""}
       </span>
+      {node.addresses?.length > 1 && <span className="hint">also at {node.addresses.slice(1).join(", ")}</span>}
       <div className="nodeacts">
         {node.online && (
           <button className="btn ghost sm" disabled={busy} onClick={onAway} title="Hold permission prompts for a remote answer, such as from a phone">
@@ -353,12 +354,16 @@ function NodesSection({
   onNodesChanged,
   localName,
   onLocalName,
+  listenPrivate,
+  onListenPrivate,
 }: {
   nodes: NodeStatus[];
   primary: boolean;
   onNodesChanged: () => void;
   localName: string;
   onLocalName: (name: string) => void;
+  listenPrivate: boolean;
+  onListenPrivate: (on: boolean) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -400,6 +405,8 @@ function NodesSection({
       setName("");
     });
 
+  const reach = nodes.find((n) => n.kind === "local")?.addresses ?? [];
+
   return (
     <div className="section">
       <h5>Nodes</h5>
@@ -435,9 +442,22 @@ function NodesSection({
           {code ? "Hide the pairing code" : "Show pairing code"}
         </button>
       </div>
+      <div className="phonereach">
+        <label className="checkrow">
+          <input type="checkbox" checked={listenPrivate} onChange={(e) => onListenPrivate(e.target.checked)} />
+          <span>Let a phone reach this machine</span>
+        </label>
+        <div className="hint">
+          kari then answers on the private addresses of this machine as well, such as a VPN address. It never answers on a public address. A hub on a phone needs this, because a phone cannot open an SSH
+          forward. The list is checked again every 20 seconds, so a VPN that comes up later needs no restart.
+        </div>
+        {listenPrivate && (
+          <div className="hint">{reach.length ? `reachable at ${reach.join(", ")}` : "no private address yet. Bring the VPN up, then look again in 20 seconds."}</div>
+        )}
+      </div>
       {code && (
         <div className="paircode">
-          <div className="hint">Paste this in the phone's Nodes tab. It holds the node tokens: show it at home only, and hide it when done. This machine appears with an address only when "Also listen on" is set.</div>
+          <div className="hint">Paste this in the phone's Nodes tab. The code carries the addresses of every node, so the phone types none. It holds the node tokens: show it at home only, and hide it when done.</div>
           <textarea readOnly value={code} rows={3} onFocus={(e) => e.currentTarget.select()} />
         </div>
       )}
@@ -499,6 +519,7 @@ export function SettingsModal({
   onNodesChanged,
   onClose,
   onSave,
+  onSaveNow,
   onStopAll,
   onHooks,
 }: {
@@ -510,15 +531,12 @@ export function SettingsModal({
   onNodesChanged: () => void;
   onClose: () => void;
   onSave: (s: Settings) => void;
+  /** Write one setting now, without closing the modal. */
+  onSaveNow: (s: Settings) => void;
   onStopAll: () => void;
   onHooks: (install: boolean) => void;
 }) {
   const [s, setS] = useState<Settings>({ ...settings });
-  const [addrs, setAddrs] = useState<LocalAddress[]>([]);
-  useEffect(() => {
-    api.localAddresses().then(setAddrs).catch(() => {});
-  }, []);
-  const extraIp = (s.extra_listen ?? "").split(":").slice(0, -1).join(":");
   const [paths, setPaths] = useState<Record<string, string> | null>(null);
   useEffect(() => {
     api.paths().then(setPaths).catch(() => {});
@@ -543,24 +561,6 @@ export function SettingsModal({
         </>
       }
     >
-      <div className="field">
-        <label>Also listen on</label>
-        <select
-          value={extraIp}
-          onChange={(e) => setS({ ...s, extra_listen: e.target.value ? `${e.target.value}:${s.hooks_port}` : "" })}
-        >
-          <option value="">loopback only</option>
-          {addrs.map((a) => (
-            <option key={`${a.interface}-${a.ip}`} value={a.ip}>
-              {a.interface} · {a.ip}
-              {a.private ? "" : " (public)"}
-            </option>
-          ))}
-        </select>
-        <div className="hint">
-          A second address for the kari API, for a hub on a phone over a private network. Pick the VPN interface, never a public one. Takes effect after a restart.
-        </div>
-      </div>
       <div className="grid2">
         <div className="field">
           <label>History window (days)</label>
@@ -607,7 +607,20 @@ export function SettingsModal({
           </select>
         </div>
       </div>
-      <NodesSection nodes={nodes} primary={primary} onNodesChanged={onNodesChanged} localName={s.node_name ?? ""} onLocalName={(name) => setS({ ...s, node_name: name })} />
+      <NodesSection
+        nodes={nodes}
+        primary={primary}
+        onNodesChanged={onNodesChanged}
+        localName={s.node_name ?? ""}
+        onLocalName={(name) => setS({ ...s, node_name: name })}
+        listenPrivate={s.listen_private}
+        onListenPrivate={(on) => {
+          setS({ ...s, listen_private: on });
+          // Saved at once: the pairing code needs the addresses now, not after
+          // the Save button.
+          onSaveNow({ ...settings, listen_private: on });
+        }}
+      />
       <div className="section">
         <h5>Live hooks</h5>
         <div className="hint">

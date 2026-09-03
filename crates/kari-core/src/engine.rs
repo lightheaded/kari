@@ -1448,6 +1448,7 @@ impl Engine {
             node_id: self.node_id(),
             node_name: self.node_name(),
             platform: std::env::consts::OS.into(),
+            addresses: crate::net::bound_reachable(),
         }
     }
 

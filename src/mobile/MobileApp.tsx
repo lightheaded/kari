@@ -11,6 +11,23 @@ import "./mobile.css";
 
 type Tab = "inbox" | "board" | "add" | "nodes";
 
+/** Stands in until the first board arrives, so pairing works at once. */
+const EMPTY_BOARD: HubBoard = {
+  columns: [],
+  hub_id: "",
+  hub_name: "",
+  primary: false,
+  nodes: [],
+  cards: [],
+  quotas: [],
+  proposals: [],
+  generated_at: "",
+  scanning: false,
+  herdr_connected: false,
+  hooks_installed: false,
+  hooks_port: 47311,
+};
+
 interface Toast {
   id: number;
   text: string;
@@ -26,6 +43,7 @@ export default function MobileApp() {
   const [selected, setSelected] = useState<Picked | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [waited, setWaited] = useState(0);
 
   const toast = useCallback((text: string, err = false, card: Picked | null = null) => {
     const id = Date.now() + Math.random();
@@ -71,6 +89,12 @@ export default function MobileApp() {
     [load, toast],
   );
 
+  useEffect(() => {
+    if (board) return;
+    const t = window.setInterval(() => setWaited((w) => w + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [board]);
+
   const nodes = useMemo(() => board?.nodes ?? [], [board]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const cards: HubCard[] = useMemo(() => board?.cards ?? [], [board]);
@@ -97,10 +121,10 @@ export default function MobileApp() {
     <div className="mapp">
       <main className="mmain">
         {error && <div className="merr">{error}</div>}
-        {!board && !error && <div className="empty">Loading the herd…</div>}
+        {!board && !error && tab !== "nodes" && <div className="empty">Loading the herd… {waited > 2 ? `${waited}s` : ""}</div>}
         {board && tab === "inbox" && <Inbox board={board} onOpen={open} onAction={run} />}
         {board && tab === "board" && <BoardTab board={board} onOpen={open} onAction={run} />}
-        {board && tab === "nodes" && <NodesTab board={board} settings={settings} onChanged={load} onSettingsChanged={loadSettings} onAction={run} />}
+        {tab === "nodes" && <NodesTab board={board ?? EMPTY_BOARD} settings={settings} onChanged={load} onSettingsChanged={loadSettings} onAction={run} />}
         {tab === "add" && board && (
           <AddTaskModal
             nodes={nodes}

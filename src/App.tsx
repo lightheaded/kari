@@ -300,6 +300,7 @@ export default function App() {
               setModal(null);
             })
           }
+          onSaveNow={(s) => run(() => api.setSettings(s), "Settings saved").then(() => setSettings(s))}
           onStopAll={() => run(() => api.stopAll(), "Stopped kari jobs")}
         />
       )}

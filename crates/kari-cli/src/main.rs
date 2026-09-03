@@ -33,6 +33,11 @@ enum Cmd {
         /// 127.0.0.1 and stops working on an address that leaves it out.
         #[arg(long)]
         allow_remote: bool,
+        /// Answer on every private address of this machine as well, so a hub on
+        /// a phone can reach the node without an SSH forward. The list is read
+        /// again every 20 seconds. A public address is never bound.
+        #[arg(long)]
+        private: bool,
         /// Set the node name other kari instances show. Empty keeps the host name.
         #[arg(long)]
         name: Option<String>,
@@ -90,6 +95,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Serve {
             listen,
             allow_remote,
+            private,
             name,
             usage_endpoint,
             summaries,
@@ -98,6 +104,7 @@ fn main() -> anyhow::Result<()> {
         } => serve(Serve {
             listen,
             allow_remote,
+            private,
             name,
             usage_endpoint,
             summaries,
@@ -146,6 +153,7 @@ fn main() -> anyhow::Result<()> {
 struct Serve {
     listen: Vec<SocketAddr>,
     allow_remote: bool,
+    private: bool,
     name: Option<String>,
     usage_endpoint: bool,
     summaries: Option<bool>,
@@ -157,6 +165,7 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
     let Serve {
         listen,
         allow_remote,
+        private,
         name,
         usage_endpoint,
         summaries,
@@ -225,7 +234,7 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
-        let server = api::serve_all(Arc::clone(&engine), addrs, allow_remote);
+        let server = api::serve_dynamic(Arc::clone(&engine), addrs, allow_remote, private);
         tokio::select! {
             r = server => r,
             _ = shutdown() => {

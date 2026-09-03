@@ -8,7 +8,6 @@ import type {
   Column,
   HubBoard,
   JobLogEntry,
-  LocalAddress,
   NewNode,
   NewTask,
   NodePatch,
@@ -53,6 +52,7 @@ function localNode(): NodeStatus {
     lease: null,
     primary: true,
     away_mode: false,
+    addresses: [],
   };
 }
 
@@ -121,7 +121,6 @@ export const api = {
     invoke<void>("answer_permission", { nodeId, permissionId, behavior }),
   setAwayMode: (nodeId: string, on: boolean) => invoke<void>("set_away_mode", { nodeId, on }),
   pairingCode: () => invoke<string>("pairing_code"),
-  localAddresses: () => invoke<LocalAddress[]>("local_addresses"),
   jobLog: (nodeId: string, cardId: string, limit = 40) =>
     inTauri
       ? invoke<JobLogEntry[]>("job_log", { nodeId, cardId, limit })

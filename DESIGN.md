@@ -272,11 +272,21 @@ stay in one place. A node needs no open port, no certificate and no new secret.
 A client that cannot open an SSH forward, such as a phone app, reaches a node
 over a private network instead. The node record then carries an `address`
 (`host:port`) and the token comes with it, from a pairing code. The node
-listens on loopback for the hook relay and on one more address for that hub:
-`kari-node serve --listen 127.0.0.1:47311 --listen <vpn-ip>:47311
---allow-remote`, or "Also listen on" in the desktop Settings. Never every
-interface on a laptop that visits other networks. The token is the only guard
-on that path, so the private network is what carries the trust.
+answers on loopback for the hook relay, and on every private address of the
+machine while the setting `listen_private` is on (`kari-node serve --private`,
+or "Let a phone reach this machine" in the desktop Settings). A public address
+is never bound, so a laptop that visits other networks stays closed there. The
+listener reads the address list again every 20 seconds: a VPN interface that
+comes up later is bound without a restart, and one that goes away is dropped.
+The token is the only guard on that path, so the private network is what
+carries the trust.
+
+Each node reports the addresses it bound in its identity. A hub keeps the list
+in the node record, tries the addresses in order on the next connection, and
+saves the one that answered. The desktop learns a node's private address over
+the SSH connection it has already, so a pairing code carries every node's
+addresses and the phone types none. An address that changes costs one failed
+connection, not a re-pair.
 
 Pairing is one SSH call: the app reads `~/.config/kari/hook-token` from the
 node and keeps it in the macOS keychain, one item per node under the service

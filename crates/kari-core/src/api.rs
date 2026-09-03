@@ -496,20 +496,100 @@ pub async fn serve_all(
     Ok(())
 }
 
-/// The same server as a background task, for the desktop app. Errors are logged.
-/// `extra` is a second address to listen on, such as a WireGuard address.
-pub fn spawn(engine: Arc<Engine>, port: u16, extra: Option<SocketAddr>) {
-    let mut addrs = vec![SocketAddr::from(([127, 0, 0, 1], port))];
-    let allow_remote = extra.is_some();
-    if let Some(a) = extra {
-        if a.ip().is_unspecified() {
-            warn!("kari api: refusing to listen on every interface ({a}); pick one address");
-        } else {
-            addrs.push(a);
+/// Serve the API on the fixed addresses, and on every private address of this
+/// machine while the setting asks for it.
+///
+/// The private set is read again every 20 seconds: a VPN interface that comes
+/// up after the start is bound without a restart, and one that goes away is
+/// dropped. A public address is never bound. The node advertises what it bound
+/// in its identity, so a hub on a phone finds it without a typed address.
+pub async fn serve_dynamic(
+    engine: Arc<Engine>,
+    fixed: Vec<SocketAddr>,
+    allow_remote: bool,
+    force_private: bool,
+) -> anyhow::Result<()> {
+    let Some(first) = fixed.first().copied() else {
+        anyhow::bail!("no address to listen on");
+    };
+    for addr in &fixed {
+        if !addr.ip().is_loopback() && !allow_remote {
+            anyhow::bail!(
+                "{addr} is not a loopback address; pass --allow-remote to bind it anyway"
+            );
         }
     }
+    let token = hooks::token()?;
+    if let Err(e) = hooks::refresh_script(first.port()) {
+        warn!("hook relay script not refreshed: {e}");
+    }
+    let app = router(engine.clone(), token);
+    let mut pinned = Vec::new();
+    for addr in &fixed {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        info!("kari api on http://{addr}");
+        pinned.push(tokio::spawn(
+            axum::serve(listener, app.clone()).into_future(),
+        ));
+    }
+    let port = first.port();
+    // One graceful-shutdown sender per address that the private scan added.
+    let mut extra: std::collections::HashMap<SocketAddr, tokio::sync::oneshot::Sender<()>> =
+        Default::default();
+    loop {
+        if pinned.iter().any(|h| h.is_finished()) {
+            anyhow::bail!("the api stopped listening");
+        }
+        let on = force_private || engine.settings().listen_private;
+        let want: Vec<SocketAddr> = if on {
+            crate::net::private_sockets(port)
+                .into_iter()
+                .filter(|a| !fixed.contains(a))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        extra.retain(|addr, _| {
+            let keep = want.contains(addr);
+            if !keep {
+                info!("kari api left {addr}");
+            }
+            keep
+        });
+        for addr in want {
+            if extra.contains_key(&addr) {
+                continue;
+            }
+            match tokio::net::TcpListener::bind(addr).await {
+                Ok(listener) => {
+                    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+                    let app = app.clone();
+                    tokio::spawn(async move {
+                        let _ = axum::serve(listener, app)
+                            .with_graceful_shutdown(async move {
+                                let _ = rx.await;
+                            })
+                            .await;
+                    });
+                    info!("kari api on http://{addr}");
+                    extra.insert(addr, tx);
+                }
+                Err(e) => warn!("kari api cannot bind {addr}: {e}"),
+            }
+        }
+        let mut bound: Vec<SocketAddr> = fixed.clone();
+        bound.extend(extra.keys().copied());
+        crate::net::set_bound(bound);
+        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+    }
+}
+
+/// The same server as a background task, for the desktop app. Errors are logged.
+/// Loopback is fixed; the private addresses follow the setting.
+pub fn spawn(engine: Arc<Engine>, port: u16) {
+    let fixed = vec![SocketAddr::from(([127, 0, 0, 1], port))];
     tokio::spawn(async move {
-        if let Err(e) = serve_all(engine, addrs, allow_remote).await {
+        if let Err(e) = serve_dynamic(engine, fixed, false, false).await {
             warn!("kari api stopped: {e}");
         }
     });

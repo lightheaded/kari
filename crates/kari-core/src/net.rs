@@ -1,7 +1,13 @@
-//! The addresses this machine has, for the "also listen on" picker. The hub
-//! on a phone reaches a node over one of them, never over every interface.
+//! The addresses this machine has, and the ones the API listens on now.
+//!
+//! A hub on a phone cannot open an SSH forward, so it reaches a node over one
+//! of the node's private addresses. The listener binds the private addresses
+//! only; a public address is never bound. The node advertises what it bound in
+//! its identity, and a pairing code carries the list to the phone.
 
 use serde::Serialize;
+use std::net::SocketAddr;
+use std::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LocalAddress {
@@ -45,6 +51,37 @@ pub fn local_addresses() -> Vec<LocalAddress> {
     out
 }
 
+/// Every private, non-loopback address of this machine, with `port`.
+pub fn private_sockets(port: u16) -> Vec<SocketAddr> {
+    local_addresses()
+        .into_iter()
+        .filter(|a| a.private)
+        .filter_map(|a| a.ip.parse::<std::net::IpAddr>().ok())
+        .map(|ip| SocketAddr::new(ip, port))
+        .collect()
+}
+
+/// What the API listens on now. The listener writes it; identity reads it.
+static BOUND: RwLock<Vec<SocketAddr>> = RwLock::new(Vec::new());
+
+pub fn set_bound(addrs: Vec<SocketAddr>) {
+    if let Ok(mut b) = BOUND.write() {
+        *b = addrs;
+    }
+}
+
+/// The bound addresses a remote hub can use: private, never loopback.
+pub fn bound_reachable() -> Vec<String> {
+    let b = match BOUND.read() {
+        Ok(b) => b.clone(),
+        Err(_) => return Vec::new(),
+    };
+    b.into_iter()
+        .filter(|a| !a.ip().is_loopback() && is_private(&a.ip()))
+        .map(|a| a.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +108,19 @@ mod tests {
         assert!(!is_private(&IpAddr::V6(Ipv6Addr::new(
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
         ))));
+    }
+
+    #[test]
+    fn bound_list_drops_loopback_and_public() {
+        let port = 47311;
+        set_bound(vec![
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)), port),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), port),
+        ]);
+        let out = bound_reachable();
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(out[0].ends_with(":47311"));
+        set_bound(Vec::new());
     }
 }
