@@ -82,7 +82,7 @@ pub struct BgStart {
     pub raw: String,
 }
 
-/// `claude --bg [--resume <id>] [--model <model>] --permission-mode <mode> --name <name> "<prompt>"` in `cwd`.
+/// `claude --bg [--resume <id>] [--model <model>] --permission-mode <mode> --name <name> -- "<prompt>"` in `cwd`.
 pub fn start_background(
     cwd: &str,
     prompt: &str,
@@ -107,7 +107,8 @@ pub fn start_background(
     if let Some(n) = name {
         cmd.args(["--name", n]);
     }
-    cmd.arg(prompt);
+    // `--` ends the options. A prompt that starts with `-` stays a prompt.
+    cmd.arg("--").arg(prompt);
     let out = cmd.stdin(Stdio::null()).output()?;
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();

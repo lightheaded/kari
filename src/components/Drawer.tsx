@@ -344,7 +344,7 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
                 <select value={mode} onChange={(e) => setMode(e.target.value)}>
                   {MODES.map((m) => (
                     <option key={m} value={m}>
-                      {m || `default (${settings?.default_permission_mode ?? "bypassPermissions"})`}
+                      {m || `default (${settings?.default_permission_mode ?? "auto"})`}
                     </option>
                   ))}
                 </select>

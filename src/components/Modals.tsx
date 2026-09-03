@@ -283,7 +283,7 @@ export function SettingsModal({
         <div className="field">
           <label>Default permission mode for unattended runs</label>
           <select value={s.default_permission_mode} onChange={(e) => setS({ ...s, default_permission_mode: e.target.value })}>
-            {["bypassPermissions", "acceptEdits", "auto", "plan", "default"].map((m) => (
+            {["auto", "acceptEdits", "bypassPermissions", "plan", "default"].map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>

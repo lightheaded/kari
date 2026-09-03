@@ -75,9 +75,13 @@ The script backs up `~/.claude/settings.json`, stores the original command in `~
 
 ## Live hooks
 
-Open Settings and click "Install hooks". kari writes a relay script to `~/.config/kari/hook.sh` and registers it in `~/.claude/settings.json` for these events: SessionStart, SessionEnd, UserPromptSubmit, Stop, Notification, PreToolUse (AskUserQuestion and ExitPlanMode), PostToolUse. kari keeps a backup of the settings file in `~/.config/kari/`. The relay posts the payload with `curl` and always exits 0, so a closed kari never blocks a session. New sessions pick up the hooks. Running sessions keep the old settings until they restart. "Remove hooks" takes the entries out again and leaves other hooks in place.
+Open Settings and click "Install hooks". kari writes a relay script to `~/.config/kari/hook.sh` and registers it in `~/.claude/settings.json` for these events: SessionStart, SessionEnd, UserPromptSubmit, Stop, Notification, PreToolUse (AskUserQuestion and ExitPlanMode), PostToolUse. kari keeps a backup of the settings file in `~/.config/kari/`. The relay posts the payload with `curl` and always exits 0, so a closed kari never blocks a session. Every post carries a token from `~/.config/kari/hook-token` in the `x-kari-token` header. kari creates the token on first start with mode 0600 and refuses a post without it. A process that runs as your user can read the file, so the token keeps out other users, sandboxed apps and web pages, not your own processes. New sessions pick up the hooks. Running sessions keep the old settings until they restart. "Remove hooks" takes the entries out again and leaves other hooks in place.
 
-The receiver also serves `GET /kari/board` (the board as JSON) and `GET /kari/health` for scripts.
+The receiver also serves `GET /kari/board` (the board as JSON) and `GET /kari/health` for scripts. The board needs the same token:
+
+```
+curl -H "x-kari-token: $(cat ~/.config/kari/hook-token)" 127.0.0.1:47311/kari/board
+```
 
 ## Summaries
 
@@ -91,7 +95,7 @@ A task card estimate is the median weighted-token cost of past sessions in the s
 
 Weighted tokens count output five times, cache writes 1.25 times and cache reads a tenth, so the number tracks cost, not volume.
 
-If no session refreshes the status line for 5 minutes, kari can ask the undocumented OAuth usage endpoint instead. That fallback is off by default. It reads the Claude Code login token from the keychain, asks at most once every 3 minutes, and never writes the token to a log.
+If no session refreshes the status line for 5 minutes, kari can ask the undocumented OAuth usage endpoint instead. That fallback is off by default. It reads the Claude Code login token from the keychain, asks at most once every 3 minutes with a `kari/<version>` user agent, and never writes the token to a log.
 
 ## Proposals
 
@@ -107,7 +111,7 @@ The panel shows the reason, the budget, the plan total and the window after the 
 
 ## Runs, run log and the kill switch
 
-A started card runs as `claude --bg` with the permission mode of the card, or the default (`bypassPermissions`).
+A started card runs as `claude --bg` with the permission mode of the card, or the default from Settings. New installs default to `auto`. Choose `bypassPermissions` there only if you accept that an unattended run has no permission checks in the project directory.
 
 Each card can also name a model. The New task dialog and the card drawer offer Fable, Opus, Sonnet and Haiku, and "Default" leaves the choice to Claude Code. kari passes the name as `--model` on every start: background runs, Jump in, and a herdr pane. Settings holds the default for cards that name none. A card that names a model shows it as a chip, and the plan panel shows it per task. kari follows the job and writes one run-log line per state change. The card drawer shows the log. The job outcome stays on the card after `claude agents` forgets the job, so a finished job leaves the card in Validate and a failed job leaves it in My turn.
 

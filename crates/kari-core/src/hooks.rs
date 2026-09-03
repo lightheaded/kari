@@ -12,6 +12,10 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 
 pub const HOOK_PATH: &str = "/kari/hook";
+/// The header that carries the shared secret. The relay script reads the
+/// secret from the token file at run time, so a rotated token needs no
+/// reinstall.
+pub const TOKEN_HEADER: &str = "x-kari-token";
 const MARKER: &str = "kari/hook.sh";
 
 /// Events kari registers. PostToolUse clears a pending permission, so it needs every tool.
@@ -109,11 +113,52 @@ pub fn script_path() -> PathBuf {
 }
 
 pub fn script(port: u16) -> String {
+    let token_file = paths::hook_token_file().to_string_lossy().into_owned();
     format!(
         "#!/bin/sh\n# kari hook relay. Posts the Claude Code hook payload to kari and never fails.\n\
-         curl -s -m 3 -X POST -H 'content-type: application/json' --data-binary @- \\\n  \
+         tok=$(cat '{token_file}' 2>/dev/null)\n\
+         curl -s -m 3 -X POST -H 'content-type: application/json' -H \"{TOKEN_HEADER}: $tok\" --data-binary @- \\\n  \
          'http://127.0.0.1:{port}{HOOK_PATH}' >/dev/null 2>&1\nexit 0\n"
     )
+}
+
+/// The shared secret. Created on first use with mode 0600. Any process that
+/// runs as the same user can read it, so the token keeps out other users,
+/// sandboxed apps and web pages, not the user's own processes.
+pub fn token() -> anyhow::Result<String> {
+    let p = paths::hook_token_file();
+    if let Ok(t) = std::fs::read_to_string(&p) {
+        let t = t.trim().to_string();
+        if t.len() >= 32 {
+            return Ok(t);
+        }
+    }
+    let mut bytes = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))?;
+    let t: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    std::fs::create_dir_all(paths::kari_dir())?;
+    std::fs::write(&p, &t)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(t)
+}
+
+/// Rewrite the relay script when an installed copy predates the token header.
+/// kari owns the script, so this needs no click.
+pub fn refresh_script(port: u16) -> anyhow::Result<()> {
+    let sp = script_path();
+    let Ok(current) = std::fs::read_to_string(&sp) else {
+        return Ok(());
+    };
+    if current.contains(TOKEN_HEADER) {
+        return Ok(());
+    }
+    std::fs::write(&sp, script(port))?;
+    Ok(())
 }
 
 fn settings_path() -> PathBuf {

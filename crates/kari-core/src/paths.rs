@@ -42,6 +42,11 @@ pub fn kari_db() -> PathBuf {
     kari_dir().join("kari.db")
 }
 
+/// The shared secret between the hook relay script and the receiver.
+pub fn hook_token_file() -> PathBuf {
+    kari_dir().join("hook-token")
+}
+
 pub fn rate_limits_file() -> PathBuf {
     kari_dir().join("rate-limits.json")
 }

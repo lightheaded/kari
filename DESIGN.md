@@ -67,7 +67,7 @@ kari never asks the user for information that Claude Code already writes to disk
 | Live session registry | `~/.claude/sessions/<pid>.json` | pid, session id, cwd, display name, name source, status `idle` / `busy` / `shell`, start time | file watch, instant |
 | Transcripts | `~/.claude/projects/<slug>/<session-id>.jsonl` | AI title, custom title, prompts, per-message token usage, model, git branch, PR links, turn durations, pending tool calls | file watch, tail parse |
 | Background agents | `claude agents --json --all`, `~/.claude/jobs/<id>/state.json` | job id, state `working` / `blocked` / `done` / `failed` / `stopped`, `waitingFor` reason | 15 s poll plus file watch |
-| Hooks | `Notification`, `Stop`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` as `command` hooks that run `~/.config/kari/hook.sh`, which posts the payload to `127.0.0.1:47311/kari/hook` | exact events: `permission_prompt`, `idle_prompt`, `agent_needs_input`, turn start and end, tool runs | instant, optional |
+| Hooks | `Notification`, `Stop`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` as `command` hooks that run `~/.config/kari/hook.sh`, which posts the payload to `127.0.0.1:47311/kari/hook` with a token from `~/.config/kari/hook-token` | exact events: `permission_prompt`, `idle_prompt`, `agent_needs_input`, turn start and end, tool runs | instant, optional |
 | Status line | wrapper script writes `~/.config/kari/rate-limits.json` | `rate_limits.five_hour` and `seven_day`: `used_percentage`, `resets_at` | each status line refresh |
 | OAuth usage endpoint | `GET api.anthropic.com/api/oauth/usage` | same windows, server truth, includes other devices | fallback poll every 3 min when no status line sample for 5 min |
 | herdr | `~/.config/herdr/herdr.sock`, newline JSON | workspaces, tabs, panes, agent status `idle` / `working` / `blocked` / `done` | socket poll every 15 s |
@@ -184,13 +184,13 @@ Start uses Claude Code background agents:
 
 ```
 cd <project cwd>
-claude --bg --permission-mode bypassPermissions [--model <model>] --name <card-slug> "<run prompt>"
+claude --bg --permission-mode <mode> [--model <model>] --name <card-slug> -- "<run prompt>"
 claude --bg --resume <session-id> [--model <model>] "<continue prompt>"    # for session cards
 ```
 
 The model comes from the card, else from `default_run_model` in settings, else from Claude Code. The value is an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full model name. Jump in uses the same value, both for a terminal and for a herdr pane.
 
-Default permission mode is `bypassPermissions`, overridable per card. Background agents move edits into a git worktree under `.claude/worktrees/`, so parallel runs do not collide. kari records the job id, follows `state.json`, and moves the card: `working` → `validate` on `done`, `needs_approval` on `blocked`, and a notification on `failed`.
+The default permission mode is `auto` (until 2026-09-03: `bypassPermissions`), set in Settings and overridable per card. `--` ends the options, so a prompt that starts with `-` stays a prompt. Background agents move edits into a git worktree under `.claude/worktrees/`, so parallel runs do not collide. kari records the job id, follows `state.json`, and moves the card: `working` → `validate` on `done`, `needs_approval` on `blocked`, and a notification on `failed`.
 
 kari writes one `job_log` row per state change and keeps the last state on the card, because `claude agents` forgets a job after a while. A card with a remembered `done` sits in Validate until the session shows newer work, or until the user moves it.
 
@@ -241,7 +241,7 @@ Flow: watchers and pollers in `kari-core` emit domain events on a channel. A red
 |---|---|
 | Transcript and registry formats are internal and change between releases | Tolerant parser, optional fields, a format test per Claude Code version, hooks as a second source |
 | The OAuth usage endpoint is undocumented and rate limited | Status line is the primary source. The endpoint is a fallback with a 3-minute floor and the Claude Code user agent |
-| `bypassPermissions` in unattended runs | Worktree isolation by background agents, explicit `auto_run` per card, kill switch, a run log per job |
+| `bypassPermissions` chosen for unattended runs | Worktree isolation by background agents, explicit `auto_run` per card, kill switch, a run log per job |
 | Percent-to-token calibration is noisy | Confidence bands, conservative headroom, the planner never fills past 85 percent of a window |
 | Haiku summaries spend quota | Hard throttle, heuristics fallback, off switch |
 
@@ -252,7 +252,7 @@ Made on 2026-09-02:
 - Name: kari.
 - Stack: Tauri 2 with a Rust core, React and TypeScript frontend.
 - Runner: Claude Code background agents (`claude --bg`).
-- Default permission mode for unattended runs: `bypassPermissions`, overridable per card.
+- Default permission mode for unattended runs: `auto` since 2026-09-03 (before: `bypassPermissions`), overridable in Settings and per card.
 - Scope: this Mac only. Sync later.
 - Jump in: herdr pane when present, else iTerm2.
 - Scheduler: propose, the user confirms.

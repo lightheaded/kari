@@ -27,9 +27,10 @@ bun run build
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+scripts/check-privacy.sh
 ```
 
-CI runs the same commands.
+CI runs the same commands, plus a gitleaks scan of the history. The last script refuses absolute home paths, email addresses, private network addresses and internal host names. Use `~` or a placeholder such as `/Users/you/` instead.
 
 ## Pull requests
 
