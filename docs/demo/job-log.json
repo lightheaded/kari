@@ -1,0 +1,55 @@
+{
+  "task_crash": [
+    {
+      "at": "2026-09-03T09:35:00.000Z",
+      "job_id": "job_2b9e41",
+      "card_id": "task_crash",
+      "state": "done",
+      "detail": "job completed, PR opened"
+    },
+    {
+      "at": "2026-09-03T09:29:00.000Z",
+      "job_id": "job_2b9e41",
+      "card_id": "task_crash",
+      "state": "working",
+      "detail": "tests pass, pushing"
+    },
+    {
+      "at": "2026-09-03T09:03:00.000Z",
+      "job_id": "job_2b9e41",
+      "card_id": "task_crash",
+      "state": "working",
+      "detail": "started by plan prop_00 with model sonnet"
+    },
+    {
+      "at": "2026-09-03T09:02:00.000Z",
+      "job_id": "job_2b9e41",
+      "card_id": "task_crash",
+      "state": "queued",
+      "detail": "claude --bg accepted the job"
+    }
+  ],
+  "task_flaky": [
+    {
+      "at": "2026-09-03T09:57:00.000Z",
+      "job_id": "job_7f3a2c",
+      "card_id": "task_flaky",
+      "state": "working",
+      "detail": "second suite run"
+    },
+    {
+      "at": "2026-09-03T09:23:00.000Z",
+      "job_id": "job_7f3a2c",
+      "card_id": "task_flaky",
+      "state": "working",
+      "detail": "started from the card drawer with model haiku"
+    },
+    {
+      "at": "2026-09-03T09:22:00.000Z",
+      "job_id": "job_7f3a2c",
+      "card_id": "task_flaky",
+      "state": "queued",
+      "detail": "claude --bg accepted the job"
+    }
+  ]
+}
