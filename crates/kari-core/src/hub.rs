@@ -1117,6 +1117,37 @@ impl Hub {
         Ok(())
     }
 
+    // ------------------------------------------------------------ pairing
+
+    /// A pairing code for another hub, such as a phone: every node this hub
+    /// knows, with its address and token, plus this machine when it listens on
+    /// a second address. Nodes reached over SSH carry no address; the other
+    /// hub asks for one. The code holds tokens: show it at home, on demand.
+    pub fn pairing_code(&self) -> anyhow::Result<String> {
+        let mut nodes = vec![];
+        if self.with_local {
+            let settings = self.engine.settings();
+            let address = settings.extra_listen.trim().to_string();
+            nodes.push(serde_json::json!({
+                "name": self.engine.node_name(),
+                "address": if address.is_empty() { serde_json::Value::Null } else { address.into() },
+                "token": crate::hooks::token()?,
+            }));
+        }
+        for r in self.remotes.read().unwrap().iter() {
+            let Some(token) = keychain::load_token(&r.rec.id) else {
+                continue;
+            };
+            let st = r.state.lock().unwrap();
+            nodes.push(serde_json::json!({
+                "name": self.node_name_of(&r.rec, st.identity.as_ref()),
+                "address": r.rec.address.clone(),
+                "token": token,
+            }));
+        }
+        Ok(serde_json::to_string(&serde_json::json!({ "kari": 1, "nodes": nodes }))?)
+    }
+
     // ------------------------------------------------------------ node management
 
     fn status_by_id(&self, id: &str) -> anyhow::Result<NodeStatus> {

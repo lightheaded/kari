@@ -358,6 +358,7 @@ function NodesSection({
   const [name, setName] = useState("");
   const [port, setPort] = useState(47311);
   const [msg, setMsg] = useState<string | null>(null);
+  const [code, setCode] = useState<string | null>(null);
   const holder = nodes.find((n) => n.lease && !n.primary)?.lease?.hub_name;
 
   /** Every change reloads the board, and the fresh node list comes back with it. */
@@ -412,7 +413,24 @@ function NodesSection({
           </button>
         )}
         {msg && <span className="hint">{msg}</span>}
+        <button
+          className="btn ghost sm"
+          disabled={busy}
+          onClick={() =>
+            change(async () => {
+              setCode(code ? null : await api.pairingCode());
+            })
+          }
+        >
+          {code ? "Hide the pairing code" : "Show pairing code"}
+        </button>
       </div>
+      {code && (
+        <div className="paircode">
+          <div className="hint">Paste this in the phone's Nodes tab. It holds the node tokens: show it at home only, and hide it when done. This machine appears with an address only when "Also listen on" is set.</div>
+          <textarea readOnly value={code} rows={3} onFocus={(e) => e.currentTarget.select()} />
+        </div>
+      )}
       <div className="nodelist">
         {nodes.map((n) => (
           <NodeRow

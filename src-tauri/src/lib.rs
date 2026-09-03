@@ -4,7 +4,9 @@ use kari_core::{
     NodeStatus, Proposal, QuotaSample, Settings, Summary,
 };
 use std::sync::Arc;
+#[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem};
+#[cfg(desktop)]
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
@@ -15,12 +17,14 @@ struct AppState {
 
 /// The tray keeps its own small state: the stop item, and the arm time that
 /// turns "Stop all kari jobs" into a two-step action.
+#[cfg(desktop)]
 struct TrayState {
     stop_all: MenuItem<tauri::Wry>,
     armed_at: std::sync::Mutex<Option<std::time::Instant>>,
     jobs: std::sync::atomic::AtomicUsize,
 }
 
+#[cfg(desktop)]
 const ARM_SECONDS: u64 = 10;
 
 type R<T> = Result<T, String>;
@@ -319,6 +323,12 @@ async fn claim_primary(state: State<'_, AppState>) -> R<String> {
     off_thread(&state.hub, |h| h.claim_primary()).await
 }
 
+/// A pairing code for a phone: every node with its address and token.
+#[tauri::command]
+async fn pairing_code(state: State<'_, AppState>) -> R<String> {
+    off_thread(&state.hub, |h| h.pairing_code()).await
+}
+
 /// Addresses this machine has, for the "also listen on" picker in Settings.
 #[tauri::command]
 fn local_addresses() -> Vec<kari_core::net::LocalAddress> {
@@ -327,6 +337,7 @@ fn local_addresses() -> Vec<kari_core::net::LocalAddress> {
 
 // ---------------------------------------------------------------- shell
 
+#[cfg(desktop)]
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -336,6 +347,7 @@ fn show_main(app: &AppHandle) {
 }
 
 /// Show the counts that matter on the tray icon.
+#[cfg(desktop)]
 fn update_tray(app: &AppHandle, hub: &Arc<Hub>) {
     let board = hub.board();
     let working = board
@@ -392,12 +404,14 @@ fn update_tray(app: &AppHandle, hub: &Arc<Hub>) {
 
 fn forward_events(app: AppHandle, hub: Arc<Hub>) {
     let mut rx = hub.subscribe();
+    #[cfg(desktop)]
     let mut last_tray = std::time::Instant::now() - std::time::Duration::from_secs(10);
     tauri::async_runtime::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(HubEvent::BoardChanged { node_id }) => {
                     let _ = app.emit("board_changed", serde_json::json!({ "node_id": node_id }));
+                    #[cfg(desktop)]
                     if last_tray.elapsed().as_secs() >= 3 {
                         last_tray = std::time::Instant::now();
                         let (a, h) = (app.clone(), Arc::clone(&hub));
@@ -440,7 +454,87 @@ fn forward_events(app: AppHandle, hub: Arc<Hub>) {
     });
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Every command the UI can call. One list, used by both shells.
+macro_rules! handlers {
+    () => {
+        tauri::generate_handler![
+            get_board,
+            refresh,
+            move_card,
+            add_task,
+            patch_card,
+            delete_card,
+            get_columns,
+            set_columns,
+            reset_columns,
+            get_settings,
+            set_settings,
+            jump_in,
+            start_card,
+            stop_card,
+            stop_all,
+            quota_history,
+            list_projects,
+            statusline_wrapper,
+            install_hooks,
+            uninstall_hooks,
+            summarize_card,
+            get_calibration,
+            fetch_usage_now,
+            get_proposal,
+            job_log,
+            propose_now,
+            accept_proposal,
+            snooze_proposal,
+            dismiss_proposal,
+            stop_proposal,
+            proposal_history,
+            kari_paths,
+            list_nodes,
+            add_node,
+            update_node,
+            remove_node,
+            pair_node,
+            claim_primary,
+            pairing_code,
+            local_addresses
+        ]
+    };
+}
+
+/// The phone: no Claude Code here, so no engine scan, no API and no tray. The
+/// store lives in the app's data directory and the hub shows remote nodes only.
+#[cfg(mobile)]
+#[tauri::mobile_entry_point]
+pub fn run() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("kari_core=info".parse().unwrap()),
+        )
+        .init();
+    tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&dir)?;
+            let engine = Engine::open_at(&dir)?;
+            let hub = Hub::without_local(engine);
+            app.manage(AppState {
+                hub: Arc::clone(&hub),
+            });
+            forward_events(app.handle().clone(), hub);
+            // Android 13 and later ask the user once before the first notification.
+            let _ = app.notification().request_permission();
+            Ok(())
+        })
+        .invoke_handler(handlers!())
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+#[cfg(desktop)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -554,47 +648,7 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            get_board,
-            refresh,
-            move_card,
-            add_task,
-            patch_card,
-            delete_card,
-            get_columns,
-            set_columns,
-            reset_columns,
-            get_settings,
-            set_settings,
-            jump_in,
-            start_card,
-            stop_card,
-            stop_all,
-            quota_history,
-            list_projects,
-            statusline_wrapper,
-            install_hooks,
-            uninstall_hooks,
-            summarize_card,
-            get_calibration,
-            fetch_usage_now,
-            get_proposal,
-            job_log,
-            propose_now,
-            accept_proposal,
-            snooze_proposal,
-            dismiss_proposal,
-            stop_proposal,
-            proposal_history,
-            kari_paths,
-            list_nodes,
-            add_node,
-            update_node,
-            remove_node,
-            pair_node,
-            claim_primary,
-            local_addresses
-        ])
+        .invoke_handler(handlers!())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

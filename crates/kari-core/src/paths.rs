@@ -117,7 +117,13 @@ pub fn hostname() -> String {
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
         .map(|s| s.trim().split('.').next().unwrap_or("").to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "kari".into())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "android") {
+                "phone".into()
+            } else {
+                "kari".into()
+            }
+        })
 }
 
 pub fn which(bin: &str) -> Option<PathBuf> {

@@ -1,0 +1,153 @@
+/* The phone layout. Reuses the tokens, buttons, pills and chips of styles.css. */
+
+.mapp {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+  font-size: 15px;
+  background: var(--ground);
+}
+.mmain {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 0 12px;
+}
+.mhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(10px + env(safe-area-inset-top)) 14px 8px;
+  position: sticky;
+  top: 0;
+  background: var(--ground);
+  z-index: 5;
+}
+.mhead .wordmark { font-size: 22px; }
+.mhead-meta { flex: 1; font: 12px/1.3 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merr { margin: 10px 14px; padding: 10px 12px; border-radius: 6px; background: var(--rust-soft); color: var(--rust); font-size: 13px; overflow-wrap: anywhere; }
+
+/* Tabs */
+.mtabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mtab {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 12px 4px 10px;
+  font: 500 12px/1.2 var(--mono);
+  color: var(--ink-3);
+  position: relative;
+  min-height: 48px;
+}
+.mtab.on { color: var(--accent); }
+.mtab.on::after { content: ""; position: absolute; left: 25%; right: 25%; top: 0; height: 2px; background: var(--accent); }
+.mbadge {
+  position: absolute;
+  top: 6px;
+  right: calc(50% - 26px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--rust);
+  color: #fff;
+  font: 600 10px/16px var(--mono);
+}
+.mbadge.off { background: var(--ink-3); }
+
+/* Quota bars: full width, stacked */
+.mquotas { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 10px; }
+.mapp .quota { flex-wrap: wrap; gap: 8px 14px; }
+.mapp .meter { min-width: 0; flex: 1 1 140px; }
+.mapp .quota .qlabel { width: 100%; font: 500 11px/1.2 var(--mono); color: var(--ink-2); }
+
+/* Card list */
+.mlist { display: flex; flex-direction: column; gap: 10px; padding: 0 14px; }
+.mcard {
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--tone, var(--line));
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 10px;
+}
+.mcard.offline { opacity: 0.6; }
+.mcard-head {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 40px;
+}
+.mtitle { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.mmeta { font: 11.5px/1.4 var(--mono); color: var(--ink-3); }
+.mmeta b { color: var(--tone, var(--ink-2)); font-weight: 500; }
+.mnarr { font-size: 13px; line-height: 1.45; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.mq { font-size: 13.5px; color: var(--ink); border-top: 1px dashed var(--line-soft); padding-top: 6px; white-space: pre-wrap; }
+.macts { display: flex; flex-wrap: wrap; gap: 6px; }
+.mapp .btn.sm { padding: 8px 12px; font-size: 13px; min-height: 36px; }
+.mapp .btn { min-height: 40px; }
+.mreply textarea, .msection textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.4 var(--body);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.mwarn { background: var(--amber-soft); color: var(--ink); border-radius: 6px; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
+.mhint { font: 11.5px/1.4 var(--mono); color: var(--ink-3); }
+
+/* Board tab */
+.mcol { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; font: 600 16px/1.2 var(--display); }
+.mcol .swatch { width: 9px; height: 9px; border-radius: 2px; background: var(--tone, var(--ink-3)); }
+.mcount { font: 500 12px/1 var(--mono); color: var(--ink-3); }
+.mcolstrip { display: flex; justify-content: center; gap: 6px; padding: 0 0 8px; }
+.mdot { width: 8px; height: 8px; border-radius: 50%; border: 0; padding: 0; background: var(--line); }
+.mdot.on { background: var(--accent); }
+.mchips { padding: 0 14px 10px; flex-wrap: wrap; }
+
+/* Nodes tab */
+.msection { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 8px; }
+.msection h5 { margin: 0; font: 600 11px/1.2 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+.mnode { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.mnode-head { display: flex; align-items: center; gap: 8px; }
+.mnode-name { font-weight: 600; flex: 1; }
+.mnodes .field input { width: 100%; box-sizing: border-box; }
+
+/* Shared pieces resized for a phone */
+.mapp .proposal { margin: 0 14px 10px; width: auto; max-width: none; }
+.mapp .drawer {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  max-width: none;
+  border-left: 0;
+  z-index: 50;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mapp .drawer header h2 { padding-right: 40px; }
+.mapp .kv { grid-template-columns: 90px minmax(0, 1fr); }
+.mapp .backdrop { align-items: stretch; }
+.mapp .modal { width: 100vw; max-width: 100vw; max-height: none; height: 100%; border-radius: 0; border: 0; }
+.mapp .modal .body { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+.mapp .toasts { left: 10px; right: 10px; bottom: calc(60px + env(safe-area-inset-bottom)); }
+.mapp .toast { max-width: none; }
+.mapp .empty { padding: 30px 14px; }

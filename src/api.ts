@@ -116,6 +116,7 @@ export const api = {
   removeNode: (nodeId: string) => invoke<void>("remove_node", { nodeId }),
   pairNode: (nodeId: string) => invoke<string>("pair_node", { nodeId }),
   claimPrimary: () => invoke<string>("claim_primary"),
+  pairingCode: () => invoke<string>("pairing_code"),
   localAddresses: () => invoke<LocalAddress[]>("local_addresses"),
   jobLog: (nodeId: string, cardId: string, limit = 40) =>
     inTauri
