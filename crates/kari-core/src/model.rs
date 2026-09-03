@@ -384,6 +384,16 @@ pub struct ProposalItem {
     /// Filled when the item started.
     pub job_id: Option<String>,
     pub error: Option<String>,
+    /// False when the planner left the card out. The user can still pick it.
+    #[serde(default = "default_true")]
+    pub fits: bool,
+    /// Why the planner left it out: `budget` or `slots`.
+    #[serde(default)]
+    pub skip_reason: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A plan kari offers: these tasks, this much quota, this reason.

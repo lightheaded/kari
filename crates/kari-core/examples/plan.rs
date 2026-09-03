@@ -69,8 +69,15 @@ fn main() -> anyhow::Result<()> {
             );
             for i in &p.items {
                 println!(
-                    "  {:>6.2}%  {}  ({})",
-                    i.estimate.pct_five_hour, i.title, i.estimate.source
+                    "  {} {:>6.2}%  {}  ({}){}",
+                    if i.fits { "+" } else { "-" },
+                    i.estimate.pct_five_hour,
+                    i.title,
+                    i.estimate.source,
+                    i.skip_reason
+                        .as_deref()
+                        .map(|r| format!("  did not fit: {r}"))
+                        .unwrap_or_default()
                 );
             }
         }

@@ -229,6 +229,10 @@ export interface ProposalItem {
   estimate: Estimate;
   job_id: string | null;
   error: string | null;
+  /** False when the planner left the card out. The user can still pick it. */
+  fits: boolean;
+  /** "budget" or "slots" when the card did not fit. */
+  skip_reason: string | null;
 }
 export interface Proposal {
   id: string;

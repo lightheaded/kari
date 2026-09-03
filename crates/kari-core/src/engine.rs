@@ -1392,11 +1392,7 @@ impl Engine {
             &ctx,
             &settings,
         )
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "nothing fits: {budget:.0} percent of the 5-hour window is free and the smallest task needs more"
-            )
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("no card can run unattended right now"))?;
         self.publish_proposal(p.clone());
         Ok(p)
     }
@@ -1456,6 +1452,10 @@ impl Engine {
             if item.job_id.is_some() {
                 continue;
             }
+            // Autopilot never starts a card the planner left out.
+            if auto && !item.fits {
+                continue;
+            }
             if auto && started >= cap {
                 break;
             }
@@ -1471,6 +1471,14 @@ impl Engine {
         p.state = "accepted".into();
         p.accepted_at = Some(Utc::now());
         p.auto = auto;
+        // The picked set can differ from the plan, so the totals follow the started items.
+        p.total_pct = p
+            .items
+            .iter()
+            .filter(|i| i.job_id.is_some())
+            .map(|i| i.estimate.pct_five_hour)
+            .sum();
+        p.used_pct_after = p.used_pct_before + p.total_pct;
         self.store.lock().unwrap().save_proposal(&p)?;
         self.snap.write().unwrap().proposal = Some(p.clone());
         let errors: Vec<&str> = p.items.iter().filter_map(|i| i.error.as_deref()).collect();

@@ -101,7 +101,9 @@ pub fn detect_trigger(ctx: &Context<'_>, s: &Settings) -> Option<(ProposalTrigge
 }
 
 /// Pack candidates into the budget. Highest priority first, oldest first inside
-/// a priority. A candidate that does not fit is skipped, not dropped from the board.
+/// a priority. A candidate that does not fit stays in the plan as an item that
+/// does not fit, so the user can still pick it. An automatic trigger returns no
+/// plan when nothing fits. A manual request always returns the full list.
 pub fn plan(
     trigger: ProposalTrigger,
     reason: String,
@@ -109,12 +111,16 @@ pub fn plan(
     ctx: &Context<'_>,
     s: &Settings,
 ) -> Option<Proposal> {
+    let manual = trigger == ProposalTrigger::Manual;
     let budget = budget_pct(ctx, s);
-    if budget <= 1.0 {
+    if budget <= 1.0 && !manual {
         return None;
     }
     let slots = s.max_parallel_bg.saturating_sub(ctx.running_jobs);
-    if slots == 0 {
+    if slots == 0 && !manual {
+        return None;
+    }
+    if candidates.is_empty() {
         return None;
     }
     candidates.sort_by(|a, b| {
@@ -124,18 +130,23 @@ pub fn plan(
     });
     let mut items: Vec<ProposalItem> = vec![];
     let mut total = 0.0f64;
+    let mut taken = 0u32;
     let mut skipped = 0u32;
     for c in candidates {
-        if items.len() as u32 >= slots {
+        let skip_reason = if taken >= slots {
+            Some("slots")
+        } else if total + c.estimate.pct_five_hour > budget {
+            Some("budget")
+        } else {
+            None
+        };
+        let fits = skip_reason.is_none();
+        if fits {
+            total += c.estimate.pct_five_hour;
+            taken += 1;
+        } else {
             skipped += 1;
-            continue;
         }
-        // The high end of the band must fit, so an overrun does not break the ceiling.
-        if total + c.estimate.pct_five_hour > budget {
-            skipped += 1;
-            continue;
-        }
-        total += c.estimate.pct_five_hour;
         items.push(ProposalItem {
             card_id: c.card_id,
             title: c.title,
@@ -145,9 +156,11 @@ pub fn plan(
             estimate: c.estimate,
             job_id: None,
             error: None,
+            fits,
+            skip_reason: skip_reason.map(str::to_owned),
         });
     }
-    if items.is_empty() {
+    if taken == 0 && !manual {
         return None;
     }
     let used_before = ctx
@@ -271,24 +284,48 @@ mod tests {
             &s,
         )
         .unwrap();
-        assert_eq!(p.items.len(), 2);
+        // Every candidate stays in the list. Two fit, one does not.
+        assert_eq!(p.items.len(), 3);
         assert_eq!(p.items[0].card_id, "urgent");
-        assert_eq!(p.items[1].card_id, "small");
+        assert!(p.items[0].fits);
+        assert_eq!(p.items[1].card_id, "big");
+        assert!(!p.items[1].fits);
+        assert_eq!(p.items[1].skip_reason.as_deref(), Some("budget"));
+        assert_eq!(p.items[2].card_id, "small");
+        assert!(p.items[2].fits);
         assert_eq!(p.skipped, 1);
+        assert!((p.total_pct - 4.0).abs() < 0.001);
         assert!((p.used_pct_after - 84.0).abs() < 0.001);
     }
 
     #[test]
-    fn a_full_window_plans_nothing() {
+    fn a_full_window_plans_nothing_by_itself() {
         let q = quota(90.0, 10.0, 100);
         assert!(plan(
-            ProposalTrigger::Manual,
+            ProposalTrigger::IdleFiveHour,
             "m".into(),
             vec![candidate("a", 1.0, 0)],
             &ctx(&q, 0),
             &settings()
         )
         .is_none());
+    }
+
+    #[test]
+    fn a_manual_plan_lists_what_does_not_fit() {
+        let q = quota(90.0, 10.0, 100);
+        let p = plan(
+            ProposalTrigger::Manual,
+            "m".into(),
+            vec![candidate("a", 1.0, 0)],
+            &ctx(&q, 0),
+            &settings(),
+        )
+        .unwrap();
+        assert_eq!(p.items.len(), 1);
+        assert!(!p.items[0].fits);
+        assert_eq!(p.skipped, 1);
+        assert!(p.total_pct.abs() < 0.001);
     }
 
     #[test]
@@ -308,6 +345,8 @@ mod tests {
             &s,
         )
         .unwrap();
-        assert_eq!(p.items.len(), 1);
+        assert_eq!(p.items.iter().filter(|i| i.fits).count(), 1);
+        assert_eq!(p.items[1].skip_reason.as_deref(), Some("slots"));
+        assert_eq!(p.items[2].skip_reason.as_deref(), Some("slots"));
     }
 }

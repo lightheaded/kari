@@ -174,7 +174,7 @@ Triggers:
 
 The planner ranks `ready` cards by priority, then age. It packs them into the budget with a greedy fit and a headroom reserve. During working hours (default 08:00 to 20:00) the plan keeps at least 30 percent of the 5-hour window free for interactive work. Parallelism is capped at 2 background jobs.
 
-The proposal is a notification and a panel: tasks, estimate per task, total, budget after the run, and the reason for the trigger. Buttons: Start, Start all, Snooze 1 hour, Dismiss. Snooze holds the trigger for an hour. Dismiss holds it until its window moves on: the weekly trigger until the window resets, the idle trigger for two hours.
+The proposal is a notification and a panel: a budget bar, tasks with an estimate each, and the reason for the trigger. The bar fills as the user picks tasks and marks where the budget ends. Cards that did not fit stay in the proposal, unpicked, with the reason (budget or the parallel cap). The user can pick them to override the planner. A manual plan always lists every candidate, even when nothing fits. Autopilot never starts a card that did not fit. Buttons: Start, Start all, Snooze 1 hour, Dismiss. Snooze holds the trigger for an hour. Dismiss holds it until its window moves on: the weekly trigger until the window resets, the idle trigger for two hours.
 
 Only one proposal is open at a time. An open proposal expires after two hours. An accepted proposal stays on the panel for 30 minutes so its jobs can be stopped from one place.
 

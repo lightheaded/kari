@@ -107,7 +107,7 @@ kari offers a plan when one of three things happens:
 
 The planner ranks cards by priority, then by age. It only takes cards marked "May run unattended" that carry a prompt and a project directory. It never takes a card that is working, or one that waits for you. It packs the plan into the free part of the 5-hour window, keeps 30 percent free between 08:00 and 20:00, never fills past 85 percent, and holds the parallel cap of two jobs.
 
-The panel shows the reason, the budget, the plan total and the window after the run. Buttons: Start, Start all, Snooze 1 hour, Dismiss. Dismiss keeps the same trigger quiet until its window moves on. Every threshold is in Settings.
+The panel shows the reason and a budget bar. The bar is the 5-hour window. The gray part is what is used now. Each picked task adds a green segment. A black line marks the end of the budget. A segment past the line turns amber. The cards that did not fit are listed under a divider. Pick one to start it anyway. The Start button turns amber when the picked tasks go over the budget. Buttons: Start, Start all, Snooze 1 hour, Dismiss. Dismiss keeps the same trigger quiet until its window moves on. Every threshold is in Settings.
 
 ## Runs, run log and the kill switch
 
