@@ -9,6 +9,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "demo": "node scripts/demo-fixtures.mjs && KARI_FIXTURES=docs/demo vite",
+    "screenshots": "node scripts/screenshots.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -29,6 +31,7 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",
     "oxlint": "^1.79.0",
+    "playwright": "1.62.1",
     "typescript": "~6.0.2",
     "vite": "^8.2.2"
   }

@@ -1,10 +1,17 @@
 # kari
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/board-dark.png">
+    <img src="docs/screenshots/board.png" alt="The kari board: quota meters at the top, columns from Backlog to Validate, cards with state chips, summaries and an open question" width="960">
+  </picture>
+</p>
+
 kari (Estonian: herd) is a macOS tray app that shows every Claude Code session as a card on a Kanban board. The board updates itself from local Claude Code state. Backlog tasks can start as background sessions when quota is left over.
 
 kari works with the tools you already use. It reads what Claude Code writes to disk and never writes there. When [herdr](https://github.com/herdrdev/herdr) runs, kari maps sessions to herdr panes and can open new sessions in them.
 
-Design: see `DESIGN.md`.
+The screenshot above shows the current release with a demo board. `TOUR.md` walks through every view. Design: see `DESIGN.md`.
 
 ## Install
 
@@ -125,14 +132,16 @@ When herdr runs and "Open new sessions in a herdr pane" is on, Jump in creates a
 crates/kari-core   readers, parser, inference, store, launcher
 src-tauri          Tauri shell: commands, events, tray, notifications
 src                React UI
-scripts            status line installer, version bump
+scripts            status line installer, version bump, demo board, screenshots
+docs/demo          the dummy board behind the screenshots
+docs/screenshots   the images in this README and in TOUR.md, retaken for each release
 ```
 
 Smoke test the core against local data without the UI:
 
 ```
 cargo run -p kari-core --example board        # the board as text
-cargo run -p kari-core --example board -- --json > fixtures/dev-board.json   # snapshot for `bun run dev` in a browser
+cargo run -p kari-core --example board -- --json > fixtures/board.json   # snapshot for `bun run dev` in a browser
 cargo run -p kari-core --example estimates    # calibration and per-card estimates
 cargo run -p kari-core --example plan -- /tmp # build a plan from temporary cards
 cargo run -p kari-core --example jobrun -- /tmp   # start one background job and follow it
@@ -140,6 +149,8 @@ cargo run -p kari-core --example herdr_open -- /tmp   # open and close a herdr p
 ```
 
 The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project.
+
+`bun run demo` opens the UI in a browser with the dummy board from `docs/demo`. No Rust toolchain and no Claude Code state are needed for that.
 
 ## Contributing
 

@@ -1,7 +1,7 @@
 name: release
 
 # A tag `vX.Y.Z` builds the macOS bundles and publishes a GitHub release.
-# The tag must match the version in src-tauri/tauri.conf.json.
+# The tag must match the version in src-tauri/tauri.conf.json and in docs/screenshots/VERSION.
 # The bundles are not signed or notarized. README.md tells users how to open them.
 
 on:
@@ -26,6 +26,19 @@ jobs:
             echo "tag ${{ github.ref_name }} does not match tauri.conf.json version $version"
             exit 1
           fi
+
+      - name: Check that the screenshots were taken for this version
+        # scripts/bump-version.sh runs `bun run screenshots`, which writes this stamp.
+        # README.md and TOUR.md must show the release that the tag names.
+        run: |
+          stamp=$(cat docs/screenshots/VERSION)
+          if [ "v$stamp" != "${{ github.ref_name }}" ]; then
+            echo "docs/screenshots/VERSION is $stamp, tag is ${{ github.ref_name }}. Run scripts/bump-version.sh, which retakes the screenshots."
+            exit 1
+          fi
+          for f in board board-dark plan drawer decision search new-task columns settings; do
+            test -s "docs/screenshots/$f.png" || { echo "docs/screenshots/$f.png is missing"; exit 1; }
+          done
 
       - name: Create a draft release
         id: create

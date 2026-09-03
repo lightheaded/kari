@@ -4,15 +4,20 @@ import type { BoardView, Calibration, Card, CardPatch, Column, JobLogEntry, NewT
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-/** Browser preview without Tauri: read `fixtures/dev-board.json`, exported by `cargo run -p kari-core --example board -- --json`. */
-async function devBoard(): Promise<BoardView> {
-  const r = await fetch("/dev-board.json");
-  if (!r.ok) throw new Error("no fixtures/dev-board.json; run the board example with --json");
+/** Browser preview without Tauri: the Vite dev server serves `fixtures/*.json` at `/dev/*.json`.
+ *  `board.json` comes from `cargo run -p kari-core --example board -- --json`. `settings.json` and
+ *  `job-log.json` are optional. `docs/demo/` holds a dummy set for screenshots (`bun run screenshots`). */
+async function devFixture<T>(name: string, fallback?: T): Promise<T> {
+  const r = await fetch(`/dev/${name}.json`);
+  if (!r.ok) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`no fixtures/${name}.json; run the board example with --json`);
+  }
   return r.json();
 }
 
 export const api = {
-  board: () => (inTauri ? invoke<BoardView>("get_board") : devBoard()),
+  board: () => (inTauri ? invoke<BoardView>("get_board") : devFixture<BoardView>("board")),
   refresh: () => invoke<void>("refresh"),
   moveCard: (cardId: string, columnId: string) => invoke<void>("move_card", { cardId, columnId }),
   addTask: (task: NewTask) => invoke<Card>("add_task", { task }),
@@ -21,7 +26,7 @@ export const api = {
   columns: () => invoke<Column[]>("get_columns"),
   setColumns: (columns: Column[]) => invoke<void>("set_columns", { columns }),
   resetColumns: () => invoke<void>("reset_columns"),
-  settings: () => invoke<Settings>("get_settings"),
+  settings: () => (inTauri ? invoke<Settings>("get_settings") : devFixture<Settings>("settings")),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
   jumpIn: (cardId: string) => invoke<string>("jump_in", { cardId }),
   startCard: (cardId: string, prompt?: string) => invoke<string>("start_card", { cardId, prompt: prompt ?? null }),
@@ -43,10 +48,14 @@ export const api = {
   dismissProposal: (proposalId: string) => invoke<void>("dismiss_proposal", { proposalId }),
   stopProposal: (proposalId: string) => invoke<number>("stop_proposal", { proposalId }),
   proposalHistory: (limit: number) => invoke<Proposal[]>("proposal_history", { limit }),
-  jobLog: (cardId: string, limit = 40) => invoke<JobLogEntry[]>("job_log", { cardId, limit }),
+  jobLog: (cardId: string, limit = 40) =>
+    inTauri
+      ? invoke<JobLogEntry[]>("job_log", { cardId, limit })
+      : devFixture<Record<string, JobLogEntry[]>>("job-log", {}).then((m) => (m[cardId] ?? []).slice(0, limit)),
 };
 
 export function onBoardChanged(cb: () => void) {
+  if (!inTauri) return () => {};
   let t: number | undefined;
   const p = listen("board_changed", () => {
     if (t) window.clearTimeout(t);
@@ -58,6 +67,7 @@ export function onBoardChanged(cb: () => void) {
 }
 
 export function onNotice(cb: (n: { title: string; body: string; card_id: string | null }) => void) {
+  if (!inTauri) return () => {};
   const p = listen<{ title: string; body: string; card_id: string | null }>("notice", (e) => cb(e.payload));
   return () => {
     p.then((un) => un());

@@ -1,10 +1,11 @@
 #!/bin/bash
-# Set the app version in every manifest, then refresh the lock files.
+# Set the app version in every manifest, refresh the lock files, and retake the screenshots.
 #
 # Usage: scripts/bump-version.sh 0.2.0
 #
-# Then review, commit, tag `v0.2.0` and push the tag. The release workflow
-# builds the bundles and publishes the GitHub release.
+# Then review, commit, tag `v0.2.0` with a signature and push the tag. The release
+# workflow builds the bundles and publishes the GitHub release. It refuses the tag
+# when docs/screenshots/VERSION does not match, so do not skip the screenshots.
 set -euo pipefail
 
 v="${1:?usage: scripts/bump-version.sh X.Y.Z}"
@@ -23,4 +24,10 @@ cargo update --workspace --quiet
 bun install --silent
 
 echo "version set to $v in package.json, Cargo.toml and src-tauri/tauri.conf.json"
-echo "next: git commit -am \"Release $v\" && git tag v$v && git push && git push origin v$v"
+
+# The README header and TOUR.md show the app as it looks in this release.
+bunx playwright install chromium
+bun run screenshots
+
+echo "next: review docs/screenshots/, then:"
+echo "  git add -A && git commit -m \"Release $v\" && git tag -s v$v -m \"kari v$v\" && git push && git push origin v$v"
