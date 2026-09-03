@@ -1,0 +1,28 @@
+[package]
+name = "kari"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Kanban board for Claude Code sessions with quota-aware scheduling"
+rust-version = "1.77.2"
+
+[lib]
+name = "kari_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+kari-core = { path = "../crates/kari-core" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-notification = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
+axum = "0.8"

@@ -1,0 +1,10 @@
+node_modules
+dist
+target
+*.local
+*.bak
+.env*
+.DS_Store
+.claude/
+src-tauri/gen
+fixtures/

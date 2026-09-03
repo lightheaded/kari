@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # A macOS runner, because the app uses the tray, notifications and osascript.
+    # A Linux build would compile a different dependency set and prove less.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install the frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint the frontend
+        run: bun run lint
+
+      - name: Build the frontend
+        run: bun run build
+
+      - name: Check the Rust formatting
+        run: cargo fmt --all --check
+
+      - name: Lint the Rust code
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run the Rust tests
+        run: cargo test --workspace

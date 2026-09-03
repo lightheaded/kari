@@ -1,0 +1,21 @@
+[package]
+name = "kari-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
+notify = "7"
+notify-debouncer-mini = "0.5"
+dirs = "6"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+libc = "0.2"
