@@ -1,5 +1,6 @@
 use axum::{
     extract::State as AxState,
+    http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
 };
@@ -231,20 +232,46 @@ fn kari_paths() -> serde_json::Value {
     })
 }
 
-/// Hook receiver: Claude Code posts hook payloads here through the relay script.
-async fn hook_handler(
-    AxState(engine): AxState<Arc<Engine>>,
-    Json(payload): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-    if let Err(e) = engine.ingest_hook(payload) {
-        tracing::warn!("hook rejected: {e}");
-    }
-    Json(serde_json::json!({}))
+/// The receiver state: the engine and the shared secret from the token file.
+#[derive(Clone)]
+struct Receiver {
+    engine: Arc<Engine>,
+    token: Arc<String>,
 }
 
-/// Read-only board for scripts and tests: `curl 127.0.0.1:<port>/kari/board`.
-async fn board_json(AxState(engine): AxState<Arc<Engine>>) -> Json<BoardView> {
-    Json(engine.board())
+/// Only a caller that read the token file may post events or read the board.
+fn authorized(rx: &Receiver, headers: &HeaderMap) -> bool {
+    headers
+        .get(kari_core::hooks::TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == rx.token.as_str())
+}
+
+/// Hook receiver: Claude Code posts hook payloads here through the relay script.
+async fn hook_handler(
+    AxState(rx): AxState<Receiver>,
+    headers: HeaderMap,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&rx, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if let Err(e) = rx.engine.ingest_hook(payload) {
+        tracing::warn!("hook rejected: {e}");
+    }
+    Ok(Json(serde_json::json!({})))
+}
+
+/// Read-only board for scripts and tests. Send the token from
+/// `~/.config/kari/hook-token` in the `x-kari-token` header.
+async fn board_json(
+    AxState(rx): AxState<Receiver>,
+    headers: HeaderMap,
+) -> Result<Json<BoardView>, StatusCode> {
+    if !authorized(&rx, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(Json(rx.engine.board()))
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -253,12 +280,26 @@ async fn health() -> Json<serde_json::Value> {
 
 fn start_hook_server(engine: Arc<Engine>) {
     let port = engine.settings().hooks_port;
+    let token = match kari_core::hooks::token() {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("hook receiver has no token, it stays off: {e}");
+            return;
+        }
+    };
+    if let Err(e) = kari_core::hooks::refresh_script(port) {
+        tracing::warn!("hook relay script not refreshed: {e}");
+    }
+    let rx = Receiver {
+        engine,
+        token: Arc::new(token),
+    };
     tauri::async_runtime::spawn(async move {
         let app = Router::new()
             .route(kari_core::hooks::HOOK_PATH, post(hook_handler))
             .route("/kari/health", get(health))
             .route("/kari/board", get(board_json))
-            .with_state(engine);
+            .with_state(rx);
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         match tokio::net::TcpListener::bind(addr).await {
             Ok(listener) => {

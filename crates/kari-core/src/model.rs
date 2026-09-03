@@ -505,7 +505,7 @@ impl Default for Settings {
             done_after_days: 3,
             stale_after_days: 14,
             terminal_app: "iTerm".into(),
-            default_permission_mode: "bypassPermissions".into(),
+            default_permission_mode: "auto".into(),
             default_run_model: String::new(),
             max_parallel_bg: 2,
             summaries_enabled: true,

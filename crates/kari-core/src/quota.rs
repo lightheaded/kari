@@ -213,12 +213,13 @@ pub fn fetch_usage() -> anyhow::Result<QuotaSample> {
         *last = Some(std::time::Instant::now());
     }
     let token = oauth_token().ok_or_else(|| anyhow::anyhow!("no Claude Code login token found"))?;
+    let version = crate::version();
     let config = format!(
         "url = \"https://api.anthropic.com/api/oauth/usage\"\n\
          header = \"Authorization: Bearer {token}\"\n\
          header = \"anthropic-beta: oauth-2025-04-20\"\n\
          header = \"Accept: application/json\"\n\
-         user-agent = \"claude-cli/2.1.258 (external, cli)\"\n\
+         user-agent = \"kari/{version}\"\n\
          silent\n\
          show-error\n\
          max-time = 10\n"

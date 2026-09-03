@@ -24,7 +24,8 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:1420 ws://localhost:1420 ipc: http://ipc.localhost; img-src 'self' data:"
     },
     "trayIcon": {
       "iconPath": "icons/tray.png",

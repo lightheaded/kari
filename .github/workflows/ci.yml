@@ -47,3 +47,18 @@ jobs:
 
       - name: Run the Rust tests
         run: cargo test --workspace
+
+      - name: Check for private detail in the tracked files
+        run: scripts/check-privacy.sh
+
+  secrets:
+    # gitleaks scans the whole history for credentials. A key that lands in
+    # one commit stays readable in every clone, so the scan is not optional.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
