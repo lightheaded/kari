@@ -8,6 +8,7 @@ import type {
   Column,
   HubBoard,
   JobLogEntry,
+  LocalAddress,
   NewNode,
   NewTask,
   NodePatch,
@@ -42,12 +43,16 @@ function localNode(): NodeStatus {
     enabled: true,
     paired: true,
     ssh_host: null,
+    address: null,
     remote_port: 0,
     version: null,
     api_version: null,
     remote_node_id: null,
     last_seen: null,
     error: null,
+    lease: null,
+    primary: true,
+    away_mode: false,
   };
 }
 
@@ -58,6 +63,9 @@ function toHubBoard(json: BoardView | HubBoard): HubBoard {
   const tag = { node_id: node.id, node_name: node.name };
   return {
     columns: json.columns,
+    hub_id: node.id,
+    hub_name: node.name,
+    primary: true,
     nodes: [node],
     cards: json.cards.map((c) => ({ ...c, ...tag })),
     quotas: [{ ...tag, quota: json.quota, calibration: json.calibration }],
@@ -108,6 +116,12 @@ export const api = {
   updateNode: (nodeId: string, patch: NodePatch) => invoke<NodeStatus>("update_node", { nodeId, patch }),
   removeNode: (nodeId: string) => invoke<void>("remove_node", { nodeId }),
   pairNode: (nodeId: string) => invoke<string>("pair_node", { nodeId }),
+  claimPrimary: () => invoke<string>("claim_primary"),
+  answerPermission: (nodeId: string, permissionId: string, behavior: "allow" | "deny") =>
+    invoke<void>("answer_permission", { nodeId, permissionId, behavior }),
+  setAwayMode: (nodeId: string, on: boolean) => invoke<void>("set_away_mode", { nodeId, on }),
+  pairingCode: () => invoke<string>("pairing_code"),
+  localAddresses: () => invoke<LocalAddress[]>("local_addresses"),
   jobLog: (nodeId: string, cardId: string, limit = 40) =>
     inTauri
       ? invoke<JobLogEntry[]>("job_log", { nodeId, cardId, limit })

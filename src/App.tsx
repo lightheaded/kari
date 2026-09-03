@@ -290,6 +290,7 @@ export default function App() {
           hooksInstalled={board?.hooks_installed ?? false}
           hooksPort={board?.hooks_port ?? settings.hooks_port}
           nodes={nodes}
+          primary={board?.primary ?? true}
           onNodesChanged={load}
           onHooks={(install) => run(() => (install ? api.installHooks() : api.uninstallHooks()), install ? "Hooks installed" : "Hooks removed")}
           onClose={() => setModal(null)}

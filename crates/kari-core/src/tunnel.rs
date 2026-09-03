@@ -56,6 +56,11 @@ impl Tunnel {
     /// Start the forward. Returns before the connection is up; poll the node's
     /// health to know when it is.
     pub fn open(ssh_host: &str, remote_port: u16) -> anyhow::Result<Tunnel> {
+        if cfg!(target_os = "android") {
+            anyhow::bail!(
+                "SSH forwards are not available on this device; give the node an address instead"
+            );
+        }
         let local_port = free_port()?;
         let child = ssh_command()
             .args([
@@ -109,6 +114,9 @@ impl Drop for Tunnel {
 /// Read the node's hook token over SSH. That is the whole pairing step: SSH is
 /// the authentication, the token then guards the loopback port on the node.
 pub fn read_remote_token(ssh_host: &str) -> anyhow::Result<String> {
+    if cfg!(target_os = "android") {
+        anyhow::bail!("SSH is not available on this device; pair with a code instead");
+    }
     let out = ssh_command()
         .args(["--", ssh_host, "cat ~/.config/kari/hook-token"])
         .stdin(Stdio::null())

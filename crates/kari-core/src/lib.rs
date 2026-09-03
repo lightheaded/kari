@@ -12,6 +12,7 @@ pub mod infer;
 pub mod keychain;
 pub mod launcher;
 pub mod model;
+pub mod net;
 pub mod paths;
 pub mod planner;
 pub mod quota;

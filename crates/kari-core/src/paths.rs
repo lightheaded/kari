@@ -25,7 +25,19 @@ pub fn claude_jobs_dir() -> PathBuf {
     claude_dir().join("jobs")
 }
 
+static KARI_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Put the kari directory somewhere else, once, before the first lookup. A
+/// second call after a lookup has no effect. For a device without a home
+/// directory, such as a phone.
+pub fn set_kari_dir(dir: &std::path::Path) {
+    let _ = KARI_DIR.set(dir.to_path_buf());
+}
+
 pub fn kari_dir() -> PathBuf {
+    if let Some(d) = KARI_DIR.get() {
+        return d.clone();
+    }
     let p = dirs::config_dir()
         .map(|c| c.join("kari"))
         .unwrap_or_else(|| home().join(".config/kari"));
@@ -105,7 +117,13 @@ pub fn hostname() -> String {
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
         .map(|s| s.trim().split('.').next().unwrap_or("").to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "kari".into())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "android") {
+                "phone".into()
+            } else {
+                "kari".into()
+            }
+        })
 }
 
 pub fn which(bin: &str) -> Option<PathBuf> {

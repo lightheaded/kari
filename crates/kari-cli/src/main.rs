@@ -23,8 +23,10 @@ enum Cmd {
     Serve {
         /// Address to bind. Default: 127.0.0.1 and the hooks port from settings.
         /// A different port is saved, because the hook relay must post to it.
+        /// Repeat the flag to listen on more than one address; the first one
+        /// is the one the hook relay posts to.
         #[arg(long)]
-        listen: Option<SocketAddr>,
+        listen: Vec<SocketAddr>,
         /// Bind an address that is not loopback. The token is then the only
         /// guard, so put the node behind a private network. Keep loopback in
         /// the bind, for example `0.0.0.0`: the hook relay posts to
@@ -142,7 +144,7 @@ fn main() -> anyhow::Result<()> {
 
 /// What `serve` was asked to do. A struct, because a service unit sets most of it.
 struct Serve {
-    listen: Option<SocketAddr>,
+    listen: Vec<SocketAddr>,
     allow_remote: bool,
     name: Option<String>,
     usage_endpoint: bool,
@@ -178,9 +180,13 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
             changed = true;
         }
     }
-    let addr = listen.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], settings.hooks_port)));
-    if addr.port() != settings.hooks_port {
-        settings.hooks_port = addr.port();
+    let addrs = if listen.is_empty() {
+        vec![SocketAddr::from(([127, 0, 0, 1], settings.hooks_port))]
+    } else {
+        listen
+    };
+    if addrs[0].port() != settings.hooks_port {
+        settings.hooks_port = addrs[0].port();
         changed = true;
     }
     if changed {
@@ -191,6 +197,10 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
             Ok(m) => tracing::info!("{m}"),
             Err(e) => tracing::warn!("hooks not installed: {e}"),
         }
+    } else if hooks::installed() && !hooks::held_event_installed() {
+        tracing::warn!(
+            "hooks installed without the PermissionRequest entry; run `kari-node hooks install` again for Away mode"
+        );
     } else if hooks::installed() {
         tracing::info!("hooks installed");
     } else {
@@ -215,7 +225,7 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
-        let server = api::serve(Arc::clone(&engine), addr, allow_remote);
+        let server = api::serve_all(Arc::clone(&engine), addrs, allow_remote);
         tokio::select! {
             r = server => r,
             _ = shutdown() => {

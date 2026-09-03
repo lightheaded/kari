@@ -10,6 +10,8 @@ pub struct Inputs<'a> {
     pub bg: Option<&'a BgJob>,
     pub herdr: Option<&'a HerdrAgent>,
     pub hooks: Option<&'a HookState>,
+    /// A permission prompt kari holds for a remote answer.
+    pub permission: Option<&'a PendingPermission>,
     pub summary: Option<&'a Summary>,
     pub now: DateTime<Utc>,
     pub settings: &'a Settings,
@@ -108,6 +110,14 @@ pub fn derive(i: &Inputs<'_>) -> (DerivedState, String) {
     }
 
     let alive = i.live.is_some_and(|l| l.alive);
+
+    // kari holds a permission prompt of this session for a remote answer.
+    if let Some(p) = i.permission {
+        return (
+            NeedsApproval,
+            format!("{} waits for permission", p.tool_name),
+        );
+    }
 
     // Pending questions and plan approvals at the transcript tail.
     if let Some(f) = i.facts {

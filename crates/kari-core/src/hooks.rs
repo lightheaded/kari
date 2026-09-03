@@ -16,6 +16,9 @@ pub const HOOK_PATH: &str = "/kari/hook";
 /// secret from the token file at run time, so a rotated token needs no
 /// reinstall.
 pub const TOKEN_HEADER: &str = "x-kari-token";
+/// The header a hub sends with its id. A column push needs the id of the hub
+/// that holds the node's lease.
+pub const HUB_HEADER: &str = "x-kari-hub";
 const MARKER: &str = "kari/hook.sh";
 
 /// Events kari registers. PostToolUse clears a pending permission, so it needs every tool.
@@ -27,7 +30,25 @@ const EVENTS: &[(&str, Option<&str>)] = &[
     ("Notification", None),
     ("PreToolUse", Some("AskUserQuestion|ExitPlanMode")),
     ("PostToolUse", Some("*")),
+    ("PermissionRequest", None),
 ];
+
+/// The hook Claude Code runs before a permission dialog. kari can hold it for
+/// a remote answer (Away mode), so its timeout is long. The relay prints
+/// kari's decision, or nothing, and Claude Code shows the dialog then.
+pub const HELD_EVENT: &str = "PermissionRequest";
+/// Seconds the relay waits on a held event. Above the longest hold a node offers.
+pub const HELD_TIMEOUT_SECS: u64 = 660;
+
+/// The stdout of the relay that settles a permission prompt.
+pub fn decision_json(behavior: &str) -> serde_json::Value {
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": HELD_EVENT,
+            "decision": { "behavior": behavior }
+        }
+    })
+}
 
 pub fn parse(v: &Value) -> Option<HookEvent> {
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|x| x.to_string());
@@ -93,6 +114,11 @@ pub fn apply(st: &mut HookState, e: &HookEvent) {
         "PreToolUse" => {
             st.turn_active = true;
         }
+        // Claude Code asks for permission. The hook fires before the dialog.
+        "PermissionRequest" => {
+            st.permission_pending_since = Some(e.at);
+            st.permission_message = e.tool_name.clone();
+        }
         "Notification" => match e.notification_type.as_deref().unwrap_or("") {
             "permission_prompt" | "agent_needs_input" => {
                 st.permission_pending_since = Some(e.at);
@@ -114,11 +140,23 @@ pub fn script_path() -> PathBuf {
 
 pub fn script(port: u16) -> String {
     let token_file = paths::hook_token_file().to_string_lossy().into_owned();
+    let url = format!("http://127.0.0.1:{port}{HOOK_PATH}");
+    let hdr = format!("-H 'content-type: application/json' -H \"{TOKEN_HEADER}: $tok\"");
     format!(
-        "#!/bin/sh\n# kari hook relay. Posts the Claude Code hook payload to kari and never fails.\n\
+        "#!/bin/sh\n\
+         # kari hook relay. Posts the Claude Code hook payload to kari and never fails.\n\
+         # A {HELD_EVENT} may be held by kari for a remote answer; its decision is printed.\n\
          tok=$(cat '{token_file}' 2>/dev/null)\n\
-         curl -s -m 3 -X POST -H 'content-type: application/json' -H \"{TOKEN_HEADER}: $tok\" --data-binary @- \\\n  \
-         'http://127.0.0.1:{port}{HOOK_PATH}' >/dev/null 2>&1\nexit 0\n"
+         payload=$(cat)\n\
+         case \"$payload\" in\n\
+           *'\"hook_event_name\":\"{HELD_EVENT}\"'*|*'\"hook_event_name\": \"{HELD_EVENT}\"'*)\n\
+             printf '%s' \"$payload\" | curl -s -m {HELD_TIMEOUT_SECS} -X POST {hdr} --data-binary @- '{url}' 2>/dev/null\n\
+             ;;\n\
+           *)\n\
+             printf '%s' \"$payload\" | curl -s -m 3 -X POST {hdr} --data-binary @- '{url}' >/dev/null 2>&1\n\
+             ;;\n\
+         esac\n\
+         exit 0\n"
     )
 }
 
@@ -147,18 +185,29 @@ pub fn token() -> anyhow::Result<String> {
     Ok(t)
 }
 
-/// Rewrite the relay script when an installed copy predates the token header.
-/// kari owns the script, so this needs no click.
+/// Rewrite the relay script when an installed copy predates the token header
+/// or the held event. kari owns the script, so this needs no click. The hook
+/// entry for the held event needs a reinstall, which `installed_events` reports.
 pub fn refresh_script(port: u16) -> anyhow::Result<()> {
     let sp = script_path();
     let Ok(current) = std::fs::read_to_string(&sp) else {
         return Ok(());
     };
-    if current.contains(TOKEN_HEADER) {
+    if current.contains(TOKEN_HEADER) && current.contains(HELD_EVENT) {
         return Ok(());
     }
     std::fs::write(&sp, script(port))?;
     Ok(())
+}
+
+/// True when settings.json registers kari for the held event. An older install
+/// lacks it, and Away mode then cannot hold anything.
+pub fn held_event_installed() -> bool {
+    let Ok(v) = read_settings() else { return false };
+    v.get("hooks")
+        .and_then(|h| h.get(HELD_EVENT))
+        .and_then(|a| a.as_array())
+        .is_some_and(|a| a.iter().any(is_kari_group))
 }
 
 fn settings_path() -> PathBuf {
@@ -266,7 +315,13 @@ pub fn install(port: u16) -> anyhow::Result<PathBuf> {
     strip_kari(hooks);
     let cmd = sp.to_string_lossy().into_owned();
     for (event, matcher) in EVENTS {
-        let mut group = json!({ "hooks": [ { "type": "command", "command": cmd, "timeout": 5 } ] });
+        let timeout = if *event == HELD_EVENT {
+            HELD_TIMEOUT_SECS
+        } else {
+            5
+        };
+        let mut group =
+            json!({ "hooks": [ { "type": "command", "command": cmd, "timeout": timeout } ] });
         if let Some(m) = matcher {
             group["matcher"] = json!(m);
         }

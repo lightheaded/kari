@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Column, DerivedState, NewTask, NodeStatus, Settings } from "../types";
+import type { Column, DerivedState, LocalAddress, NewTask, NodeStatus, Settings } from "../types";
 import { ALL_STATES, RUN_MODELS, STATE_LABEL } from "../types";
 import { nodeDot, relTime } from "../util";
 
@@ -253,6 +253,7 @@ function NodeRow({
   onLocalName,
   onRename,
   onToggle,
+  onAway,
   onPair,
   onRemove,
 }: {
@@ -262,6 +263,7 @@ function NodeRow({
   onLocalName: (name: string) => void;
   onRename: (name: string) => void;
   onToggle: () => void;
+  onAway: () => void;
   onPair: () => void;
   onRemove: () => void;
 }) {
@@ -295,11 +297,20 @@ function NodeRow({
         />
       )}
       <span className="hint">
-        {local ? "local" : `${node.ssh_host ?? "no ssh host"} · port ${node.remote_port}`}
+        {local ? "local" : node.ssh_host ? `${node.ssh_host} · port ${node.remote_port}` : node.address ? node.address : `127.0.0.1:${node.remote_port}`}
         {node.version ? ` · ${node.version}` : ""}
         {node.last_seen ? ` · seen ${relTime(node.last_seen)} ago` : ""}
         {!local && !node.paired ? " · not paired" : ""}
+        {node.primary ? " · columns: this device" : node.lease ? ` · columns: ${node.lease.hub_name}` : ""}
+        {node.away_mode ? " · away mode" : ""}
       </span>
+      <div className="nodeacts">
+        {node.online && (
+          <button className="btn ghost sm" disabled={busy} onClick={onAway} title="Hold permission prompts for a remote answer, such as from a phone">
+            {node.away_mode ? "Away mode off" : "Away mode on"}
+          </button>
+        )}
+      </div>
       {!local && (
         <div className="nodeacts">
           <button className="btn ghost sm" disabled={busy} onClick={onToggle}>
@@ -338,11 +349,13 @@ function NodeRow({
 
 function NodesSection({
   nodes,
+  primary,
   onNodesChanged,
   localName,
   onLocalName,
 }: {
   nodes: NodeStatus[];
+  primary: boolean;
   onNodesChanged: () => void;
   localName: string;
   onLocalName: (name: string) => void;
@@ -350,8 +363,13 @@ function NodesSection({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [host, setHost] = useState("");
+  const [address, setAddress] = useState("");
+  const [token, setToken] = useState("");
   const [name, setName] = useState("");
   const [port, setPort] = useState(47311);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [code, setCode] = useState<string | null>(null);
+  const holder = nodes.find((n) => n.lease && !n.primary)?.lease?.hub_name;
 
   /** Every change reloads the board, and the fresh node list comes back with it. */
   const change = async (fn: () => Promise<unknown>) => {
@@ -369,8 +387,16 @@ function NodesSection({
 
   const add = () =>
     change(async () => {
-      await api.addNode({ name: name.trim() || host.trim(), ssh_host: host.trim(), remote_port: port });
+      await api.addNode({
+        name: name.trim() || host.trim() || address.trim(),
+        ssh_host: host.trim() || null,
+        address: address.trim() || null,
+        remote_port: port,
+        token: token.trim() || null,
+      });
       setHost("");
+      setAddress("");
+      setToken("");
       setName("");
     });
 
@@ -378,9 +404,43 @@ function NodesSection({
     <div className="section">
       <h5>Nodes</h5>
       <div className="hint">
-        kari connects over an SSH port forward and reads the node's token once. The node must run <code>kari-node serve</code>. A name is how the other kari
+        kari connects over an SSH port forward and reads the node's token once. The node must run <code>kari-node serve</code>. A node on a private network takes an address and its token instead. A name is how the other kari
         instances see the machine. Empty means the host name.
       </div>
+      <div className="primaryrow">
+        <span className={`pill ${primary ? "on" : ""}`}>{primary ? "this device pushes the columns" : holder ? `${holder} pushes the columns` : "no primary yet"}</span>
+        {!primary && (
+          <button
+            className="btn sm"
+            disabled={busy}
+            onClick={() =>
+              change(async () => {
+                setMsg(await api.claimPrimary());
+              })
+            }
+          >
+            Make this device primary
+          </button>
+        )}
+        {msg && <span className="hint">{msg}</span>}
+        <button
+          className="btn ghost sm"
+          disabled={busy}
+          onClick={() =>
+            change(async () => {
+              setCode(code ? null : await api.pairingCode());
+            })
+          }
+        >
+          {code ? "Hide the pairing code" : "Show pairing code"}
+        </button>
+      </div>
+      {code && (
+        <div className="paircode">
+          <div className="hint">Paste this in the phone's Nodes tab. It holds the node tokens: show it at home only, and hide it when done. This machine appears with an address only when "Also listen on" is set.</div>
+          <textarea readOnly value={code} rows={3} onFocus={(e) => e.currentTarget.select()} />
+        </div>
+      )}
       <div className="nodelist">
         {nodes.map((n) => (
           <NodeRow
@@ -391,6 +451,7 @@ function NodesSection({
             onLocalName={onLocalName}
             onRename={(newName) => change(() => api.updateNode(n.id, { name: newName }))}
             onToggle={() => change(() => api.updateNode(n.id, { enabled: !n.enabled }))}
+            onAway={() => change(() => api.setAwayMode(n.id, !n.away_mode))}
             onPair={() => change(() => api.pairNode(n.id))}
             onRemove={() => change(() => api.removeNode(n.id))}
           />
@@ -410,9 +471,19 @@ function NodesSection({
           <label>Port</label>
           <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
         </div>
-        <button className="btn sm" disabled={busy || !host.trim()} onClick={add}>
+        <button className="btn sm" disabled={busy || !(host.trim() || address.trim())} onClick={add}>
           Add node
         </button>
+        <div className="field">
+          <label>Address (no SSH)</label>
+          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="ip:47311" />
+          <div className="hint">on a private network, when there is no SSH forward</div>
+        </div>
+        <div className="field">
+          <label>Token</label>
+          <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="the node's hook-token" type="password" />
+          <div className="hint">needed with an address; read from the node's config directory</div>
+        </div>
       </div>
       {err && <div className="nodeerr">{err}</div>}
     </div>
@@ -424,6 +495,7 @@ export function SettingsModal({
   hooksInstalled,
   hooksPort,
   nodes,
+  primary,
   onNodesChanged,
   onClose,
   onSave,
@@ -434,6 +506,7 @@ export function SettingsModal({
   hooksInstalled: boolean;
   hooksPort: number;
   nodes: NodeStatus[];
+  primary: boolean;
   onNodesChanged: () => void;
   onClose: () => void;
   onSave: (s: Settings) => void;
@@ -441,6 +514,11 @@ export function SettingsModal({
   onHooks: (install: boolean) => void;
 }) {
   const [s, setS] = useState<Settings>({ ...settings });
+  const [addrs, setAddrs] = useState<LocalAddress[]>([]);
+  useEffect(() => {
+    api.localAddresses().then(setAddrs).catch(() => {});
+  }, []);
+  const extraIp = (s.extra_listen ?? "").split(":").slice(0, -1).join(":");
   const [paths, setPaths] = useState<Record<string, string> | null>(null);
   useEffect(() => {
     api.paths().then(setPaths).catch(() => {});
@@ -465,6 +543,24 @@ export function SettingsModal({
         </>
       }
     >
+      <div className="field">
+        <label>Also listen on</label>
+        <select
+          value={extraIp}
+          onChange={(e) => setS({ ...s, extra_listen: e.target.value ? `${e.target.value}:${s.hooks_port}` : "" })}
+        >
+          <option value="">loopback only</option>
+          {addrs.map((a) => (
+            <option key={`${a.interface}-${a.ip}`} value={a.ip}>
+              {a.interface} · {a.ip}
+              {a.private ? "" : " (public)"}
+            </option>
+          ))}
+        </select>
+        <div className="hint">
+          A second address for the kari API, for a hub on a phone over a private network. Pick the VPN interface, never a public one. Takes effect after a restart.
+        </div>
+      </div>
       <div className="grid2">
         <div className="field">
           <label>History window (days)</label>
@@ -511,7 +607,7 @@ export function SettingsModal({
           </select>
         </div>
       </div>
-      <NodesSection nodes={nodes} onNodesChanged={onNodesChanged} localName={s.node_name ?? ""} onLocalName={(name) => setS({ ...s, node_name: name })} />
+      <NodesSection nodes={nodes} primary={primary} onNodesChanged={onNodesChanged} localName={s.node_name ?? ""} onLocalName={(name) => setS({ ...s, node_name: name })} />
       <div className="section">
         <h5>Live hooks</h5>
         <div className="hint">

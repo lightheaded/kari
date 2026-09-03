@@ -63,6 +63,14 @@ Build a bundle:
 bun tauri build
 ```
 
+Build the Android app. It needs JDK 17, the Android SDK with `platforms;android-34`, `platforms;android-36`, `build-tools;34.0.0`, `build-tools;35.0.0` and `ndk;27.2.12479018`, and the Rust target `aarch64-linux-android`. Point `JAVA_HOME`, `ANDROID_HOME` and `NDK_HOME` at them.
+
+```
+bun tauri android init                                   # once; the project it writes is not tracked
+bun tauri android build --debug --apk --target aarch64   # a debug APK for adb install
+bun tauri android build --apk --target aarch64           # an unsigned release APK; the release workflow signs it
+```
+
 ## Quota tracking
 
 The status line wrapper saves the rate-limit windows on every refresh:
@@ -145,9 +153,35 @@ What you see: every card carries a node badge, and a chip row filters the board 
 
 Deployment of the node is managed outside this repository. `flake.nix` builds it for a NixOS host, and each release carries a Linux tarball.
 
+### A node over a private network
+
+A hub that cannot open an SSH forward, such as the phone, reaches a node by address. The node then listens on loopback for the hook relay and on one more address for that hub:
+
+```
+kari-node serve --listen 127.0.0.1:47311 --listen <vpn-ip>:47311 --allow-remote
+```
+
+The desktop app does the same with "Also listen on" in Settings. Pick the VPN interface, never a public one. The token is the only guard on that path, so the private network carries the trust.
+
+## The phone
+
+The same app builds for Android and runs as a second hub. It joins the private network, talks to every node directly, and shows the board, a "Needs you" inbox, the plans, and a task form. It runs no Claude Code, so it has no node of its own.
+
+- Install `kari-latest.apk` from the release page, or add `https://github.com/lightheaded/kari` to Obtainium: the asset name never carries the version and the signing key never changes, so an update installs over the previous build. Then open Nodes and paste the pairing code from the desktop (Settings, Nodes, "Show pairing code"). The code holds the node tokens: show it at home and hide it when done. Fill in the address of a node the code does not know.
+- "Needs you" lists every card in approval, decision, my turn, validate and waiting, with the actions on the card: an option of an open question, a reply, stop, done. A reply to a session that is alive in a terminal gets a warning first, because a second process writes into the same transcript.
+- Notifications arrive while the app is open. Android stops the app in the background after a while; a foreground service is a later step.
+
+### Who owns the columns
+
+Two hubs can watch the same nodes. Only one pushes columns, and each node decides which: it keeps a lease. "Make this device primary", in Settings on the desktop or in Nodes on the phone, takes the lease on every online node and adopts the columns found there, so a switch changes no columns. The other hub follows, with its columns editor read-only. Nothing takes the lease without a tap. Every other action, such as add, move, start, stop, reply, allow and deny, stays open to every hub.
+
+### Away mode
+
+Claude Code asks for permission in the terminal, and only the terminal can answer. With Away mode on for a node, kari holds the prompt for up to 10 minutes and the phone shows Allow and Deny on the card. While kari waits, the terminal shows a spinner and no dialog, so Away mode is off at the desk and one tap flips it, per node, from the phone or the desktop. If nobody answers in time, the dialog appears as before. Background jobs kari starts never ask. Away mode needs the `PermissionRequest` hook entry: click "Install hooks" once more after an upgrade, or run `kari-node hooks install` on a node.
+
 ## Data
 
-- Database: `~/.config/kari/kari.db` (SQLite). It also holds the remote nodes. Node tokens live in the keychain, never in the database.
+- Database: `~/.config/kari/kari.db` (SQLite). It also holds the remote nodes, the column lease and the primary intent. Node tokens live in the keychain, never in the database. On the phone the store lives in the app's data directory.
 - kari reads `~/.claude/sessions`, `~/.claude/projects`, `~/.claude/jobs` and the herdr socket. It never writes to those directories. The hook and status line installers edit `~/.claude/settings.json` only when you ask, and keep a backup.
 
 ## Layout
@@ -155,6 +189,7 @@ Deployment of the node is managed outside this repository. `flake.nix` builds it
 ```
 crates/kari-core   readers, parser, inference, store, launcher, HTTP API, hub, SSH tunnel
 crates/kari-cli    kari-node: the engine without a window
+src/mobile         the phone layout: inbox, one column at a time, nodes and pairing
 src-tauri          Tauri shell: commands, events, tray, notifications
 src                React UI
 scripts            status line installer, version bump, demo board, screenshots
@@ -172,10 +207,11 @@ cargo run -p kari-core --example plan -- /tmp # build a plan from temporary card
 cargo run -p kari-core --example jobrun -- /tmp   # start one background job and follow it
 cargo run -p kari-core --example herdr_open -- /tmp   # open and close a herdr pane
 cargo run -p kari-core --example node_api     # serve the local engine and call it as a node
-cargo run -p kari-core --example hub_node     # add a real node to the hub, read both boards, remove it
+cargo run -p kari-core --example hub_node     # add a real node to the hub, read both boards, take the lease, remove it
+cargo run -p kari-core --example permission_hold  # hold a permission prompt on a real node and answer it
 ```
 
-The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project. `hub_node` starts a node with its own home directory and removes it again; it needs `cargo build -p kari-cli` first.
+The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project. `hub_node` and `permission_hold` start a node with its own home directory and remove it again; they need `cargo build -p kari-cli` first.
 
 `bun run demo` opens the UI in a browser with the dummy board from `docs/demo`. No Rust toolchain and no Claude Code state are needed for that.
 

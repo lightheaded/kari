@@ -21,6 +21,7 @@ use axum::{
 };
 use futures_util::stream::{Stream, StreamExt};
 use serde::Deserialize;
+use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_stream::wrappers::BroadcastStream;
@@ -100,20 +101,73 @@ struct SnoozeBody {
     minutes: i64,
 }
 
+#[derive(Deserialize)]
+struct ReleaseBody {
+    hub_id: String,
+}
+
+fn hub_of(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(hooks::HUB_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 // ---------------------------------------------------------------- handlers
 
 async fn health(State(st): State<ApiState>) -> Json<NodeIdentity> {
     Json(st.engine.identity())
 }
 
+/// Take a hook payload. A permission request in Away mode is held: the
+/// response waits for an answer from the API, or for the hold to run out,
+/// and carries the decision the relay prints for Claude Code.
 async fn hook(
     State(st): State<ApiState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    if let Err(e) = st.engine.ingest_hook(payload) {
+    if let Err(e) = st.engine.ingest_hook(payload.clone()) {
         warn!("hook rejected: {e}");
+        return Json(serde_json::json!({}));
     }
-    Json(serde_json::json!({}))
+    let Some(rx) = st.engine.hold_permission(&payload) else {
+        return Json(serde_json::json!({}));
+    };
+    let hold = st
+        .engine
+        .settings()
+        .away_hold_secs
+        .clamp(5, hooks::HELD_TIMEOUT_SECS - 30);
+    let id = st
+        .engine
+        .pending_permissions()
+        .into_iter()
+        .max_by_key(|p| p.since)
+        .map(|p| p.id);
+    match tokio::time::timeout(std::time::Duration::from_secs(hold), rx).await {
+        Ok(Ok(b)) if b == "allow" || b == "deny" => Json(hooks::decision_json(&b)),
+        // Cancelled: the session moved on, or nobody answered in time.
+        _ => {
+            if let Some(id) = id {
+                st.engine.drop_permission(&id);
+            }
+            Json(serde_json::json!({}))
+        }
+    }
+}
+
+async fn permissions(State(st): State<ApiState>) -> Json<Vec<PendingPermission>> {
+    Json(st.engine.pending_permissions())
+}
+
+async fn answer_permission(
+    State(st): State<ApiState>,
+    Path(id): Path<String>,
+    Json(a): Json<PermissionAnswer>,
+) -> R<()> {
+    let e = st.engine;
+    blocking(move || e.answer_permission(&id, &a.behavior)).await
 }
 
 async fn board(State(st): State<ApiState>) -> R<BoardView> {
@@ -129,6 +183,9 @@ async fn events(
         match r {
             Ok(Event::BoardChanged) => {
                 Some(Ok(SseEvent::default().event("board_changed").data("{}")))
+            }
+            Ok(Event::LeaseChanged) => {
+                Some(Ok(SseEvent::default().event("lease_changed").data("{}")))
             }
             Ok(Event::Notice {
                 title,
@@ -219,14 +276,55 @@ async fn get_columns(State(st): State<ApiState>) -> R<Vec<Column>> {
     blocking(move || Ok(e.columns())).await
 }
 
-async fn set_columns(State(st): State<ApiState>, Json(cols): Json<Vec<Column>>) -> R<()> {
+/// Only the hub that holds this node's lease may push columns.
+fn require_lease(e: &Engine, headers: &HeaderMap) -> Result<(), ApiError> {
+    let hub = hub_of(headers);
+    if e.lease_allows(hub.as_deref()) {
+        return Ok(());
+    }
+    let holder = e
+        .lease()
+        .map(|l| l.hub_name)
+        .unwrap_or_else(|| "another hub".into());
+    Err(ApiError(
+        StatusCode::CONFLICT,
+        format!("not primary: {holder} holds the lease"),
+    ))
+}
+
+async fn set_columns(
+    State(st): State<ApiState>,
+    headers: HeaderMap,
+    Json(cols): Json<Vec<Column>>,
+) -> R<()> {
+    require_lease(&st.engine, &headers)?;
     let e = st.engine;
     blocking(move || e.set_columns(cols)).await
 }
 
-async fn reset_columns(State(st): State<ApiState>) -> R<()> {
+async fn reset_columns(State(st): State<ApiState>, headers: HeaderMap) -> R<()> {
+    require_lease(&st.engine, &headers)?;
     let e = st.engine;
     blocking(move || e.reset_columns()).await
+}
+
+async fn get_lease(State(st): State<ApiState>) -> Json<Option<Lease>> {
+    Json(st.engine.lease())
+}
+
+async fn claim_lease(State(st): State<ApiState>, Json(c): Json<LeaseClaim>) -> R<Lease> {
+    let e = st.engine;
+    match tokio::task::spawn_blocking(move || e.claim_lease(c)).await {
+        Ok(Ok(l)) => Ok(Json(l)),
+        // A live holder refused the claim. 409, so the hub knows it is not a bug.
+        Ok(Err(err)) => Err(ApiError(StatusCode::CONFLICT, err.to_string())),
+        Err(err) => Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())),
+    }
+}
+
+async fn release_lease(State(st): State<ApiState>, Json(b): Json<ReleaseBody>) -> R<()> {
+    let e = st.engine;
+    blocking(move || e.release_lease(&b.hub_id)).await
 }
 
 async fn get_settings(State(st): State<ApiState>) -> Json<Settings> {
@@ -325,6 +423,12 @@ pub fn router(engine: Arc<Engine>, token: String) -> Router {
         .route("/cards/{id}/jobs", get(job_log))
         .route("/columns", get(get_columns).put(set_columns))
         .route("/columns/reset", post(reset_columns))
+        .route(
+            "/lease",
+            get(get_lease).post(claim_lease).delete(release_lease),
+        )
+        .route("/permissions", get(permissions))
+        .route("/permissions/{id}", post(answer_permission))
         .route("/settings", get(get_settings).put(set_settings))
         .route("/proposal", get(get_proposal).post(propose_now))
         .route("/proposals", get(proposal_history))
@@ -354,25 +458,58 @@ pub async fn serve(
     addr: SocketAddr,
     allow_remote: bool,
 ) -> anyhow::Result<()> {
-    if !addr.ip().is_loopback() && !allow_remote {
-        anyhow::bail!("{addr} is not a loopback address; pass --allow-remote to bind it anyway");
+    serve_all(engine, vec![addr], allow_remote).await
+}
+
+/// One router on several addresses: loopback for the hook relay, and a private
+/// network address for a hub that cannot open an SSH forward. The first
+/// address is the one the hook relay posts to.
+pub async fn serve_all(
+    engine: Arc<Engine>,
+    addrs: Vec<SocketAddr>,
+    allow_remote: bool,
+) -> anyhow::Result<()> {
+    let Some(first) = addrs.first().copied() else {
+        anyhow::bail!("no address to listen on");
+    };
+    for addr in &addrs {
+        if !addr.ip().is_loopback() && !allow_remote {
+            anyhow::bail!(
+                "{addr} is not a loopback address; pass --allow-remote to bind it anyway"
+            );
+        }
     }
     let token = hooks::token()?;
-    if let Err(e) = hooks::refresh_script(addr.port()) {
+    if let Err(e) = hooks::refresh_script(first.port()) {
         warn!("hook relay script not refreshed: {e}");
     }
     let app = router(engine, token);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!("kari api on http://{addr}");
-    axum::serve(listener, app).await?;
+    let mut servers = Vec::new();
+    for addr in addrs {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        info!("kari api on http://{addr}");
+        servers.push(axum::serve(listener, app.clone()).into_future());
+    }
+    // The first server to stop ends the whole thing; the process is then on its way out.
+    let (r, _, _) = futures_util::future::select_all(servers).await;
+    r?;
     Ok(())
 }
 
 /// The same server as a background task, for the desktop app. Errors are logged.
-pub fn spawn(engine: Arc<Engine>, port: u16) {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+/// `extra` is a second address to listen on, such as a WireGuard address.
+pub fn spawn(engine: Arc<Engine>, port: u16, extra: Option<SocketAddr>) {
+    let mut addrs = vec![SocketAddr::from(([127, 0, 0, 1], port))];
+    let allow_remote = extra.is_some();
+    if let Some(a) = extra {
+        if a.ip().is_unspecified() {
+            warn!("kari api: refusing to listen on every interface ({a}); pick one address");
+        } else {
+            addrs.push(a);
+        }
+    }
     tokio::spawn(async move {
-        if let Err(e) = serve(engine, addr, false).await {
+        if let Err(e) = serve_all(engine, addrs, allow_remote).await {
             warn!("kari api stopped: {e}");
         }
     });

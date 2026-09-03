@@ -427,6 +427,30 @@ pub struct CardView {
     pub estimate: Option<Estimate>,
     pub last_activity_at: Option<DateTime<Utc>>,
     pub reason: String,
+    /// A permission prompt kari holds for a remote answer. Away mode only.
+    #[serde(default)]
+    pub permission: Option<PendingPermission>,
+}
+
+/// A permission prompt that Claude Code asked and kari holds open, so that a
+/// phone can answer it. Lives in memory until answered or timed out.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PendingPermission {
+    pub id: String,
+    pub session_id: String,
+    pub tool_name: String,
+    /// The tool's input as Claude Code sent it. Can be large.
+    pub tool_input: serde_json::Value,
+    pub message: Option<String>,
+    pub since: DateTime<Utc>,
+    /// When the hold ends and the terminal dialog appears instead.
+    pub until: DateTime<Utc>,
+}
+
+/// The answer to a held permission prompt: `allow` or `deny`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionAnswer {
+    pub behavior: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -442,6 +466,9 @@ pub struct BoardView {
     pub calibration: Calibration,
     /// The open proposal, or the last accepted one while its jobs run.
     pub proposal: Option<Proposal>,
+    /// True when this node holds permission prompts for a remote answer.
+    #[serde(default)]
+    pub away_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -498,6 +525,16 @@ pub struct Settings {
     pub weekly_warn_unused_pct: f64,
     /// Name of this node as other kari instances see it. Empty means the host name.
     pub node_name: String,
+    /// Hold permission prompts of interactive sessions for a remote answer,
+    /// such as from a phone. The terminal shows a spinner instead of the
+    /// dialog while kari waits, so this is off at the desk.
+    pub away_mode: bool,
+    /// Seconds a held permission prompt waits before the dialog appears.
+    pub away_hold_secs: u64,
+    /// A second address for the API, `ip:port`, beside loopback. For a hub
+    /// on a private network that cannot open an SSH forward, such as a phone
+    /// over WireGuard. Empty means loopback only. Never every interface.
+    pub extra_listen: String,
 }
 
 impl Default for Settings {
@@ -530,6 +567,9 @@ impl Default for Settings {
             prefer_herdr: true,
             weekly_warn_unused_pct: 25.0,
             node_name: String::new(),
+            away_mode: false,
+            away_hold_secs: 600,
+            extra_listen: String::new(),
         }
     }
 }
@@ -633,8 +673,12 @@ pub struct NodeRecord {
     /// Display name. Empty means the SSH host, else the node's own name.
     pub name: String,
     /// SSH host alias from `~/.ssh/config`. None means a direct connection to
-    /// `127.0.0.1:remote_port`, for tests and for nodes reached another way.
+    /// `address`, else to `127.0.0.1:remote_port` for tests.
     pub ssh_host: Option<String>,
+    /// `host:port` of the node's API on a private network, for a hub that
+    /// cannot open an SSH forward, such as a phone. Wins over `remote_port`
+    /// when `ssh_host` is None.
+    pub address: Option<String>,
     /// Port of the node's API on its own loopback interface.
     pub remote_port: u16,
     pub enabled: bool,
@@ -647,6 +691,7 @@ impl Default for NodeRecord {
             id: String::new(),
             name: String::new(),
             ssh_host: None,
+            address: None,
             remote_port: 47311,
             enabled: true,
             created_at: Utc::now(),
@@ -659,7 +704,12 @@ impl Default for NodeRecord {
 pub struct NewNode {
     pub name: String,
     pub ssh_host: Option<String>,
+    /// `host:port` for a direct connection over a private network.
+    pub address: Option<String>,
     pub remote_port: u16,
+    /// The node's token, when the caller has it already, for example from a
+    /// pairing QR code. None means: read it over SSH, or pair later by hand.
+    pub token: Option<String>,
 }
 
 impl Default for NewNode {
@@ -667,7 +717,9 @@ impl Default for NewNode {
         NewNode {
             name: String::new(),
             ssh_host: None,
+            address: None,
             remote_port: 47311,
+            token: None,
         }
     }
 }
@@ -677,6 +729,7 @@ impl Default for NewNode {
 pub struct NodePatch {
     pub name: Option<String>,
     pub ssh_host: Option<Option<String>>,
+    pub address: Option<Option<String>>,
     pub remote_port: Option<u16>,
     pub enabled: Option<bool>,
 }
@@ -692,12 +745,52 @@ pub struct NodeStatus {
     pub enabled: bool,
     pub paired: bool,
     pub ssh_host: Option<String>,
+    pub address: Option<String>,
     pub remote_port: u16,
     pub version: Option<String>,
     pub api_version: Option<u32>,
     pub remote_node_id: Option<String>,
     pub last_seen: Option<DateTime<Utc>>,
     pub error: Option<String>,
+    /// The hub that holds this node's column lease, as the node reports it.
+    #[serde(default)]
+    pub lease: Option<Lease>,
+    /// True when this hub holds the lease on this node.
+    #[serde(default)]
+    pub primary: bool,
+    /// True when the node holds permission prompts for a remote answer.
+    #[serde(default)]
+    pub away_mode: bool,
+}
+
+/// Who may push columns to a node. One row per node, kept in its `kv` table.
+/// A lease that was not renewed for `LEASE_TTL_SECS` counts as free.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Lease {
+    pub hub_id: String,
+    pub hub_name: String,
+    pub claimed_at: DateTime<Utc>,
+    pub renewed_at: DateTime<Utc>,
+}
+
+/// Seconds without a renewal after which any hub may claim a lease.
+pub const LEASE_TTL_SECS: i64 = 600;
+
+impl Lease {
+    pub fn expired(&self, now: DateTime<Utc>) -> bool {
+        (now - self.renewed_at).num_seconds() > LEASE_TTL_SECS
+    }
+}
+
+/// A hub asks for a node's lease. `take` wins over a live holder; the user
+/// pressed "Make this device primary". Without it, the claim succeeds only
+/// when the lease is free, expired, or already this hub's.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LeaseClaim {
+    pub hub_id: String,
+    pub hub_name: String,
+    pub take: bool,
 }
 
 /// A card on the hub board: the node's view plus the node it lives on.
@@ -724,10 +817,19 @@ pub struct NodeProposal {
     pub proposal: Proposal,
 }
 
-/// The merged board of every node. Columns come from the local node.
+/// The merged board of every node. Columns come from the hub's own store; the
+/// primary hub pushes them to every node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubBoard {
     pub columns: Vec<Column>,
+    /// This hub, as the nodes know it.
+    #[serde(default)]
+    pub hub_id: String,
+    #[serde(default)]
+    pub hub_name: String,
+    /// True when this hub is the one that pushes columns.
+    #[serde(default)]
+    pub primary: bool,
     pub nodes: Vec<NodeStatus>,
     pub cards: Vec<HubCard>,
     pub quotas: Vec<NodeQuota>,

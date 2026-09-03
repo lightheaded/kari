@@ -269,11 +269,14 @@ stay in one place. A node needs no open port, no certificate and no new secret.
 `kari-node serve` refuses an address that is not loopback unless the flag
 `--allow-remote` names one.
 
-A client that cannot open an SSH forward, such as a phone app, can reach a node
-over a private network instead. The node then needs `--allow-remote` and a bind
-that keeps loopback, for example `0.0.0.0`, because the hook relay posts to
-127.0.0.1. The token is the only guard on that path, so the private network is
-what carries the trust.
+A client that cannot open an SSH forward, such as a phone app, reaches a node
+over a private network instead. The node record then carries an `address`
+(`host:port`) and the token comes with it, from a pairing code. The node
+listens on loopback for the hook relay and on one more address for that hub:
+`kari-node serve --listen 127.0.0.1:47311 --listen <vpn-ip>:47311
+--allow-remote`, or "Also listen on" in the desktop Settings. Never every
+interface on a laptop that visits other networks. The token is the only guard
+on that path, so the private network is what carries the trust.
 
 Pairing is one SSH call: the app reads `~/.config/kari/hook-token` from the
 node and keeps it in the macOS keychain, one item per node under the service
@@ -294,12 +297,14 @@ and says so in Settings. Every other route needs the token in the
 | Route | Engine method |
 |---|---|
 | `GET /kari/v1/board` | `board()` |
-| `GET /kari/v1/events` | server-sent events: `board_changed`, `notice` |
+| `GET /kari/v1/events` | server-sent events: `board_changed`, `notice`, `lease_changed` |
 | `POST /kari/v1/cards` | `add_task()` |
 | `PATCH`, `DELETE /kari/v1/cards/{id}` | `patch_card()`, `delete_card()` |
 | `POST /kari/v1/cards/{id}/move`, `/start`, `/stop`, `/summarize`, `/jump` | the card actions |
 | `GET /kari/v1/cards/{id}/jobs` | `job_log()` |
-| `GET`, `PUT /kari/v1/columns`, `/settings` | columns and settings |
+| `GET`, `PUT /kari/v1/columns`, `/settings` | columns and settings; `PUT /columns` needs the lease |
+| `GET`, `POST`, `DELETE /kari/v1/lease` | the column lease: read, claim or renew, release |
+| `GET /kari/v1/permissions`, `POST /kari/v1/permissions/{id}` | the permission prompts a node holds, and their answer |
 | `/kari/v1/proposal`, `/proposals/{id}/accept`, `/snooze`, `/dismiss`, `/stop` | the proposal methods |
 | `GET /kari/v1/quota`, `/calibration`, `/projects` | quota, calibration, projects |
 | `POST /kari/v1/stop-all` | `stop_all()` |
@@ -314,11 +319,54 @@ node, and every card with its node id and node name. Rules:
 
 - A card is `(node id, card id)`. Every action routes by node.
 - Each card shows a node badge. A chip row filters the board to one node.
-- Columns come from the desktop. The hub pushes them to each node on connect
-  and on every change. A remote card that carries an unknown column falls back
-  to the column that accepts its state.
+- Columns live in the hub's store. The primary hub pushes them to each node on
+  connect and on every change. A remote card that carries an unknown column
+  falls back to the column that accepts its state.
 - A task belongs to the host that holds its project directory. Cards do not
   move between nodes.
+
+### The primary lease
+
+Two hubs can watch the same nodes: the desktop and a phone. Only one pushes
+columns, else they fight. The nodes arbitrate. Each node keeps one lease row:
+hub id, hub name, claim time, renewal time. `POST /kari/v1/lease` claims it.
+The claim succeeds when the lease is free, expired (no renewal for 10 minutes),
+already this hub's, or when the claim carries `take`. `PUT /kari/v1/columns`
+needs the header `x-kari-hub` with the holder's id and answers 409 to anyone
+else. The node emits `lease_changed` on its event stream.
+
+A hub that wants to be primary renews on every node about once a minute. A
+refused renewal, a 409, or a `lease_changed` that names another hub drops it to
+follower mode with one notice. "Make this device primary" claims with `take`
+on every online node and adopts the columns it finds on the node whose foreign
+lease was renewed last, so a switch changes no columns. Offline nodes get the
+claim when they reconnect. No hub takes over on its own: an expired lease is
+claimable without `take`, but only a user's tap claims. A desktop whose local
+lease is free on start is primary, as every kari before the lease was. The
+intent survives a restart in the `kv` table.
+
+A hub without a local engine, `Hub::without_local`, shows only remote nodes.
+That is the phone.
+
+### Away mode: a permission prompt answered from the phone
+
+Claude Code runs a `PermissionRequest` hook before it shows a permission
+dialog. A command hook that prints a decision settles the prompt, and the
+dialog never appears. kari uses that gap. The relay script posts the payload to
+the node and, for this one event, prints the node's answer. With Away mode off
+the node answers at once with no decision, and the dialog appears as before.
+With Away mode on the node keeps the response open: it stores the prompt, sends
+a notice with the tool and the card, and waits for `POST
+/kari/v1/permissions/{id}` with `allow` or `deny`, up to `away_hold_secs` (600
+by default). A hub answers through that route; the phone shows Allow and Deny
+on the card. If nobody answers in time, or the session moves on, the response
+carries no decision and the terminal shows the dialog. Nothing is lost.
+
+While kari waits, the terminal shows a spinner and no dialog. So Away mode is
+per node, off by default, and one tap on the phone or the desktop flips it.
+Background jobs kari starts run with `bypassPermissions` and never ask. The
+hook entry for this event has a 660 s timeout; an older install lacks it, so
+"Install hooks" must run once more.
 
 ### Jump in
 
@@ -378,4 +426,12 @@ Made on 2026-09-03:
 - Transport: an SSH port forward to a loopback port. No new open port, no TLS, no new secret.
 - The node token lives in the macOS keychain, one item per node.
 - Node names are set by the user. The default is the SSH host, else the host name.
+- Columns have one owner at a time, the primary hub, decided per node by a
+  lease. Any hub becomes primary with one tap. A switch adopts the columns in
+  place. Nothing takes the lease without a tap (2026-09-03).
+- A permission prompt is held for a remote answer only in Away mode, per node,
+  off by default: a held prompt hides the terminal dialog (2026-09-03).
+- A node on a private network is reached by address with a pasted or scanned
+  token. A laptop listens on loopback plus one chosen address, never on every
+  interface (2026-09-03).
 - Quota, planner and summaries stay per node, because each node has its own login.

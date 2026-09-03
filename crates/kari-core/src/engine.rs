@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 use tracing::{info, warn};
 
 /// The first eight characters of an id, for log lines. Never slices bytes.
@@ -23,6 +23,8 @@ fn short(s: &str) -> String {
 #[derive(Debug, Clone)]
 pub enum Event {
     BoardChanged,
+    /// The column lease of this node changed hands.
+    LeaseChanged,
     Notice {
         title: String,
         body: String,
@@ -51,6 +53,9 @@ struct Snapshot {
     calibrated_at: Option<DateTime<Utc>>,
     /// The open proposal, or the last accepted one while its jobs run.
     proposal: Option<Proposal>,
+    /// Permission prompts held for a remote answer, by id. The sender wakes
+    /// the hook handler that waits on it.
+    permissions: HashMap<String, (PendingPermission, Option<oneshot::Sender<String>>)>,
 }
 
 pub struct Engine {
@@ -62,6 +67,14 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Open the store at a chosen directory instead of the default kari
+    /// directory. For a hub on a device without a home directory, such as a
+    /// phone. Call it once, before any other path lookup.
+    pub fn open_at(dir: &std::path::Path) -> anyhow::Result<Arc<Engine>> {
+        paths::set_kari_dir(dir);
+        Self::open()
+    }
+
     pub fn open() -> anyhow::Result<Arc<Engine>> {
         let store = Store::open(&paths::kari_db())?;
         let settings = store.load_settings()?;
@@ -557,6 +570,24 @@ impl Engine {
             if ev.event == "Stop" {
                 snap.summary_wanted.insert(ev.session_id.clone());
             }
+            // The session moved on, so a held prompt of it is stale. The
+            // handler that waits on it answers with no decision.
+            if matches!(
+                ev.event.as_str(),
+                "Stop" | "SessionEnd" | "PostToolUse" | "UserPromptSubmit"
+            ) {
+                let stale: Vec<String> = snap
+                    .permissions
+                    .iter()
+                    .filter(|(_, (p, _))| p.session_id == ev.session_id)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in stale {
+                    if let Some((_, Some(tx))) = snap.permissions.remove(&id) {
+                        let _ = tx.send(String::new());
+                    }
+                }
+            }
         }
         let _ = self.store.lock().unwrap().log_hook(&ev);
         let _ = self.ensure_session_card(&ev.session_id, ev.cwd.as_deref());
@@ -578,6 +609,135 @@ impl Engine {
         self.detect_transitions();
         self.emit_changed();
         Ok(())
+    }
+
+    // ---------------------------------------------------------------- held permissions
+
+    /// Hold a permission prompt for a remote answer. Returns the receiver the
+    /// hook handler waits on, or None when Away mode is off or the payload is
+    /// not a permission request. The notice names the tool and the card.
+    pub fn hold_permission(
+        self: &Arc<Self>,
+        payload: &serde_json::Value,
+    ) -> Option<oneshot::Receiver<String>> {
+        let s = |k: &str| {
+            payload
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string())
+        };
+        if s("hook_event_name").as_deref() != Some(hooks::HELD_EVENT) {
+            return None;
+        }
+        let settings = self.settings();
+        if !settings.away_mode {
+            return None;
+        }
+        let session_id = s("session_id").filter(|x| hooks::valid_session_id(x))?;
+        let tool_name = s("tool_name").unwrap_or_else(|| "tool".into());
+        let now = Utc::now();
+        let hold = settings
+            .away_hold_secs
+            .clamp(5, hooks::HELD_TIMEOUT_SECS - 30) as i64;
+        let pending = PendingPermission {
+            id: uuid::Uuid::new_v4().to_string(),
+            session_id: session_id.clone(),
+            tool_name: tool_name.clone(),
+            tool_input: payload
+                .get("tool_input")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            message: s("message"),
+            since: now,
+            until: now + Duration::seconds(hold),
+        };
+        let (tx, rx) = oneshot::channel();
+        let card_id = self
+            .store
+            .lock()
+            .unwrap()
+            .card_by_session(&session_id)
+            .ok()
+            .flatten()
+            .map(|c| c.id);
+        let title = self
+            .snap
+            .read()
+            .unwrap()
+            .facts
+            .get(&session_id)
+            .and_then(|f| f.title())
+            .unwrap_or_else(|| short(&session_id));
+        let summary = summarize_input(&tool_name, &pending.tool_input);
+        self.snap
+            .write()
+            .unwrap()
+            .permissions
+            .insert(pending.id.clone(), (pending, Some(tx)));
+        info!(
+            "holding a {tool_name} permission for {} up to {hold} s",
+            short(&session_id)
+        );
+        let _ = self.tx.send(Event::Notice {
+            title: format!("Allow {tool_name}? · {title}"),
+            body: summary,
+            card_id,
+        });
+        self.emit_changed();
+        Some(rx)
+    }
+
+    /// Answer a held prompt. The hook handler prints the decision and Claude
+    /// Code continues without a dialog.
+    pub fn answer_permission(&self, id: &str, behavior: &str) -> anyhow::Result<()> {
+        if !matches!(behavior, "allow" | "deny") {
+            anyhow::bail!("behavior must be allow or deny");
+        }
+        let (pending, tx) = {
+            let mut snap = self.snap.write().unwrap();
+            let Some(entry) = snap.permissions.remove(id) else {
+                anyhow::bail!("this prompt is no longer held; the terminal has it now")
+            };
+            if let Some(st) = snap.hooks.get_mut(&entry.0.session_id) {
+                st.permission_pending_since = None;
+                st.permission_message = None;
+            }
+            entry
+        };
+        let Some(tx) = tx else {
+            anyhow::bail!("this prompt is no longer held; the terminal has it now")
+        };
+        if tx.send(behavior.to_string()).is_err() {
+            anyhow::bail!("the hook gave up on this prompt already");
+        }
+        info!(
+            "{behavior}: {} for {}",
+            pending.tool_name,
+            short(&pending.session_id)
+        );
+        self.emit_changed();
+        Ok(())
+    }
+
+    /// The hold ran out. Forget the prompt; the terminal shows the dialog now.
+    pub fn drop_permission(&self, id: &str) {
+        let removed = self.snap.write().unwrap().permissions.remove(id).is_some();
+        if removed {
+            self.emit_changed();
+        }
+    }
+
+    pub fn pending_permissions(&self) -> Vec<PendingPermission> {
+        let mut v: Vec<PendingPermission> = self
+            .snap
+            .read()
+            .unwrap()
+            .permissions
+            .values()
+            .map(|(p, _)| p.clone())
+            .collect();
+        v.sort_by_key(|p| p.since);
+        v
     }
 
     pub fn install_hooks(&self) -> anyhow::Result<String> {
@@ -872,10 +1032,20 @@ impl Engine {
                 .copied()
                 .unwrap_or(0);
             let herdr_agent = Self::match_herdr(&snap.herdr, live, facts, live_in_cwd);
-            // A session that never got a prompt and has no process is noise.
+            let permission = card.session_id.as_deref().and_then(|sid| {
+                snap.permissions
+                    .values()
+                    .map(|(p, _)| p)
+                    .filter(|p| p.session_id == sid)
+                    .min_by_key(|p| p.since)
+                    .cloned()
+            });
+            // A session that never got a prompt and has no process is noise,
+            // unless kari holds a permission prompt for it.
             if card.kind == CardKind::Session
                 && live.is_none()
                 && bg.is_none()
+                && permission.is_none()
                 && facts.is_none_or(|f| f.turns == 0)
             {
                 continue;
@@ -890,6 +1060,7 @@ impl Engine {
                 bg,
                 herdr: herdr_agent,
                 hooks: hook_state,
+                permission: permission.as_ref(),
                 summary: summ,
                 now,
                 settings: &settings,
@@ -916,6 +1087,7 @@ impl Engine {
                         .unwrap_or_else(|| "untitled".into())
                 });
             out.push(CardView {
+                permission,
                 title,
                 state,
                 column_id,
@@ -955,7 +1127,18 @@ impl Engine {
             hooks_port: settings.hooks_port,
             calibration,
             proposal,
+            away_mode: settings.away_mode,
         }
+    }
+
+    /// Turn Away mode on or off: hold permission prompts for a remote answer.
+    pub fn set_away_mode(&self, on: bool) -> anyhow::Result<()> {
+        let mut s = self.settings();
+        if s.away_mode == on {
+            return Ok(());
+        }
+        s.away_mode = on;
+        self.set_settings(s)
     }
 
     // ---------------------------------------------------------------- mutations
@@ -1266,6 +1449,107 @@ impl Engine {
             node_name: self.node_name(),
             platform: std::env::consts::OS.into(),
         }
+    }
+
+    /// Small facts the hub keeps beside the board, such as its primary intent.
+    pub fn kv_get(&self, key: &str) -> Option<String> {
+        self.store.lock().unwrap().kv_get(key).ok().flatten()
+    }
+
+    pub fn kv_set(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        self.store.lock().unwrap().kv_set(key, value)
+    }
+
+    // ---------------------------------------------------------------- column lease
+
+    const LEASE_KEY: &'static str = "lease";
+
+    /// The hub that may push columns to this node, if any.
+    pub fn lease(&self) -> Option<Lease> {
+        let store = self.store.lock().unwrap();
+        store
+            .kv_get(Self::LEASE_KEY)
+            .ok()
+            .flatten()
+            .and_then(|j| serde_json::from_str(&j).ok())
+    }
+
+    /// True when a hub with this id may push columns: no lease, an expired
+    /// lease, or its own lease. `None` is a caller without a hub id, such as a
+    /// script or an older kari; it passes only while no hub holds the lease.
+    pub fn lease_allows(&self, hub_id: Option<&str>) -> bool {
+        match self.lease() {
+            None => true,
+            Some(l) if l.expired(Utc::now()) => true,
+            Some(l) => hub_id == Some(l.hub_id.as_str()),
+        }
+    }
+
+    /// Claim or renew the lease. One SQLite transaction, so two hubs that claim
+    /// at once see one winner.
+    pub fn claim_lease(&self, claim: LeaseClaim) -> anyhow::Result<Lease> {
+        if claim.hub_id.trim().is_empty() {
+            anyhow::bail!("a claim needs a hub id");
+        }
+        let now = Utc::now();
+        let changed;
+        let lease = {
+            let store = self.store.lock().unwrap();
+            let current: Option<Lease> = store
+                .kv_get(Self::LEASE_KEY)?
+                .and_then(|j| serde_json::from_str(&j).ok());
+            let lease = match current {
+                Some(l) if l.hub_id == claim.hub_id => {
+                    changed = false;
+                    Lease {
+                        hub_name: claim.hub_name.clone(),
+                        renewed_at: now,
+                        ..l
+                    }
+                }
+                Some(l) if !l.expired(now) && !claim.take => {
+                    anyhow::bail!("not primary: {} holds the lease", l.hub_name);
+                }
+                _ => {
+                    changed = true;
+                    Lease {
+                        hub_id: claim.hub_id.clone(),
+                        hub_name: claim.hub_name.clone(),
+                        claimed_at: now,
+                        renewed_at: now,
+                    }
+                }
+            };
+            store.kv_set(Self::LEASE_KEY, &serde_json::to_string(&lease)?)?;
+            lease
+        };
+        if changed {
+            info!("lease taken by {} ({})", lease.hub_name, lease.hub_id);
+            let _ = self.tx.send(Event::LeaseChanged);
+        }
+        Ok(lease)
+    }
+
+    /// Give the lease back. Only the holder can.
+    pub fn release_lease(&self, hub_id: &str) -> anyhow::Result<()> {
+        let released = {
+            let store = self.store.lock().unwrap();
+            let current: Option<Lease> = store
+                .kv_get(Self::LEASE_KEY)?
+                .and_then(|j| serde_json::from_str(&j).ok());
+            match current {
+                Some(l) if l.hub_id == hub_id => {
+                    store.kv_delete(Self::LEASE_KEY)?;
+                    true
+                }
+                Some(l) => anyhow::bail!("not primary: {} holds the lease", l.hub_name),
+                None => false,
+            }
+        };
+        if released {
+            let _ = self.tx.send(Event::LeaseChanged);
+        }
+        Ok(())
     }
 
     // ---------------------------------------------------------------- remote nodes (hub side)
@@ -1900,5 +2184,117 @@ impl Engine {
                 }
             })
             .expect("spawn");
+    }
+}
+
+/// One line about a tool call, for a notification: the command, the file, or
+/// the first words of the input.
+fn summarize_input(tool: &str, input: &serde_json::Value) -> String {
+    let pick = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|k| input.get(k).and_then(|v| v.as_str()))
+            .map(|s| s.to_string())
+    };
+    let text = match tool {
+        "Bash" => pick(&["command"]),
+        "Edit" | "Write" | "MultiEdit" | "Read" | "NotebookEdit" => {
+            pick(&["file_path", "notebook_path"])
+        }
+        "WebFetch" => pick(&["url"]),
+        "Agent" | "Task" => pick(&["description", "prompt"]),
+        _ => pick(&[
+            "command",
+            "file_path",
+            "url",
+            "query",
+            "pattern",
+            "description",
+        ]),
+    }
+    .or_else(|| input.as_str().map(|s| s.to_string()))
+    .unwrap_or_else(|| {
+        let raw = input.to_string();
+        if raw == "null" {
+            String::new()
+        } else {
+            raw
+        }
+    });
+    let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate(&one_line, 160)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_summary_names_the_thing() {
+        let v = serde_json::json!({ "command": "cargo   test\n--workspace" });
+        assert_eq!(summarize_input("Bash", &v), "cargo test --workspace");
+        let v = serde_json::json!({ "file_path": "/tmp/x.rs", "old_string": "a" });
+        assert_eq!(summarize_input("Edit", &v), "/tmp/x.rs");
+        assert_eq!(summarize_input("Other", &serde_json::Value::Null), "");
+    }
+
+    /// The one test that opens an engine: `open_at` fixes the kari directory
+    /// for the whole process, so every other test must stay away from it.
+    #[test]
+    fn lease_claim_rules() {
+        let dir = std::env::temp_dir().join(format!("kari-lease-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let e = Engine::open_at(&dir).unwrap();
+        let claim = |id: &str, take: bool| LeaseClaim {
+            hub_id: id.into(),
+            hub_name: id.to_uppercase(),
+            take,
+        };
+        assert!(e.lease().is_none());
+        assert!(e.lease_allows(None), "a free lease lets an old client push");
+
+        let a = e.claim_lease(claim("a", false)).unwrap();
+        assert_eq!(a.hub_id, "a");
+        assert!(e.lease_allows(Some("a")));
+        assert!(!e.lease_allows(Some("b")));
+        assert!(
+            !e.lease_allows(None),
+            "a held lease keeps an anonymous client out"
+        );
+
+        // Renewal by the holder keeps the claim time and moves the renewal time.
+        let a2 = e.claim_lease(claim("a", false)).unwrap();
+        assert_eq!(a2.claimed_at, a.claimed_at);
+        assert!(a2.renewed_at >= a.renewed_at);
+
+        // Another hub without `take` is refused while the lease is fresh.
+        let err = e.claim_lease(claim("b", false)).unwrap_err().to_string();
+        assert!(err.contains("not primary"), "{err}");
+        assert_eq!(e.lease().unwrap().hub_id, "a");
+
+        // With `take` it wins.
+        let b = e.claim_lease(claim("b", true)).unwrap();
+        assert_eq!(b.hub_id, "b");
+        assert!(e.lease_allows(Some("b")));
+        assert!(!e.lease_allows(Some("a")));
+
+        // Only the holder releases.
+        assert!(e.release_lease("a").is_err());
+        e.release_lease("b").unwrap();
+        assert!(e.lease().is_none());
+
+        // An expired lease is free for anyone.
+        let old = Lease {
+            hub_id: "c".into(),
+            hub_name: "C".into(),
+            claimed_at: Utc::now() - Duration::hours(2),
+            renewed_at: Utc::now() - Duration::hours(1),
+        };
+        e.kv_set(Engine::LEASE_KEY, &serde_json::to_string(&old).unwrap())
+            .unwrap();
+        assert!(e.lease_allows(None));
+        assert!(e.lease_allows(Some("a")));
+        let a3 = e.claim_lease(claim("a", false)).unwrap();
+        assert_eq!(a3.hub_id, "a");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

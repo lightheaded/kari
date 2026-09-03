@@ -309,6 +309,9 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
 .noderow .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px/1.3 var(--mono); }
 .noderow .nodeacts { display: flex; gap: 4px; justify-content: flex-end; }
 .nodeerr { grid-column: 1 / -1; font-size: 11.5px; color: var(--rust); }
+.paircode { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.paircode textarea { width: 100%; box-sizing: border-box; font: 11px/1.4 var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--ground); color: var(--ink); padding: 6px 8px; }
+.primaryrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; flex-wrap: wrap; }
 .nodeadd { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 90px auto; gap: 8px; align-items: start; }
 .nodeadd .btn { margin-top: 18px; }
 .drawer .offline-note { color: var(--amber); }

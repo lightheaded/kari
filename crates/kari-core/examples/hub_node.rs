@@ -72,6 +72,7 @@ fn main() -> anyhow::Result<()> {
         name: "example".into(),
         ssh_host: None,
         remote_port: port,
+        ..Default::default()
     })?;
     println!("added      {} (paired {})", status.name, status.paired);
     let token_file = home.join(".config/kari/hook-token");
@@ -153,6 +154,47 @@ fn main() -> anyhow::Result<()> {
     println!("task       added to the node, it now holds {on_node} card(s)");
     hub.delete_card(&status.id, &card.id)?;
     println!("task       removed");
+
+    // The column lease. This hub takes it, a second hub takes it away, this hub
+    // notices and steps back, then takes it again.
+    println!("primary    {}", hub.claim_primary()?);
+    let n = hub.nodes().into_iter().find(|n| n.id == status.id).unwrap();
+    anyhow::ensure!(n.primary, "the node does not show this hub as primary");
+    let other = kari_core::client::ApiClient::at(&format!("http://127.0.0.1:{port}"), &token)
+        .with_hub("phone-example");
+    let refused = other.set_columns(&engine.columns());
+    anyhow::ensure!(
+        refused
+            .as_ref()
+            .is_err_and(|e| e.to_string().contains("not primary")),
+        "the node let a foreign hub push columns: {refused:?}"
+    );
+    println!("gate       a foreign hub got 409 on a column push");
+    other.claim_lease(&kari_core::LeaseClaim {
+        hub_id: "phone-example".into(),
+        hub_name: "phone".into(),
+        take: true,
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while hub.is_primary() {
+        if Instant::now() > deadline {
+            anyhow::bail!("the hub did not notice that the phone took the lease");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    println!("lost       the phone took the lease and this hub stepped back");
+    let e = hub.set_columns(engine.columns()).unwrap_err().to_string();
+    anyhow::ensure!(e.contains("not primary"), "{e}");
+    println!("follower   this hub refuses to edit columns: {e}");
+    println!("primary    {}", hub.claim_primary()?);
+    let lease = other
+        .lease()?
+        .ok_or_else(|| anyhow::anyhow!("no lease on the node"))?;
+    anyhow::ensure!(
+        lease.hub_id == engine.node_id(),
+        "the node's lease is not this hub's"
+    );
+    println!("taken back the node's lease names this hub again");
 
     hub.remove_node(&status.id)?;
     println!("removed    node and its keychain item");

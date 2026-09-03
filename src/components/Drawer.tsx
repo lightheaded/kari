@@ -12,13 +12,15 @@ interface Props {
   showNode?: boolean;
   /** The node does not answer. Every action is off until it comes back. */
   offline?: boolean;
+  /** A phone: no terminal here, so Jump in gives way to the command to run elsewhere. */
+  mobile?: boolean;
   onClose: () => void;
   onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
 }
 
 const MODES = ["", "bypassPermissions", "acceptEdits", "auto", "plan", "default"];
 
-export function Drawer({ view, columns, settings, showNode, offline, onClose, onAction }: Props) {
+export function Drawer({ view, columns, settings, showNode, offline, mobile, onClose, onAction }: Props) {
   const c = view.card;
   const node = view.node_id;
   const s = view.session;
@@ -103,9 +105,11 @@ export function Drawer({ view, columns, settings, showNode, offline, onClose, on
         </div>
         {offline && <div className="hint offline-note">This node is offline. Actions return when it reconnects.</div>}
         <div className="actions">
-          <button className="btn primary sm" disabled={offline} onClick={() => onAction(() => api.jumpIn(node, c.id), "Opened")}>
-            Jump in
-          </button>
+          {!mobile && (
+            <button className="btn primary sm" disabled={offline} onClick={() => onAction(() => api.jumpIn(node, c.id), "Opened")}>
+              Jump in
+            </button>
+          )}
           {canStart && (
             <button
               className="btn sm"
@@ -147,6 +151,27 @@ export function Drawer({ view, columns, settings, showNode, offline, onClose, on
         </div>
       </header>
       <div className="body">
+        {view.permission && (
+          <div className="section">
+            <h5>Held permission prompt</h5>
+            <div className="quote">
+              {view.permission.tool_name}
+              {"\n"}
+              {typeof view.permission.tool_input === "string" ? view.permission.tool_input : JSON.stringify(view.permission.tool_input, null, 2)}
+            </div>
+            {!offline && (
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button className="btn primary sm" onClick={() => onAction(() => api.answerPermission(node, view.permission!.id, "allow"), "Allowed")}>
+                  Allow
+                </button>
+                <button className="btn danger sm" onClick={() => onAction(() => api.answerPermission(node, view.permission!.id, "deny"), "Denied")}>
+                  Deny
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {q.length > 0 && (
           <div className="section">
             <h5>Open questions</h5>
@@ -304,6 +329,14 @@ export function Drawer({ view, columns, settings, showNode, offline, onClose, on
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {mobile && c.session_id && (
+          <div className="section">
+            <h5>In a terminal</h5>
+            <div className="hint">On {view.node_name}, in {c.project_cwd ?? s?.cwd ?? "the project"}:</div>
+            <div className="quote">claude --resume {c.session_id}</div>
           </div>
         )}
 

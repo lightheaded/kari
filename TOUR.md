@@ -109,6 +109,19 @@ A remote node is another host that runs `kari-node serve`. Add it in Settings wi
 
 The README explains what a node needs.
 
+The Nodes section also shows who pushes the columns. Two hubs, the desktop and the phone, can watch the same nodes, and only the primary one pushes. "Make this device primary" takes the lease on every online node. "Show pairing code" prints the code the phone reads. "Away mode on" makes a node hold permission prompts for a remote answer.
+
+## The phone
+
+The Android app is a second hub. It reaches the nodes over a private network, such as a VPN, and pairs with the code from the desktop. Four tabs:
+
+- **Needs you**: the quota per node, the open plans with Start, Snooze and Dismiss, then every card that waits for a person. The actions sit on the card: an option of an open question, a reply, Allow and Deny for a held permission prompt, Stop, Done, Open.
+- **Board**: one column at a time. The arrows or the dots move between columns. A chip row filters to one node.
+- **Add**: the task form. A task with a prompt and auto-run on is ready for the next plan.
+- **Nodes**: the status and the lease holder per node, Away mode per node, "Make this device primary", the pairing code, and this device's name.
+
+A tap on a card opens the same drawer as the desktop, without Jump in. The drawer shows the command to run in a terminal instead.
+
 ## The tray
 
 kari lives in the menu bar. The tray tooltip shows how many sessions work, how many need you, and how many nodes are offline. The tray menu has "Open kari", "Refresh now", "Stop all kari jobs" and "Quit kari". "Stop all kari jobs" takes two clicks within 10 seconds, so one slip does not kill your work.
