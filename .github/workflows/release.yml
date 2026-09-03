@@ -63,6 +63,9 @@ jobs:
                 'A Linux host can run the headless node from `kari-node-<tag>-x86_64-unknown-linux-gnu.tar.gz`.',
                 'Start it with `kari-node serve` and add it under Settings, Nodes in the app.',
                 '',
+                'An Android phone installs `kari-<tag>-android-arm64.apk`. It reaches the nodes over a private network,',
+                'such as a VPN, and pairs with the code from Settings, Nodes on the desktop. See TOUR.md.',
+                '',
                 'See the README for requirements and setup.',
               ].join('\n'),
               draft: true,
@@ -132,8 +135,74 @@ jobs:
           tar czf "$name.tar.gz" "$name"
           gh release upload "${{ github.ref_name }}" "$name.tar.gz" --clobber
 
+  android-apk:
+    # The phone app, signed with the release key from the repository secrets.
+    # Without the key the job builds and stops: an unsigned APK installs nowhere.
+    # To make the key once: keytool -genkeypair -v -keystore kari-release.jks
+    #   -alias kari -keyalg RSA -keysize 4096 -validity 10000
+    # Then set ANDROID_KEYSTORE (base64 of the file), ANDROID_KEYSTORE_PASSWORD,
+    # ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD as repository secrets.
+    needs: create-release
+    runs-on: ubuntu-latest
+    env:
+      # A step cannot test a secret directly; this flag carries the answer.
+      HAS_KEY: ${{ secrets.ANDROID_KEYSTORE != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-34 platforms;android-36 build-tools;34.0.0 build-tools;35.0.0 ndk;27.2.12479018
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: android-release
+
+      - name: Install the frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the release APK
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: |
+          bun tauri android init
+          bun tauri android build --apk --target aarch64
+          apk=$(ls src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk | head -1)
+          echo "apk=$apk" >> "$GITHUB_ENV"
+
+      - name: Sign and upload
+        if: env.HAS_KEY == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          tools="$ANDROID_HOME/build-tools/34.0.0"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > release.jks
+          name="kari-${{ github.ref_name }}-android-arm64.apk"
+          "$tools/zipalign" -p 4 "$apk" aligned.apk
+          "$tools/apksigner" sign --ks release.jks --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD --out "$name" aligned.apk
+          "$tools/apksigner" verify "$name"
+          rm -f release.jks
+          gh release upload "${{ github.ref_name }}" "$name" --clobber
+
   publish-release:
-    needs: [create-release, build, node-binary]
+    needs: [create-release, build, node-binary, android-apk]
     runs-on: ubuntu-latest
     steps:
       - name: Publish the release

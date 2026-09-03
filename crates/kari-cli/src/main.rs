@@ -197,6 +197,10 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
             Ok(m) => tracing::info!("{m}"),
             Err(e) => tracing::warn!("hooks not installed: {e}"),
         }
+    } else if hooks::installed() && !hooks::held_event_installed() {
+        tracing::warn!(
+            "hooks installed without the PermissionRequest entry; run `kari-node hooks install` again for Away mode"
+        );
     } else if hooks::installed() {
         tracing::info!("hooks installed");
     } else {
