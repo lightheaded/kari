@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kari-core", "src-tauri"]
+members = ["crates/kari-core", "crates/kari-cli", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,9 +12,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "io-util", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "io-util", "net", "signal"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
+axum = "0.8"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.dev]
 opt-level = 1

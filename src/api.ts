@@ -1,6 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { BoardView, Calibration, Card, CardPatch, Column, JobLogEntry, NewTask, Proposal, QuotaSample, Settings, Summary } from "./types";
+import type {
+  BoardView,
+  Calibration,
+  Card,
+  CardPatch,
+  Column,
+  HubBoard,
+  JobLogEntry,
+  NewNode,
+  NewTask,
+  NodePatch,
+  NodeStatus,
+  Proposal,
+  QuotaSample,
+  Settings,
+  Summary,
+} from "./types";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -16,48 +32,93 @@ async function devFixture<T>(name: string, fallback?: T): Promise<T> {
   return r.json();
 }
 
+/** The one node a single-machine board has. A fixture from an older kari has no nodes. */
+function localNode(): NodeStatus {
+  return {
+    id: "local",
+    name: "local",
+    kind: "local",
+    online: true,
+    enabled: true,
+    paired: true,
+    ssh_host: null,
+    remote_port: 0,
+    version: null,
+    api_version: null,
+    remote_node_id: null,
+    last_seen: null,
+    error: null,
+  };
+}
+
+/** Read a board fixture. It holds either an old one-machine board or a hub board. */
+function toHubBoard(json: BoardView | HubBoard): HubBoard {
+  if ("nodes" in json) return json;
+  const node = localNode();
+  const tag = { node_id: node.id, node_name: node.name };
+  return {
+    columns: json.columns,
+    nodes: [node],
+    cards: json.cards.map((c) => ({ ...c, ...tag })),
+    quotas: [{ ...tag, quota: json.quota, calibration: json.calibration }],
+    proposals: json.proposal ? [{ ...tag, proposal: json.proposal }] : [],
+    generated_at: json.generated_at,
+    scanning: json.scanning,
+    herdr_connected: json.herdr_connected,
+    hooks_installed: json.hooks_installed,
+    hooks_port: json.hooks_port,
+  };
+}
+
 export const api = {
-  board: () => (inTauri ? invoke<BoardView>("get_board") : devFixture<BoardView>("board")),
+  board: () => (inTauri ? invoke<HubBoard>("get_board") : devFixture<BoardView | HubBoard>("board").then(toHubBoard)),
   refresh: () => invoke<void>("refresh"),
-  moveCard: (cardId: string, columnId: string) => invoke<void>("move_card", { cardId, columnId }),
-  addTask: (task: NewTask) => invoke<Card>("add_task", { task }),
-  patchCard: (cardId: string, patch: CardPatch) => invoke<Card>("patch_card", { cardId, patch }),
-  deleteCard: (cardId: string) => invoke<void>("delete_card", { cardId }),
+  moveCard: (nodeId: string, cardId: string, columnId: string) => invoke<void>("move_card", { nodeId, cardId, columnId }),
+  addTask: (nodeId: string, task: NewTask) => invoke<Card>("add_task", { nodeId, task }),
+  patchCard: (nodeId: string, cardId: string, patch: CardPatch) => invoke<Card>("patch_card", { nodeId, cardId, patch }),
+  deleteCard: (nodeId: string, cardId: string) => invoke<void>("delete_card", { nodeId, cardId }),
   columns: () => invoke<Column[]>("get_columns"),
   setColumns: (columns: Column[]) => invoke<void>("set_columns", { columns }),
   resetColumns: () => invoke<void>("reset_columns"),
   settings: () => (inTauri ? invoke<Settings>("get_settings") : devFixture<Settings>("settings")),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
-  jumpIn: (cardId: string) => invoke<string>("jump_in", { cardId }),
-  startCard: (cardId: string, prompt?: string) => invoke<string>("start_card", { cardId, prompt: prompt ?? null }),
-  stopCard: (cardId: string) => invoke<void>("stop_card", { cardId }),
+  jumpIn: (nodeId: string, cardId: string) => invoke<string>("jump_in", { nodeId, cardId }),
+  startCard: (nodeId: string, cardId: string, prompt?: string) => invoke<string>("start_card", { nodeId, cardId, prompt: prompt ?? null }),
+  stopCard: (nodeId: string, cardId: string) => invoke<void>("stop_card", { nodeId, cardId }),
   stopAll: () => invoke<number>("stop_all"),
-  quotaHistory: (limit: number) => invoke<QuotaSample[]>("quota_history", { limit }),
-  projects: () => invoke<[string, string][]>("list_projects"),
+  quotaHistory: (nodeId: string, limit: number) => invoke<QuotaSample[]>("quota_history", { nodeId, limit }),
+  projects: (nodeId: string) => invoke<[string, string][]>("list_projects", { nodeId }),
   statuslineWrapper: (originalCommand: string) => invoke<string>("statusline_wrapper", { originalCommand }),
   paths: () => invoke<Record<string, string>>("kari_paths"),
   installHooks: () => invoke<string>("install_hooks"),
   uninstallHooks: () => invoke<void>("uninstall_hooks"),
-  summarizeCard: (cardId: string) => invoke<Summary>("summarize_card", { cardId }),
+  summarizeCard: (nodeId: string, cardId: string) => invoke<Summary>("summarize_card", { nodeId, cardId }),
   calibration: () => invoke<Calibration>("get_calibration"),
   fetchUsageNow: () => invoke<QuotaSample>("fetch_usage_now"),
-  proposal: () => invoke<Proposal | null>("get_proposal"),
-  proposeNow: () => invoke<Proposal>("propose_now"),
-  acceptProposal: (proposalId: string, cardIds?: string[]) => invoke<number>("accept_proposal", { proposalId, cardIds: cardIds ?? null }),
-  snoozeProposal: (proposalId: string, minutes: number) => invoke<void>("snooze_proposal", { proposalId, minutes }),
-  dismissProposal: (proposalId: string) => invoke<void>("dismiss_proposal", { proposalId }),
-  stopProposal: (proposalId: string) => invoke<number>("stop_proposal", { proposalId }),
-  proposalHistory: (limit: number) => invoke<Proposal[]>("proposal_history", { limit }),
-  jobLog: (cardId: string, limit = 40) =>
+  proposal: (nodeId: string) => invoke<Proposal | null>("get_proposal", { nodeId }),
+  proposeNow: (nodeId: string) => invoke<Proposal>("propose_now", { nodeId }),
+  acceptProposal: (nodeId: string, proposalId: string, cardIds?: string[]) =>
+    invoke<number>("accept_proposal", { nodeId, proposalId, cardIds: cardIds ?? null }),
+  snoozeProposal: (nodeId: string, proposalId: string, minutes: number) => invoke<void>("snooze_proposal", { nodeId, proposalId, minutes }),
+  dismissProposal: (nodeId: string, proposalId: string) => invoke<void>("dismiss_proposal", { nodeId, proposalId }),
+  stopProposal: (nodeId: string, proposalId: string) => invoke<number>("stop_proposal", { nodeId, proposalId }),
+  proposalHistory: (nodeId: string, limit: number) => invoke<Proposal[]>("proposal_history", { nodeId, limit }),
+  listNodes: () => invoke<NodeStatus[]>("list_nodes"),
+  addNode: (node: NewNode) => invoke<NodeStatus>("add_node", { node }),
+  updateNode: (nodeId: string, patch: NodePatch) => invoke<NodeStatus>("update_node", { nodeId, patch }),
+  removeNode: (nodeId: string) => invoke<void>("remove_node", { nodeId }),
+  pairNode: (nodeId: string) => invoke<string>("pair_node", { nodeId }),
+  jobLog: (nodeId: string, cardId: string, limit = 40) =>
     inTauri
-      ? invoke<JobLogEntry[]>("job_log", { cardId, limit })
+      ? invoke<JobLogEntry[]>("job_log", { nodeId, cardId, limit })
       : devFixture<Record<string, JobLogEntry[]>>("job-log", {}).then((m) => (m[cardId] ?? []).slice(0, limit)),
 };
 
+/** The board changed on one node. The callback reloads the whole board. */
 export function onBoardChanged(cb: () => void) {
   if (!inTauri) return () => {};
   let t: number | undefined;
-  const p = listen("board_changed", () => {
+  const p = listen<{ node_id: string }>("board_changed", () => {
     if (t) window.clearTimeout(t);
     t = window.setTimeout(cb, 150);
   });
@@ -66,9 +127,17 @@ export function onBoardChanged(cb: () => void) {
   };
 }
 
-export function onNotice(cb: (n: { title: string; body: string; card_id: string | null }) => void) {
+export interface Notice {
+  title: string;
+  body: string;
+  card_id: string | null;
+  node_id: string;
+  node_name: string;
+}
+
+export function onNotice(cb: (n: Notice) => void) {
   if (!inTauri) return () => {};
-  const p = listen<{ title: string; body: string; card_id: string | null }>("notice", (e) => cb(e.payload));
+  const p = listen<Notice>("notice", (e) => cb(e.payload));
   return () => {
     p.then((un) => un());
   };

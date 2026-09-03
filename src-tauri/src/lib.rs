@@ -1,12 +1,7 @@
-use axum::{
-    extract::State as AxState,
-    http::{HeaderMap, StatusCode},
-    routing::{get, post},
-    Json, Router,
-};
+use kari_core::hub::{Hub, HubEvent};
 use kari_core::{
-    BoardView, Calibration, Card, CardPatch, Column, Engine, Event, NewTask, Proposal, QuotaSample,
-    Settings, Summary,
+    Calibration, Card, CardPatch, Column, Engine, HubBoard, NewNode, NewTask, NodePatch,
+    NodeStatus, Proposal, QuotaSample, Settings, Summary,
 };
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
@@ -15,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
 struct AppState {
-    engine: Arc<Engine>,
+    hub: Arc<Hub>,
 }
 
 /// The tray keeps its own small state: the stop item, and the arm time that
@@ -34,90 +29,128 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// Remote nodes answer over the network. Every command that can reach one runs
+/// off the main thread.
+async fn off_thread<T, F>(hub: &Arc<Hub>, f: F) -> R<T>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<Hub>) -> anyhow::Result<T> + Send + 'static,
+{
+    let h = Arc::clone(hub);
+    tauri::async_runtime::spawn_blocking(move || f(h).map_err(err))
+        .await
+        .map_err(err)?
+}
+
 #[tauri::command]
-fn get_board(state: State<'_, AppState>) -> BoardView {
-    state.engine.board()
+async fn get_board(state: State<'_, AppState>) -> R<HubBoard> {
+    off_thread(&state.hub, |h| Ok(h.board())).await
 }
 
 #[tauri::command]
 fn refresh(state: State<'_, AppState>) {
-    let e = Arc::clone(&state.engine);
-    std::thread::spawn(move || e.refresh_all());
+    let h = Arc::clone(&state.hub);
+    std::thread::spawn(move || h.refresh_all());
 }
 
 #[tauri::command]
-fn move_card(state: State<'_, AppState>, card_id: String, column_id: String) -> R<()> {
-    state.engine.move_card(&card_id, &column_id).map_err(err)
+async fn move_card(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    column_id: String,
+) -> R<()> {
+    off_thread(&state.hub, move |h| {
+        h.move_card(&node_id, &card_id, &column_id)
+    })
+    .await
 }
 
 #[tauri::command]
-fn add_task(state: State<'_, AppState>, task: NewTask) -> R<Card> {
-    state.engine.add_task(task).map_err(err)
+async fn add_task(state: State<'_, AppState>, node_id: String, task: NewTask) -> R<Card> {
+    off_thread(&state.hub, move |h| h.add_task(&node_id, task)).await
 }
 
 #[tauri::command]
-fn patch_card(state: State<'_, AppState>, card_id: String, patch: CardPatch) -> R<Card> {
-    state.engine.patch_card(&card_id, patch).map_err(err)
+async fn patch_card(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    patch: CardPatch,
+) -> R<Card> {
+    off_thread(&state.hub, move |h| h.patch_card(&node_id, &card_id, patch)).await
 }
 
 #[tauri::command]
-fn delete_card(state: State<'_, AppState>, card_id: String) -> R<()> {
-    state.engine.delete_card(&card_id).map_err(err)
+async fn delete_card(state: State<'_, AppState>, node_id: String, card_id: String) -> R<()> {
+    off_thread(&state.hub, move |h| h.delete_card(&node_id, &card_id)).await
 }
 
 #[tauri::command]
 fn get_columns(state: State<'_, AppState>) -> Vec<Column> {
-    state.engine.columns()
+    state.hub.engine().columns()
 }
 
 #[tauri::command]
-fn set_columns(state: State<'_, AppState>, columns: Vec<Column>) -> R<()> {
-    state.engine.set_columns(columns).map_err(err)
+async fn set_columns(state: State<'_, AppState>, columns: Vec<Column>) -> R<()> {
+    off_thread(&state.hub, move |h| h.set_columns(columns)).await
 }
 
 #[tauri::command]
-fn reset_columns(state: State<'_, AppState>) -> R<()> {
-    state.engine.reset_columns().map_err(err)
+async fn reset_columns(state: State<'_, AppState>) -> R<()> {
+    off_thread(&state.hub, |h| h.reset_columns()).await
 }
 
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Settings {
-    state.engine.settings()
+    state.hub.engine().settings()
 }
 
 #[tauri::command]
 fn set_settings(state: State<'_, AppState>, settings: Settings) -> R<()> {
-    state.engine.set_settings(settings).map_err(err)
+    state.hub.engine().set_settings(settings).map_err(err)
 }
 
 #[tauri::command]
-fn jump_in(state: State<'_, AppState>, card_id: String) -> R<String> {
-    state.engine.jump_in(&card_id).map_err(err)
+async fn jump_in(state: State<'_, AppState>, node_id: String, card_id: String) -> R<String> {
+    off_thread(&state.hub, move |h| h.jump_in(&node_id, &card_id)).await
 }
 
 #[tauri::command]
-fn start_card(state: State<'_, AppState>, card_id: String, prompt: Option<String>) -> R<String> {
-    state.engine.start_card(&card_id, prompt).map_err(err)
+async fn start_card(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    prompt: Option<String>,
+) -> R<String> {
+    off_thread(&state.hub, move |h| {
+        h.start_card(&node_id, &card_id, prompt)
+    })
+    .await
 }
 
 #[tauri::command]
-fn stop_card(state: State<'_, AppState>, card_id: String) -> R<()> {
-    state.engine.stop_card(&card_id).map_err(err)
+async fn stop_card(state: State<'_, AppState>, node_id: String, card_id: String) -> R<()> {
+    off_thread(&state.hub, move |h| h.stop_card(&node_id, &card_id)).await
 }
 
 #[tauri::command]
-fn stop_all(state: State<'_, AppState>) -> R<usize> {
-    state.engine.stop_all().map_err(err)
+async fn stop_all(state: State<'_, AppState>) -> R<usize> {
+    off_thread(&state.hub, |h| h.stop_all()).await
 }
 
 #[tauri::command]
-fn quota_history(state: State<'_, AppState>, limit: usize) -> Vec<QuotaSample> {
-    state.engine.quota_history(limit)
+async fn quota_history(
+    state: State<'_, AppState>,
+    node_id: String,
+    limit: usize,
+) -> R<Vec<QuotaSample>> {
+    off_thread(&state.hub, move |h| Ok(h.quota_history(&node_id, limit))).await
 }
 
 #[tauri::command]
-fn list_projects(state: State<'_, AppState>) -> Vec<(String, String)> {
-    state.engine.projects()
+async fn list_projects(state: State<'_, AppState>, node_id: String) -> R<Vec<(String, String)>> {
+    off_thread(&state.hub, move |h| Ok(h.projects(&node_id))).await
 }
 
 #[tauri::command]
@@ -127,94 +160,111 @@ fn statusline_wrapper(original_command: String) -> String {
 
 #[tauri::command]
 fn install_hooks(state: State<'_, AppState>) -> R<String> {
-    state.engine.install_hooks().map_err(err)
+    state.hub.engine().install_hooks().map_err(err)
 }
 
 #[tauri::command]
 fn uninstall_hooks(state: State<'_, AppState>) -> R<()> {
-    state.engine.uninstall_hooks().map_err(err)
+    state.hub.engine().uninstall_hooks().map_err(err)
 }
 
 #[tauri::command]
-async fn summarize_card(state: State<'_, AppState>, card_id: String) -> R<Summary> {
-    let e = Arc::clone(&state.engine);
-    tauri::async_runtime::spawn_blocking(move || e.summarize_card(&card_id).map_err(err))
-        .await
-        .map_err(err)?
-}
-
-#[tauri::command]
-fn job_log(
+async fn summarize_card(
     state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+) -> R<Summary> {
+    off_thread(&state.hub, move |h| h.summarize_card(&node_id, &card_id)).await
+}
+
+#[tauri::command]
+async fn job_log(
+    state: State<'_, AppState>,
+    node_id: String,
     card_id: String,
     limit: usize,
-) -> Vec<kari_core::JobLogEntry> {
-    state.engine.job_log(&card_id, limit)
+) -> R<Vec<kari_core::JobLogEntry>> {
+    off_thread(
+        &state.hub,
+        move |h| Ok(h.job_log(&node_id, &card_id, limit)),
+    )
+    .await
 }
 
 #[tauri::command]
-fn get_proposal(state: State<'_, AppState>) -> Option<Proposal> {
-    state.engine.proposal()
+async fn get_proposal(state: State<'_, AppState>, node_id: String) -> R<Option<Proposal>> {
+    off_thread(&state.hub, move |h| Ok(h.proposal(&node_id))).await
 }
 
 #[tauri::command]
-async fn propose_now(state: State<'_, AppState>) -> R<Proposal> {
-    let e = Arc::clone(&state.engine);
-    tauri::async_runtime::spawn_blocking(move || e.propose_now().map_err(err))
-        .await
-        .map_err(err)?
+async fn propose_now(state: State<'_, AppState>, node_id: String) -> R<Proposal> {
+    off_thread(&state.hub, move |h| h.propose_now(&node_id)).await
 }
 
 #[tauri::command]
 async fn accept_proposal(
     state: State<'_, AppState>,
+    node_id: String,
     proposal_id: String,
     card_ids: Option<Vec<String>>,
 ) -> R<usize> {
-    let e = Arc::clone(&state.engine);
-    tauri::async_runtime::spawn_blocking(move || {
-        e.accept_proposal(&proposal_id, card_ids, false)
-            .map_err(err)
+    off_thread(&state.hub, move |h| {
+        h.accept_proposal(&node_id, &proposal_id, card_ids)
     })
     .await
-    .map_err(err)?
 }
 
 #[tauri::command]
-fn snooze_proposal(state: State<'_, AppState>, proposal_id: String, minutes: i64) -> R<()> {
-    state
-        .engine
-        .snooze_proposal(&proposal_id, minutes)
-        .map_err(err)
+async fn snooze_proposal(
+    state: State<'_, AppState>,
+    node_id: String,
+    proposal_id: String,
+    minutes: i64,
+) -> R<()> {
+    off_thread(&state.hub, move |h| {
+        h.snooze_proposal(&node_id, &proposal_id, minutes)
+    })
+    .await
 }
 
 #[tauri::command]
-fn dismiss_proposal(state: State<'_, AppState>, proposal_id: String) -> R<()> {
-    state.engine.dismiss_proposal(&proposal_id).map_err(err)
+async fn dismiss_proposal(
+    state: State<'_, AppState>,
+    node_id: String,
+    proposal_id: String,
+) -> R<()> {
+    off_thread(&state.hub, move |h| {
+        h.dismiss_proposal(&node_id, &proposal_id)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn stop_proposal(state: State<'_, AppState>, proposal_id: String) -> R<usize> {
-    let e = Arc::clone(&state.engine);
-    tauri::async_runtime::spawn_blocking(move || e.stop_proposal(&proposal_id).map_err(err))
-        .await
-        .map_err(err)?
+async fn stop_proposal(
+    state: State<'_, AppState>,
+    node_id: String,
+    proposal_id: String,
+) -> R<usize> {
+    off_thread(&state.hub, move |h| h.stop_proposal(&node_id, &proposal_id)).await
 }
 
 #[tauri::command]
-fn proposal_history(state: State<'_, AppState>, limit: usize) -> Vec<Proposal> {
-    state.engine.proposal_history(limit)
+async fn proposal_history(
+    state: State<'_, AppState>,
+    node_id: String,
+    limit: usize,
+) -> R<Vec<Proposal>> {
+    off_thread(&state.hub, move |h| Ok(h.proposal_history(&node_id, limit))).await
 }
 
 #[tauri::command]
 fn get_calibration(state: State<'_, AppState>) -> Calibration {
-    state.engine.calibration()
+    state.hub.engine().calibration()
 }
 
 /// Ask the OAuth usage endpoint once, outside the stale check. For a manual test.
 #[tauri::command]
-async fn fetch_usage_now(state: State<'_, AppState>) -> R<QuotaSample> {
-    let _ = Arc::clone(&state.engine);
+async fn fetch_usage_now() -> R<QuotaSample> {
     tauri::async_runtime::spawn_blocking(|| kari_core::quota::fetch_usage().map_err(err))
         .await
         .map_err(err)?
@@ -232,86 +282,38 @@ fn kari_paths() -> serde_json::Value {
     })
 }
 
-/// The receiver state: the engine and the shared secret from the token file.
-#[derive(Clone)]
-struct Receiver {
-    engine: Arc<Engine>,
-    token: Arc<String>,
+// ---------------------------------------------------------------- nodes
+
+#[tauri::command]
+fn list_nodes(state: State<'_, AppState>) -> Vec<NodeStatus> {
+    state.hub.nodes()
 }
 
-/// Only a caller that read the token file may post events or read the board.
-fn authorized(rx: &Receiver, headers: &HeaderMap) -> bool {
-    headers
-        .get(kari_core::hooks::TOKEN_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v == rx.token.as_str())
+#[tauri::command]
+async fn add_node(state: State<'_, AppState>, node: NewNode) -> R<NodeStatus> {
+    off_thread(&state.hub, move |h| h.add_node(node)).await
 }
 
-/// Hook receiver: Claude Code posts hook payloads here through the relay script.
-async fn hook_handler(
-    AxState(rx): AxState<Receiver>,
-    headers: HeaderMap,
-    Json(payload): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !authorized(&rx, &headers) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    if let Err(e) = rx.engine.ingest_hook(payload) {
-        tracing::warn!("hook rejected: {e}");
-    }
-    Ok(Json(serde_json::json!({})))
+#[tauri::command]
+async fn update_node(
+    state: State<'_, AppState>,
+    node_id: String,
+    patch: NodePatch,
+) -> R<NodeStatus> {
+    off_thread(&state.hub, move |h| h.update_node(&node_id, patch)).await
 }
 
-/// Read-only board for scripts and tests. Send the token from
-/// `~/.config/kari/hook-token` in the `x-kari-token` header.
-async fn board_json(
-    AxState(rx): AxState<Receiver>,
-    headers: HeaderMap,
-) -> Result<Json<BoardView>, StatusCode> {
-    if !authorized(&rx, &headers) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    Ok(Json(rx.engine.board()))
+#[tauri::command]
+async fn remove_node(state: State<'_, AppState>, node_id: String) -> R<()> {
+    off_thread(&state.hub, move |h| h.remove_node(&node_id)).await
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "ok": true, "app": "kari", "version": kari_core::version() }))
+#[tauri::command]
+async fn pair_node(state: State<'_, AppState>, node_id: String) -> R<String> {
+    off_thread(&state.hub, move |h| h.pair_node(&node_id)).await
 }
 
-fn start_hook_server(engine: Arc<Engine>) {
-    let port = engine.settings().hooks_port;
-    let token = match kari_core::hooks::token() {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!("hook receiver has no token, it stays off: {e}");
-            return;
-        }
-    };
-    if let Err(e) = kari_core::hooks::refresh_script(port) {
-        tracing::warn!("hook relay script not refreshed: {e}");
-    }
-    let rx = Receiver {
-        engine,
-        token: Arc::new(token),
-    };
-    tauri::async_runtime::spawn(async move {
-        let app = Router::new()
-            .route(kari_core::hooks::HOOK_PATH, post(hook_handler))
-            .route("/kari/health", get(health))
-            .route("/kari/board", get(board_json))
-            .with_state(rx);
-        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-        match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => {
-                tracing::info!("hook receiver on http://{addr}");
-                if let Err(e) = axum::serve(listener, app).await {
-                    tracing::warn!("hook receiver stopped: {e}");
-                }
-            }
-            Err(e) => tracing::warn!("hook receiver cannot bind {addr}: {e}"),
-        }
-    });
-}
+// ---------------------------------------------------------------- shell
 
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -322,19 +324,19 @@ fn show_main(app: &AppHandle) {
 }
 
 /// Show the counts that matter on the tray icon.
-fn update_tray(app: &AppHandle, engine: &Arc<Engine>) {
-    let board = engine.board();
+fn update_tray(app: &AppHandle, hub: &Arc<Hub>) {
+    let board = hub.board();
     let working = board
         .cards
         .iter()
-        .filter(|c| c.state == kari_core::DerivedState::Working)
+        .filter(|c| c.view.state == kari_core::DerivedState::Working)
         .count();
     let need = board
         .cards
         .iter()
         .filter(|c| {
             matches!(
-                c.state,
+                c.view.state,
                 kari_core::DerivedState::NeedsDecision | kari_core::DerivedState::NeedsApproval
             )
         })
@@ -343,12 +345,21 @@ fn update_tray(app: &AppHandle, engine: &Arc<Engine>) {
         .cards
         .iter()
         .filter(|c| {
-            c.card.bg_job_id.is_some()
-                && c.bg_job.as_ref().and_then(|j| j.state.as_deref()) == Some("working")
+            c.view.card.bg_job_id.is_some()
+                && c.view.bg_job.as_ref().and_then(|j| j.state.as_deref()) == Some("working")
         })
         .count();
+    let offline = board
+        .nodes
+        .iter()
+        .filter(|n| n.enabled && !n.online)
+        .count();
     if let Some(tray) = app.tray_by_id("kari-tray") {
-        let _ = tray.set_tooltip(Some(format!("kari — {working} working · {need} need you")));
+        let mut tip = format!("kari — {working} working · {need} need you");
+        if offline > 0 {
+            tip.push_str(&format!(" · {offline} node(s) offline"));
+        }
+        let _ = tray.set_tooltip(Some(tip));
     }
     if let Some(ts) = app.try_state::<TrayState>() {
         ts.jobs.store(jobs, std::sync::atomic::Ordering::Relaxed);
@@ -367,32 +378,46 @@ fn update_tray(app: &AppHandle, engine: &Arc<Engine>) {
     }
 }
 
-fn forward_events(app: AppHandle, engine: Arc<Engine>) {
-    let mut rx = engine.subscribe();
+fn forward_events(app: AppHandle, hub: Arc<Hub>) {
+    let mut rx = hub.subscribe();
     let mut last_tray = std::time::Instant::now() - std::time::Duration::from_secs(10);
     tauri::async_runtime::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(Event::BoardChanged) => {
-                    let _ = app.emit("board_changed", ());
+                Ok(HubEvent::BoardChanged { node_id }) => {
+                    let _ = app.emit("board_changed", serde_json::json!({ "node_id": node_id }));
                     if last_tray.elapsed().as_secs() >= 3 {
                         last_tray = std::time::Instant::now();
-                        update_tray(&app, &engine);
+                        let (a, h) = (app.clone(), Arc::clone(&hub));
+                        tauri::async_runtime::spawn_blocking(move || update_tray(&a, &h));
                     }
                 }
-                Ok(Event::Notice {
+                Ok(HubEvent::Notice {
+                    node_id,
+                    node_name,
                     title,
                     body,
                     card_id,
                 }) => {
+                    let shown_title = if node_id == kari_core::hub::LOCAL {
+                        title.clone()
+                    } else {
+                        format!("{node_name} · {title}")
+                    };
                     let _ = app.emit(
                         "notice",
-                        serde_json::json!({"title": title, "body": body, "card_id": card_id}),
+                        serde_json::json!({
+                            "title": shown_title,
+                            "body": body,
+                            "card_id": card_id,
+                            "node_id": node_id,
+                            "node_name": node_name,
+                        }),
                     );
                     let _ = app
                         .notification()
                         .builder()
-                        .title(&title)
+                        .title(&shown_title)
                         .body(&body)
                         .show();
                 }
@@ -414,17 +439,24 @@ pub fn run() {
 
     let engine = Engine::open().expect("open kari store");
     engine.start_watchers();
-    start_hook_server(Arc::clone(&engine));
+    let hub = Hub::new(Arc::clone(&engine));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
-            engine: Arc::clone(&engine),
+            hub: Arc::clone(&hub),
         })
         .setup(move |app| {
-            forward_events(app.handle().clone(), Arc::clone(&engine));
+            // The API serves the hook relay on this Mac and, over an SSH
+            // forward, any other kari that treats this Mac as a node.
+            let port = engine.settings().hooks_port;
+            let e = Arc::clone(&engine);
+            tauri::async_runtime::spawn(async move {
+                kari_core::api::spawn(e, port);
+            });
+            forward_events(app.handle().clone(), Arc::clone(&hub));
 
             let show = MenuItem::with_id(app, "show", "Open kari", true, None::<&str>)?;
             let refresh_item =
@@ -438,7 +470,7 @@ pub fn run() {
                 armed_at: std::sync::Mutex::new(None),
                 jobs: std::sync::atomic::AtomicUsize::new(0),
             });
-            let eng = Arc::clone(&engine);
+            let h = Arc::clone(&hub);
             TrayIconBuilder::with_id("kari-tray")
                 .icon(app.default_window_icon().cloned().expect("icon"))
                 .icon_as_template(true)
@@ -448,8 +480,8 @@ pub fn run() {
                 .on_menu_event(move |app, ev| match ev.id().as_ref() {
                     "show" => show_main(app),
                     "refresh" => {
-                        let e = Arc::clone(&eng);
-                        std::thread::spawn(move || e.refresh_all());
+                        let h = Arc::clone(&h);
+                        std::thread::spawn(move || h.refresh_all());
                     }
                     // Two steps on purpose: a mis-click must not kill running work.
                     "stop_all" => {
@@ -471,13 +503,13 @@ pub fn run() {
                             }
                         };
                         if armed {
-                            let stopped = eng.stop_all().unwrap_or(0);
+                            let stopped = h.stop_all().unwrap_or(0);
                             let _ = ts.stop_all.set_text("Stop all kari jobs");
                             let _ = app
                                 .notification()
                                 .builder()
                                 .title("kari stopped its jobs")
-                                .body(format!("{stopped} job(s) stopped."))
+                                .body(format!("{stopped} job(s) stopped on every node."))
                                 .show();
                         } else {
                             let _ = ts
@@ -530,7 +562,12 @@ pub fn run() {
             dismiss_proposal,
             stop_proposal,
             proposal_history,
-            kari_paths
+            kari_paths,
+            list_nodes,
+            add_node,
+            update_node,
+            remove_node,
+            pair_node
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

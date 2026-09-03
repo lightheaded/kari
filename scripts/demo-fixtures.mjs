@@ -22,13 +22,50 @@ const days = (n) => hours(n * 24);
 const ahead = (minutes) => new Date(now + minutes * 60_000).toISOString();
 
 const HOME = "/Users/dev";
+const LAB_HOME = "/home/dev";
 const projects = {
   atlas: { name: "atlas-api", cwd: `${HOME}/src/atlas-api` },
   store: { name: "storefront-web", cwd: `${HOME}/src/storefront-web` },
   docs: { name: "docs-site", cwd: `${HOME}/src/docs-site` },
   mobile: { name: "mobile-app", cwd: `${HOME}/src/mobile-app` },
   infra: { name: "infra", cwd: `${HOME}/src/infra` },
+  ranker: { name: "ranker", cwd: `${LAB_HOME}/src/ranker` },
+  batch: { name: "batch-jobs", cwd: `${LAB_HOME}/src/batch-jobs` },
 };
+
+// The board holds two machines: this one and one remote node over SSH.
+const NODES = [
+  {
+    id: "local",
+    name: "studio",
+    kind: "local",
+    online: true,
+    enabled: true,
+    paired: true,
+    ssh_host: null,
+    remote_port: 0,
+    version: "0.1.0",
+    api_version: 1,
+    remote_node_id: null,
+    last_seen: min(0),
+    error: null,
+  },
+  {
+    id: "lab",
+    name: "lab",
+    kind: "remote",
+    online: true,
+    enabled: true,
+    paired: true,
+    ssh_host: "lab",
+    remote_port: 47311,
+    version: "0.1.0",
+    api_version: 1,
+    remote_node_id: "node_lab",
+    last_seen: min(1),
+    error: null,
+  },
+];
 
 const columns = [
   ["backlog", "Backlog", ["backlog"], null, "neutral"],
@@ -166,6 +203,8 @@ function summary(sessionId, narrative, judged, confidence, o = {}) {
   };
 }
 
+// Made-up session ids for the dummy board. The names avoid the words a secret
+// scanner treats as a credential keyword, because the values are UUID-shaped.
 const S = {
   parser: "5b1c9e2a-7d34-4f0e-9a8b-3c2d1e0f4a5b",
   cache: "8e2f4a6c-1b3d-4e5f-a7b9-c1d3e5f7a9b1",
@@ -175,9 +214,11 @@ const S = {
   crash: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
   release: "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a",
   rename: "1234abcd-5678-4ef0-9abc-def012345678",
+  batch: "2c4e6a8b-0d1f-4325-9687-a1b2c3d4e5f6",
+  smoke: "7b6a5948-3726-4150-8d9e-f0a1b2c3d4e5",
 };
 
-const cards = [
+const localCards = [
   // Backlog: tasks without a run prompt or not marked for unattended runs.
   view({
     card: card("task_rate_limit", "task", projects.atlas, {
@@ -352,12 +393,12 @@ const cards = [
 
   // Decision needed: an AskUserQuestion call without an answer.
   view({
-    card: card("sess_auth", "session", null, { session_id: S.auth, created_at: hours(1), updated_at: min(12) }),
+    card: card("sess_auth", "session", null, { session_id: S.middleware, created_at: hours(1), updated_at: min(12) }),
     title: "Migrate the auth middleware to the new token format",
     state: "needs_decision",
     column_id: "decision",
     project: projects.atlas,
-    session: session(S.auth, projects.atlas, {
+    session: session(S.middleware, projects.atlas, {
       title: "Migrate the auth middleware to the new token format",
       first_prompt: "Migrate the auth middleware to the new token format. Keep old tokens valid for one release.",
       first_at: hours(1),
@@ -374,7 +415,7 @@ const cards = [
       ],
       tokens: { input: 38_000, output: 6_100, cache_read: 900_000, cache_write: 52_000, messages: 22 },
     }),
-    live: live(S.auth, projects.atlas, "idle", 47355),
+    live: live(S.middleware, projects.atlas, "idle", 47355),
     hooks: { last_event: "PreToolUse", last_at: min(12), started_at: hours(1), ended_at: null, permission_pending_since: null, permission_message: null, idle_since: null, turn_active: true, events_seen: 40 },
     last_activity_at: min(12),
     reason: "AskUserQuestion pending",
@@ -497,12 +538,12 @@ const cards = [
     reason: "manual move",
   }),
   view({
-    card: card("sess_keys", "session", null, { session_id: S.keys, created_at: days(6), updated_at: days(4), done_at: days(1) }),
+    card: card("sess_keys", "session", null, { session_id: S.rename, created_at: days(6), updated_at: days(4), done_at: days(1) }),
     title: "Rename the config keys to snake case",
     state: "done",
     column_id: "done",
     project: projects.docs,
-    session: session(S.keys, projects.docs, {
+    session: session(S.rename, projects.docs, {
       title: "Rename the config keys to snake case",
       first_prompt: "Rename every config key to snake case and update the docs.",
       first_at: days(6),
@@ -516,7 +557,118 @@ const cards = [
   }),
 ];
 
-const readyItems = cards.filter((c) => c.state === "ready");
+// Cards on the remote node. The transcript paths and the projects live on that machine.
+const labCards = [
+  view({
+    card: card("task_scheduler", "task", projects.batch, {
+      title: "Move the nightly job to the new scheduler",
+      priority: 1,
+      created_at: days(4),
+    }),
+    title: "Move the nightly job to the new scheduler",
+    state: "backlog",
+    column_id: "backlog",
+    project: projects.batch,
+    estimate: estimate(900_000, "global", 31),
+    last_activity_at: days(4),
+    reason: "task without a session",
+  }),
+  view({
+    card: card("task_retrain", "task", projects.ranker, {
+      title: "Retrain the ranking model on the new dataset",
+      priority: 2,
+      auto_run: true,
+      model: "sonnet",
+      run_prompt: "Retrain the ranking model on the September dataset. Report the offline metrics in RESULTS.md.",
+      created_at: days(1),
+    }),
+    title: "Retrain the ranking model on the new dataset",
+    state: "ready",
+    column_id: "ready",
+    project: projects.ranker,
+    estimate: estimate(2_800_000, "project", 5),
+    last_activity_at: hours(14),
+    reason: "may run unattended, prompt set",
+  }),
+  view({
+    card: card("sess_batch", "session", null, { session_id: S.batch, created_at: hours(4), updated_at: min(2) }),
+    title: "Cut the memory use of the batch job",
+    state: "working",
+    column_id: "working",
+    project: projects.batch,
+    session: session(S.batch, projects.batch, {
+      title: "Cut the memory use of the batch job",
+      first_prompt: "The nightly batch job needs 14 GB. Find where the memory goes and cut it.",
+      last_prompt: "Good. Now stream the parquet files instead of loading them.",
+      first_at: hours(4),
+      last_at: min(2),
+      turns: 16,
+      turn_closed: false,
+      branch: "perf/stream-parquet",
+      tokens: { input: 180_000, output: 33_000, cache_read: 4_200_000, cache_write: 260_000, messages: 84 },
+    }),
+    live: live(S.batch, projects.batch, "busy", 8842),
+    summary: summary(S.batch, "The job loaded every parquet file at once. The session rewrites the reader to stream and measures the peak again.", "working", 0.88, {
+      at: min(6),
+    }),
+    last_activity_at: min(2),
+    reason: "registry status busy",
+  }),
+  view({
+    card: card("task_smoke", "task", projects.batch, {
+      title: "Add a smoke test for the deploy script",
+      session_id: S.smoke,
+      priority: 1,
+      auto_run: true,
+      run_prompt: "Add a smoke test that runs the deploy script against the staging config. It must fail on a missing secret.",
+      bg_job_id: "job_5c1d80",
+      last_job_state: "done",
+      last_job_at: min(18),
+      created_at: days(2),
+    }),
+    title: "Add a smoke test for the deploy script",
+    state: "validate",
+    column_id: "validate",
+    project: projects.batch,
+    session: session(S.smoke, projects.batch, {
+      title: "Add a smoke test for the deploy script",
+      first_prompt: "Add a smoke test that runs the deploy script against the staging config.",
+      last_reply: "The test runs the script with a staging config and fails when a secret is missing. It runs in 9 seconds.",
+      first_at: min(44),
+      last_at: min(18),
+      turns: 1,
+      branch: "test/deploy-smoke",
+      permission_mode: "bypassPermissions",
+      models: ["claude-sonnet-5"],
+      tokens: { input: 21_000, output: 4_100, cache_read: 540_000, cache_write: 33_000, messages: 12 },
+    }),
+    bg_job: {
+      id: "job_5c1d80",
+      session_id: S.smoke,
+      cwd: projects.batch.cwd,
+      kind: "background",
+      state: "done",
+      status: "completed",
+      waiting_for: null,
+      name: "Add a smoke test for the deploy script",
+      pid: null,
+      started_at: min(44),
+    },
+    summary: summary(S.smoke, "A smoke test for the deploy script exists and it fails when a secret is missing. Nobody checked the result yet.", "validate", 0.9, {
+      next_step: "Read the test and run it once against staging.",
+      at: min(17),
+    }),
+    estimate: estimate(800_000, "project", 3),
+    last_activity_at: min(18),
+    reason: "background job done",
+  }),
+];
+
+/** Every card carries the node it comes from. */
+const tag = (list, node) => list.map((c) => ({ ...c, node_id: node.id, node_name: node.name }));
+const cards = [...tag(localCards, NODES[0]), ...tag(labCards, NODES[1])];
+
+const readyItems = localCards.filter((c) => c.state === "ready");
 const proposal = {
   id: "prop_01",
   created_at: min(2),
@@ -545,23 +697,42 @@ const proposal = {
 
 const board = {
   columns,
+  nodes: NODES,
   cards,
-  quota: {
-    at: min(1),
-    five_hour: { used_percentage: 38, resets_at: ahead(130) },
-    seven_day: { used_percentage: 52, resets_at: ahead(3 * 24 * 60 + 15) },
-    source: "statusline",
-  },
+  quotas: [
+    {
+      node_id: "local",
+      node_name: "studio",
+      quota: {
+        at: min(1),
+        five_hour: { used_percentage: 38, resets_at: ahead(130) },
+        seven_day: { used_percentage: 52, resets_at: ahead(3 * 24 * 60 + 15) },
+        source: "statusline",
+      },
+      calibration,
+    },
+    {
+      node_id: "lab",
+      node_name: "lab",
+      quota: {
+        at: min(2),
+        five_hour: { used_percentage: 14, resets_at: ahead(96) },
+        seven_day: { used_percentage: 27, resets_at: ahead(4 * 24 * 60) },
+        source: "statusline",
+      },
+      calibration,
+    },
+  ],
+  proposals: [{ node_id: "local", node_name: "studio", proposal }],
   generated_at: min(0),
   scanning: false,
   herdr_connected: true,
   hooks_installed: true,
   hooks_port: 47311,
-  calibration,
-  proposal,
 };
 
 const settings = {
+  node_name: "studio",
   history_days: 30,
   done_after_days: 3,
   stale_after_days: 14,
@@ -596,6 +767,11 @@ const jobLog = {
     { at: min(31), job_id: "job_2b9e41", card_id: "task_crash", state: "working", detail: "tests pass, pushing" },
     { at: min(57), job_id: "job_2b9e41", card_id: "task_crash", state: "working", detail: "started by plan prop_00 with model sonnet" },
     { at: min(58), job_id: "job_2b9e41", card_id: "task_crash", state: "queued", detail: "claude --bg accepted the job" },
+  ],
+  task_smoke: [
+    { at: min(18), job_id: "job_5c1d80", card_id: "task_smoke", state: "done", detail: "job completed, test added" },
+    { at: min(30), job_id: "job_5c1d80", card_id: "task_smoke", state: "working", detail: "test runs against the staging config" },
+    { at: min(44), job_id: "job_5c1d80", card_id: "task_smoke", state: "queued", detail: "claude --bg accepted the job" },
   ],
   task_flaky: [
     { at: min(3), job_id: "job_7f3a2c", card_id: "task_flaky", state: "working", detail: "second suite run" },

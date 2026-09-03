@@ -276,6 +276,7 @@ export interface BoardView {
   proposal: Proposal | null;
 }
 export interface Settings {
+  node_name: string;
   history_days: number;
   done_after_days: number;
   stale_after_days: number;
@@ -323,4 +324,60 @@ export interface CardPatch {
   tags?: string[] | null;
   archived?: boolean | null;
   estimate_weighted_tokens?: number | null;
+}
+
+/** One machine on the board: this machine ("local") or a remote kari node over SSH. */
+export interface NodeStatus {
+  id: string;
+  name: string;
+  kind: "local" | "remote";
+  online: boolean;
+  enabled: boolean;
+  paired: boolean;
+  ssh_host: string | null;
+  remote_port: number;
+  version: string | null;
+  api_version: number | null;
+  remote_node_id: string | null;
+  last_seen: string | null;
+  error: string | null;
+}
+export interface HubCard extends CardView {
+  node_id: string;
+  node_name: string;
+}
+export interface NodeQuota {
+  node_id: string;
+  node_name: string;
+  quota: QuotaSample | null;
+  calibration: Calibration;
+}
+export interface NodeProposal {
+  node_id: string;
+  node_name: string;
+  proposal: Proposal;
+}
+/** Every node on one board. `get_board` returns this. */
+export interface HubBoard {
+  columns: Column[];
+  nodes: NodeStatus[];
+  cards: HubCard[];
+  quotas: NodeQuota[];
+  proposals: NodeProposal[];
+  generated_at: string;
+  scanning: boolean;
+  herdr_connected: boolean;
+  hooks_installed: boolean;
+  hooks_port: number;
+}
+export interface NewNode {
+  name: string;
+  ssh_host: string | null;
+  remote_port: number;
+}
+export interface NodePatch {
+  name?: string;
+  ssh_host?: string | null;
+  remote_port?: number;
+  enabled?: boolean;
 }

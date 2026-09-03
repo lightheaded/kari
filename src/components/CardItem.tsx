@@ -1,18 +1,26 @@
 import { useDraggable } from "@dnd-kit/core";
-import type { CardView } from "../types";
+import type { HubCard } from "../types";
 import { STATE_LABEL } from "../types";
 import { STATE_TONE, fmtM, fmtPct, relTime, weighted } from "../util";
 
 interface Props {
-  view: CardView;
+  view: HubCard;
   selected: boolean;
   overlay?: boolean;
+  /** Show which node the card comes from. Set when the board has more than one node. */
+  showNode?: boolean;
+  /** The node does not answer. The card is dimmed and cannot be dragged. */
+  offline?: boolean;
+  lastSeen?: string | null;
   onSelect?: () => void;
   onJump?: () => void;
 }
 
-export function CardItem({ view, selected, overlay, onSelect, onJump }: Props) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: view.card.id, disabled: overlay });
+export function CardItem({ view, selected, overlay, showNode, offline, lastSeen, onSelect, onJump }: Props) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `${view.node_id}/${view.card.id}`,
+    disabled: overlay || offline,
+  });
   const tone = STATE_TONE[view.state];
   const s = view.session;
   const tokens = weighted(s?.tokens);
@@ -23,7 +31,7 @@ export function CardItem({ view, selected, overlay, onSelect, onJump }: Props) {
   return (
     <div
       ref={setNodeRef}
-      className={`card tone-${tone} ${selected ? "selected" : ""} ${isDragging || overlay ? "dragging" : ""}`}
+      className={`card tone-${tone} ${selected ? "selected" : ""} ${isDragging || overlay ? "dragging" : ""} ${offline ? "offline" : ""}`}
       {...listeners}
       {...attributes}
       onClick={onSelect}
@@ -31,7 +39,7 @@ export function CardItem({ view, selected, overlay, onSelect, onJump }: Props) {
         e.stopPropagation();
         onJump?.();
       }}
-      title="Click for details, double-click to open the session"
+      title={offline ? `node offline, last seen ${lastSeen ? `${relTime(lastSeen)} ago` : "never"}` : "Click for details, double-click to open the session"}
     >
       {view.locked && <span className="lock" title="Manual placement. Holds until a stronger signal.">⌖</span>}
       <div className="title">{view.title}</div>
@@ -41,6 +49,11 @@ export function CardItem({ view, selected, overlay, onSelect, onJump }: Props) {
           {(live?.alive || bg?.state === "working") && <span className={`live ${view.state === "working" ? "pulse" : ""}`} />}
           {STATE_LABEL[view.state]}
         </span>
+        {showNode && (
+          <span className="chip node" title={`node ${view.node_name}`}>
+            {view.node_name}
+          </span>
+        )}
         {view.card.kind === "task" && <span className="chip plain">task</span>}
         {view.card.kind === "session" && !live && !bg && view.state !== "done" && <span className="chip plain">exited</span>}
         {view.card.auto_run && <span className="chip plain">auto-run</span>}

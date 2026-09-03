@@ -1,8 +1,8 @@
 //! SQLite persistence at `~/.config/kari/kari.db`.
 
 use crate::model::{
-    Card, CardKind, Column, HookEvent, JobLogEntry, Proposal, QuotaSample, QuotaWindow,
-    SessionFacts, Settings, Summary, TokenDelta,
+    BoardView, Card, CardKind, Column, HookEvent, JobLogEntry, NodeRecord, Proposal, QuotaSample,
+    QuotaWindow, SessionFacts, Settings, Summary, TokenDelta,
 };
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -97,6 +97,16 @@ CREATE INDEX IF NOT EXISTS proposals_created ON proposals(created_at);
 CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS nodes (
+  id TEXT PRIMARY KEY,
+  json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS node_cache (
+  node_id TEXT PRIMARY KEY,
+  board TEXT NOT NULL,
+  seen_at INTEGER NOT NULL
 );
 "#;
 
@@ -677,6 +687,69 @@ impl Store {
     }
 
     // ---- hook log ----
+
+    // ---- nodes ----
+
+    pub fn list_nodes(&self) -> anyhow::Result<Vec<NodeRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT json FROM nodes ORDER BY created_at, id")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = vec![];
+        for j in rows.flatten() {
+            if let Ok(n) = serde_json::from_str::<NodeRecord>(&j) {
+                out.push(n);
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn upsert_node(&self, n: &NodeRecord) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO nodes (id, json, created_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+            params![n.id, serde_json::to_string(n)?, n.created_at.timestamp()],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_node(&self, id: &str) -> anyhow::Result<()> {
+        self.conn
+            .execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM node_cache WHERE node_id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// The last board a remote node sent, for the time it is offline.
+    pub fn node_cache(&self, node_id: &str) -> anyhow::Result<Option<(BoardView, DateTime<Utc>)>> {
+        let row: Option<(String, i64)> = self
+            .conn
+            .query_row(
+                "SELECT board, seen_at FROM node_cache WHERE node_id = ?1",
+                params![node_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.and_then(|(b, at)| {
+            let board = serde_json::from_str::<BoardView>(&b).ok()?;
+            let at = Utc.timestamp_opt(at, 0).single()?;
+            Some((board, at))
+        }))
+    }
+
+    pub fn save_node_cache(&self, node_id: &str, board: &BoardView) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO node_cache (node_id, board, seen_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(node_id) DO UPDATE SET board = excluded.board, seen_at = excluded.seen_at",
+            params![
+                node_id,
+                serde_json::to_string(board)?,
+                Utc::now().timestamp()
+            ],
+        )?;
+        Ok(())
+    }
 
     pub fn log_hook(&self, e: &HookEvent) -> anyhow::Result<()> {
         let detail = e.notification_type.clone().or_else(|| e.tool_name.clone());

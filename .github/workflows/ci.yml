@@ -51,6 +51,34 @@ jobs:
       - name: Check for private detail in the tracked files
         run: scripts/check-privacy.sh
 
+  node:
+    # The headless node runs on Linux, where the app itself never builds.
+    # This job proves the core and the node compile without the macOS code.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: linux-node
+
+      - name: Lint the node
+        run: cargo clippy -p kari-core -p kari-cli --all-targets -- -D warnings
+
+      - name: Run the node tests
+        run: cargo test -p kari-core -p kari-cli
+
+      - name: Check that the node starts and answers
+        run: |
+          cargo build -p kari-cli
+          ./target/debug/kari-node identity | tee identity.json
+          jq -e '.api_version == 1 and .app == "kari"' identity.json
+
   secrets:
     # gitleaks scans the whole history for credentials. A key that lands in
     # one commit stays readable in every clone, so the scan is not optional.

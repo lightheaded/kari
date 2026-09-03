@@ -8,6 +8,7 @@ pub fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+#[cfg(target_os = "macos")]
 fn osascript(script: &str) -> anyhow::Result<()> {
     let out = Command::new("/usr/bin/osascript")
         .arg("-e")
@@ -20,11 +21,20 @@ fn osascript(script: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn applescript_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Open a new terminal window in `cwd` and run `command` there.
+#[cfg(not(target_os = "macos"))]
+pub fn open_in_terminal(terminal_app: &str, cwd: &str, command: &str) -> anyhow::Result<()> {
+    let _ = (terminal_app, cwd, command);
+    anyhow::bail!("this node has no terminal driver; jump in from the desktop app")
+}
+
+/// Open a new terminal window in `cwd` and run `command` there.
+#[cfg(target_os = "macos")]
 pub fn open_in_terminal(terminal_app: &str, cwd: &str, command: &str) -> anyhow::Result<()> {
     let shell_line = format!("cd {} && {}", sh_quote(cwd), command);
     let line = applescript_string(&shell_line);
@@ -65,7 +75,13 @@ pub fn attach_command(job_id: &str) -> String {
 
 pub fn focus_herdr(agent: &HerdrAgent, terminal_app: &str) -> anyhow::Result<()> {
     crate::herdr::focus(agent)?;
-    // herdr runs inside a terminal. Bring the configured one to front, best effort.
+    raise_terminal(terminal_app);
+    Ok(())
+}
+
+/// Bring the configured terminal to the front, best effort. herdr runs inside it.
+#[cfg(target_os = "macos")]
+pub fn raise_terminal(terminal_app: &str) {
     let app = match terminal_app {
         "iTerm2" => "iTerm",
         other => other,
@@ -74,7 +90,20 @@ pub fn focus_herdr(agent: &HerdrAgent, terminal_app: &str) -> anyhow::Result<()>
         "tell application {} to activate",
         applescript_string(app)
     ));
-    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn raise_terminal(_terminal_app: &str) {}
+
+/// The command that runs a node's jump plan from another machine: a login
+/// shell over SSH, so the remote PATH holds `claude`.
+pub fn ssh_command(ssh_host: &str, cwd: &str, command: &str) -> String {
+    let remote = format!("cd {} && {}", sh_quote(cwd), command);
+    format!(
+        "ssh -t {} -- sh -lc {}",
+        sh_quote(ssh_host),
+        sh_quote(&remote)
+    )
 }
 
 pub struct BgStart {
@@ -236,6 +265,14 @@ mod tests {
         let raw =
             "\x1b[2mbackgrounded\x1b[22m · \x1b[36m4f678c99\x1b[39m · kari-plan-view-overhaul\n";
         assert_eq!(parse_job_id(&strip_ansi(raw)).as_deref(), Some("4f678c99"));
+    }
+
+    #[test]
+    fn ssh_command_wraps_a_login_shell() {
+        let c = ssh_command("box", "/srv/repo", "claude --resume 'abc'");
+        assert!(c.starts_with("ssh -t 'box' -- sh -lc '"));
+        assert!(c.contains("cd '\\''/srv/repo'\\'' && claude"));
+        assert!(c.ends_with("'"));
     }
 
     #[test]

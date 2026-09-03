@@ -1,21 +1,26 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { CardView, Column, JobLogEntry, Settings } from "../types";
+import type { Column, HubCard, JobLogEntry, Settings } from "../types";
 import { RUN_MODELS, STATE_LABEL } from "../types";
 import { clock, fmtM, fmtPct, relTime, shortId, weighted } from "../util";
 
 interface Props {
-  view: CardView;
+  view: HubCard;
   columns: Column[];
   settings: Settings | null;
+  /** Show which node the card comes from. Set when the board has more than one node. */
+  showNode?: boolean;
+  /** The node does not answer. Every action is off until it comes back. */
+  offline?: boolean;
   onClose: () => void;
   onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
 }
 
 const MODES = ["", "bypassPermissions", "acceptEdits", "auto", "plan", "default"];
 
-export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
+export function Drawer({ view, columns, settings, showNode, offline, onClose, onAction }: Props) {
   const c = view.card;
+  const node = view.node_id;
   const s = view.session;
   const [title, setTitle] = useState(c.title ?? "");
   const [prompt, setPrompt] = useState(c.run_prompt ?? "");
@@ -40,13 +45,13 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
   useEffect(() => {
     let live = true;
     api
-      .jobLog(c.id)
+      .jobLog(node, c.id)
       .then((l) => live && setLog(l))
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [c.id, c.updated_at]);
+  }, [node, c.id, c.updated_at]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -68,7 +73,7 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
   const save = () =>
     onAction(
       () =>
-        api.patchCard(c.id, {
+        api.patchCard(node, c.id, {
           title: c.kind === "task" || title !== (c.title ?? "") ? title : undefined,
           run_prompt: prompt,
           notes,
@@ -92,42 +97,50 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
       <header>
         <h2>{view.title}</h2>
         <div className="hint">
+          {showNode ? `${view.node_name} · ` : ""}
           {STATE_LABEL[view.state]} · {view.reason}
           {view.locked ? " · manual placement" : ""}
         </div>
+        {offline && <div className="hint offline-note">This node is offline. Actions return when it reconnects.</div>}
         <div className="actions">
-          <button className="btn primary sm" onClick={() => onAction(() => api.jumpIn(c.id), "Opened")}>
+          <button className="btn primary sm" disabled={offline} onClick={() => onAction(() => api.jumpIn(node, c.id), "Opened")}>
             Jump in
           </button>
           {canStart && (
             <button
               className="btn sm"
+              disabled={offline}
               title={c.session_id ? "Continue this session as a background job" : "Start as a background job"}
-              onClick={() => onAction(() => api.startCard(c.id, startPrompt || undefined), "Started in background")}
+              onClick={() => onAction(() => api.startCard(node, c.id, startPrompt || undefined), "Started in background")}
             >
               ▶ {c.session_id ? "Continue in bg" : "Start in bg"}
             </button>
           )}
           {view.bg_job?.state === "working" && (
-            <button className="btn danger sm" onClick={() => onAction(() => api.stopCard(c.id), "Stopped")}>
+            <button className="btn danger sm" disabled={offline} onClick={() => onAction(() => api.stopCard(node, c.id), "Stopped")}>
               ■ Stop job
             </button>
           )}
           {doneCol && view.state !== "done" && (
-            <button className="btn sm" onClick={() => onAction(() => api.moveCard(c.id, doneCol.id), "Marked done")}>
+            <button className="btn sm" disabled={offline} onClick={() => onAction(() => api.moveCard(node, c.id, doneCol.id), "Marked done")}>
               ✓ Done
             </button>
           )}
           {c.session_id && s && s.turns > 0 && (
-            <button className="btn ghost sm" title="Ask Haiku for a fresh summary now" onClick={() => onAction(() => api.summarizeCard(c.id), "Summary updated")}>
+            <button
+              className="btn ghost sm"
+              disabled={offline}
+              title="Ask Haiku for a fresh summary now"
+              onClick={() => onAction(() => api.summarizeCard(node, c.id), "Summary updated")}
+            >
               ✦ Summarize
             </button>
           )}
-          <button className="btn ghost sm" onClick={() => onAction(() => api.patchCard(c.id, { archived: true }), "Archived").then(onClose)}>
+          <button className="btn ghost sm" disabled={offline} onClick={() => onAction(() => api.patchCard(node, c.id, { archived: true }), "Archived").then(onClose)}>
             Archive
           </button>
           {c.kind === "task" && (
-            <button className="btn ghost sm" onClick={() => onAction(() => api.deleteCard(c.id), "Deleted").then(onClose)}>
+            <button className="btn ghost sm" disabled={offline} onClick={() => onAction(() => api.deleteCard(node, c.id), "Deleted").then(onClose)}>
               Delete
             </button>
           )}
@@ -359,7 +372,7 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn primary sm" disabled={!dirty} onClick={save}>
+              <button className="btn primary sm" disabled={!dirty || offline} onClick={save}>
                 Save card
               </button>
             </div>

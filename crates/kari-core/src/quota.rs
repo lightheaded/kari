@@ -224,7 +224,8 @@ pub fn fetch_usage() -> anyhow::Result<QuotaSample> {
          show-error\n\
          max-time = 10\n"
     );
-    let mut child = std::process::Command::new("/usr/bin/curl")
+    let curl = paths::which("curl").unwrap_or_else(|| std::path::PathBuf::from("curl"));
+    let mut child = std::process::Command::new(curl)
         .args(["--config", "-"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

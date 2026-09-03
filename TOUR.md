@@ -94,12 +94,24 @@ Settings holds every threshold and switch.
 - Scheduling: the two automatic triggers, the working hours, the reserve and the ceiling.
 - Autopilot: start weekly-reset plans without a click, the autopilot job cap, herdr as the launch target, and the weekly warning.
 - Quota tracking: the status line installer and the optional usage endpoint fallback.
+- Nodes: the name this machine shows to others, the list of remote nodes with their state, and the form that adds one.
 
-"Stop all kari jobs" stops every background job that kari started.
+"Stop all kari jobs" stops every background job that kari started, on every node.
+
+## Nodes
+
+A remote node is another host that runs `kari-node serve`. Add it in Settings with its SSH host. kari holds an SSH port forward to it and shows its cards on the same board.
+
+- Every card carries a node badge, and a chip row above the board filters to one node.
+- Each node has its own quota meters, because each has its own Claude Code login.
+- An offline node keeps its cards on the board, dimmed, with the time it was last seen. Its actions come back when the forward does.
+- Jump in on a remote card opens your terminal and connects over SSH.
+
+The README explains what a node needs.
 
 ## The tray
 
-kari lives in the menu bar. The tray tooltip shows how many sessions work and how many need you. The tray menu has "Open kari", "Refresh now", "Stop all kari jobs" and "Quit kari". "Stop all kari jobs" takes two clicks within 10 seconds, so one slip does not kill your work.
+kari lives in the menu bar. The tray tooltip shows how many sessions work, how many need you, and how many nodes are offline. The tray menu has "Open kari", "Refresh now", "Stop all kari jobs" and "Quit kari". "Stop all kari jobs" takes two clicks within 10 seconds, so one slip does not kill your work.
 
 kari sends a macOS notification when a card needs you, when a plan is ready, when autopilot started a plan, when weekly quota is about to expire unused, and when a column passes its WIP limit. The same notice appears as a toast in the window. A click on the toast opens the card.
 

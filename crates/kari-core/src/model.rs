@@ -496,6 +496,8 @@ pub struct Settings {
     pub prefer_herdr: bool,
     /// Warn when the weekly window resets within a day with this much unused.
     pub weekly_warn_unused_pct: f64,
+    /// Name of this node as other kari instances see it. Empty means the host name.
+    pub node_name: String,
 }
 
 impl Default for Settings {
@@ -527,6 +529,7 @@ impl Default for Settings {
             autopilot_max_jobs: 1,
             prefer_herdr: true,
             weekly_warn_unused_pct: 25.0,
+            node_name: String::new(),
         }
     }
 }
@@ -603,4 +606,150 @@ pub struct Summary {
     /// The session's last activity time when the summary was made.
     pub based_on_at: Option<DateTime<Utc>>,
     pub model: Option<String>,
+}
+
+// ---------------------------------------------------------------- nodes
+
+/// The version of the HTTP API a node serves. The hub refuses a different major.
+pub const API_VERSION: u32 = 1;
+
+/// What a node says about itself on `/kari/health`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NodeIdentity {
+    pub ok: bool,
+    pub app: String,
+    pub version: String,
+    pub api_version: u32,
+    pub node_id: String,
+    pub node_name: String,
+    pub platform: String,
+}
+
+/// A remote kari node the desktop app connects to. Stored in the local database.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct NodeRecord {
+    pub id: String,
+    /// Display name. Empty means the SSH host, else the node's own name.
+    pub name: String,
+    /// SSH host alias from `~/.ssh/config`. None means a direct connection to
+    /// `127.0.0.1:remote_port`, for tests and for nodes reached another way.
+    pub ssh_host: Option<String>,
+    /// Port of the node's API on its own loopback interface.
+    pub remote_port: u16,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Default for NodeRecord {
+    fn default() -> Self {
+        NodeRecord {
+            id: String::new(),
+            name: String::new(),
+            ssh_host: None,
+            remote_port: 47311,
+            enabled: true,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NewNode {
+    pub name: String,
+    pub ssh_host: Option<String>,
+    pub remote_port: u16,
+}
+
+impl Default for NewNode {
+    fn default() -> Self {
+        NewNode {
+            name: String::new(),
+            ssh_host: None,
+            remote_port: 47311,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NodePatch {
+    pub name: Option<String>,
+    pub ssh_host: Option<Option<String>>,
+    pub remote_port: Option<u16>,
+    pub enabled: Option<bool>,
+}
+
+/// Connection state of one node as the board shows it. The local node is always
+/// first, with id `local`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NodeStatus {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub online: bool,
+    pub enabled: bool,
+    pub paired: bool,
+    pub ssh_host: Option<String>,
+    pub remote_port: u16,
+    pub version: Option<String>,
+    pub api_version: Option<u32>,
+    pub remote_node_id: Option<String>,
+    pub last_seen: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+}
+
+/// A card on the hub board: the node's view plus the node it lives on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HubCard {
+    pub node_id: String,
+    pub node_name: String,
+    #[serde(flatten)]
+    pub view: CardView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeQuota {
+    pub node_id: String,
+    pub node_name: String,
+    pub quota: Option<QuotaSample>,
+    pub calibration: Calibration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeProposal {
+    pub node_id: String,
+    pub node_name: String,
+    pub proposal: Proposal,
+}
+
+/// The merged board of every node. Columns come from the local node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HubBoard {
+    pub columns: Vec<Column>,
+    pub nodes: Vec<NodeStatus>,
+    pub cards: Vec<HubCard>,
+    pub quotas: Vec<NodeQuota>,
+    pub proposals: Vec<NodeProposal>,
+    pub generated_at: DateTime<Utc>,
+    pub scanning: bool,
+    pub herdr_connected: bool,
+    pub hooks_installed: bool,
+    pub hooks_port: u16,
+}
+
+/// What "Jump in" must do. The node computes it, the caller runs it where the
+/// user sits: in a local terminal, or over SSH for a remote node.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JumpPlan {
+    /// Directory to start in.
+    pub cwd: String,
+    /// Shell command to run there. Empty when a herdr pane was focused and no
+    /// command is needed.
+    pub command: String,
+    /// The herdr pane the node focused, when one matched.
+    pub herdr_pane: Option<String>,
+    /// One line for the user.
+    pub message: String,
 }

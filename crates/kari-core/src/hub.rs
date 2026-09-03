@@ -1,0 +1,985 @@
+//! The hub: one board over many nodes.
+//!
+//! The local node is the engine in this process. Every remote node is a
+//! `kari-node` daemon reached through an SSH port forward (or a direct loopback
+//! port for tests). The hub keeps one thread per remote node that holds the
+//! forward, follows the node's event stream and caches its board. Card actions
+//! go to the node that owns the card. Columns come from the local node and are
+//! pushed to every remote node on connect and on change.
+
+use crate::client::{ApiClient, EventItem};
+use crate::model::*;
+use crate::{keychain, launcher, paths, tunnel::Tunnel, Engine, Event};
+use chrono::{DateTime, Utc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+use tokio::sync::broadcast;
+use tracing::{info, warn};
+
+pub const LOCAL: &str = "local";
+
+#[derive(Debug, Clone)]
+pub enum HubEvent {
+    BoardChanged {
+        node_id: String,
+    },
+    Notice {
+        node_id: String,
+        node_name: String,
+        title: String,
+        body: String,
+        card_id: Option<String>,
+    },
+}
+
+#[derive(Default)]
+struct RemoteState {
+    online: bool,
+    identity: Option<NodeIdentity>,
+    last_seen: Option<DateTime<Utc>>,
+    error: Option<String>,
+    board: Option<BoardView>,
+    client: Option<ApiClient>,
+    tunnel: Option<Tunnel>,
+    paired: bool,
+}
+
+struct Remote {
+    rec: NodeRecord,
+    state: Arc<Mutex<RemoteState>>,
+    stop: Arc<AtomicBool>,
+}
+
+pub struct Hub {
+    engine: Arc<Engine>,
+    remotes: RwLock<Vec<Remote>>,
+    tx: broadcast::Sender<HubEvent>,
+}
+
+impl Hub {
+    pub fn new(local: Arc<Engine>) -> Arc<Hub> {
+        let (tx, _) = broadcast::channel(256);
+        let hub = Arc::new(Hub {
+            engine: Arc::clone(&local),
+            remotes: RwLock::new(vec![]),
+            tx,
+        });
+        // Local engine events become hub events with the local node id.
+        let h = Arc::clone(&hub);
+        let mut rx = local.subscribe();
+        std::thread::Builder::new()
+            .name("kari-hub-local".into())
+            .spawn(move || loop {
+                match rx.blocking_recv() {
+                    Ok(Event::BoardChanged) => h.emit(HubEvent::BoardChanged {
+                        node_id: LOCAL.into(),
+                    }),
+                    Ok(Event::Notice {
+                        title,
+                        body,
+                        card_id,
+                    }) => h.emit(HubEvent::Notice {
+                        node_id: LOCAL.into(),
+                        node_name: h.engine.node_name(),
+                        title,
+                        body,
+                        card_id,
+                    }),
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            })
+            .expect("spawn");
+        for rec in local.list_nodes() {
+            hub.spawn_remote(rec);
+        }
+        hub
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<HubEvent> {
+        self.tx.subscribe()
+    }
+
+    /// The engine of this machine, for the parts of the app that are local
+    /// only: columns, settings, hooks, calibration.
+    pub fn engine(&self) -> &Arc<Engine> {
+        &self.engine
+    }
+
+    fn emit(&self, e: HubEvent) {
+        let _ = self.tx.send(e);
+    }
+
+    // ------------------------------------------------------------ node threads
+
+    fn spawn_remote(self: &Arc<Self>, rec: NodeRecord) {
+        let state = Arc::new(Mutex::new(RemoteState {
+            paired: keychain::load_token(&rec.id).is_some(),
+            ..Default::default()
+        }));
+        // An offline node still shows its last board.
+        if let Some((board, at)) = self.engine.node_cache(&rec.id) {
+            let mut st = state.lock().unwrap();
+            st.board = Some(board);
+            st.last_seen = Some(at);
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        if rec.enabled {
+            let h = Arc::clone(self);
+            let (r, s, f) = (rec.clone(), Arc::clone(&state), Arc::clone(&stop));
+            std::thread::Builder::new()
+                .name(format!("kari-node-{}", rec.id))
+                .spawn(move || h.run_remote(r, s, f))
+                .expect("spawn");
+        }
+        self.remotes
+            .write()
+            .unwrap()
+            .push(Remote { rec, state, stop });
+    }
+
+    fn stop_remote(&self, id: &str) -> Option<NodeRecord> {
+        let mut rs = self.remotes.write().unwrap();
+        let pos = rs.iter().position(|r| r.rec.id == id)?;
+        let r = rs.remove(pos);
+        r.stop.store(true, Ordering::Relaxed);
+        let mut st = r.state.lock().unwrap();
+        st.tunnel.take();
+        st.client.take();
+        st.online = false;
+        Some(r.rec)
+    }
+
+    fn set_error(state: &Mutex<RemoteState>, msg: impl Into<String>) {
+        let mut st = state.lock().unwrap();
+        st.online = false;
+        st.client = None;
+        st.tunnel = None;
+        st.error = Some(msg.into());
+    }
+
+    /// One connection attempt after another, with backoff, until stopped.
+    fn run_remote(
+        self: Arc<Self>,
+        rec: NodeRecord,
+        state: Arc<Mutex<RemoteState>>,
+        stop: Arc<AtomicBool>,
+    ) {
+        let mut backoff = 1u64;
+        let label = rec
+            .ssh_host
+            .clone()
+            .unwrap_or_else(|| format!("127.0.0.1:{}", rec.remote_port));
+        while !stop.load(Ordering::Relaxed) {
+            let started = Instant::now();
+            match self.connect_once(&rec, &state, &stop) {
+                Ok(()) => {}
+                Err(e) => {
+                    warn!("node {label}: {e}");
+                    Self::set_error(&state, e.to_string());
+                }
+            }
+            self.emit(HubEvent::BoardChanged {
+                node_id: rec.id.clone(),
+            });
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            if started.elapsed() > Duration::from_secs(60) {
+                backoff = 1;
+            }
+            let wait = backoff;
+            backoff = (backoff * 2).min(60);
+            for _ in 0..wait * 4 {
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
+
+    /// Open the forward, wait for health, push columns, then follow the event
+    /// stream until it ends. Returns Ok after a clean stream end.
+    fn connect_once(
+        &self,
+        rec: &NodeRecord,
+        state: &Arc<Mutex<RemoteState>>,
+        stop: &AtomicBool,
+    ) -> anyhow::Result<()> {
+        let Some(token) = keychain::load_token(&rec.id) else {
+            state.lock().unwrap().paired = false;
+            anyhow::bail!("not paired: no token for this node; use Pair in Settings");
+        };
+        state.lock().unwrap().paired = true;
+        let port = match &rec.ssh_host {
+            Some(host) => {
+                let t = Tunnel::open(host, rec.remote_port)?;
+                let p = t.local_port;
+                state.lock().unwrap().tunnel = Some(t);
+                p
+            }
+            None => rec.remote_port,
+        };
+        let client = ApiClient::new(port, &token);
+        // The forward needs a moment. Poll health, and give up when ssh exits.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let identity = loop {
+            if stop.load(Ordering::Relaxed) {
+                anyhow::bail!("stopped");
+            }
+            match client.health() {
+                Ok(id) => break id,
+                Err(e) => {
+                    let mut st = state.lock().unwrap();
+                    if let Some(t) = st.tunnel.as_mut() {
+                        if !t.alive() {
+                            let msg = t.exit_message().unwrap_or_else(|| "ssh exited".into());
+                            drop(st);
+                            anyhow::bail!("ssh forward failed: {msg}");
+                        }
+                    }
+                    drop(st);
+                    if Instant::now() > deadline {
+                        anyhow::bail!("node did not answer health: {e}");
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+        };
+        if identity.api_version != API_VERSION {
+            anyhow::bail!(
+                "node speaks api v{} but this app needs v{API_VERSION}; update kari on one side",
+                identity.api_version
+            );
+        }
+        // The token must open a guarded route too, else the pairing is stale.
+        let board = client
+            .board()
+            .map_err(|e| anyhow::anyhow!("token rejected or board failed: {e}"))?;
+        if let Err(e) = client.set_columns(&self.engine.columns()) {
+            warn!("node {}: columns not pushed: {e}", identity.node_name);
+        }
+        {
+            let mut st = state.lock().unwrap();
+            st.online = true;
+            st.error = None;
+            st.identity = Some(identity.clone());
+            st.client = Some(client.clone());
+            st.last_seen = Some(Utc::now());
+            st.board = Some(board.clone());
+        }
+        self.engine.save_node_cache(&rec.id, &board);
+        info!("node {} online ({})", identity.node_name, identity.version);
+        self.emit(HubEvent::BoardChanged {
+            node_id: rec.id.clone(),
+        });
+        let node_name = self.node_name_of(rec, Some(&identity));
+
+        let mut reader = client.events()?;
+        let mut last_fetch = Instant::now();
+        let mut pending = false;
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let Some(item) = reader.recv() else {
+                anyhow::bail!("event stream ended");
+            };
+            state.lock().unwrap().last_seen = Some(Utc::now());
+            match item {
+                EventItem::Message(m) if m.event == "notice" => {
+                    let v: serde_json::Value = serde_json::from_str(&m.data).unwrap_or_default();
+                    self.emit(HubEvent::Notice {
+                        node_id: rec.id.clone(),
+                        node_name: node_name.clone(),
+                        title: v["title"].as_str().unwrap_or("kari").to_string(),
+                        body: v["body"].as_str().unwrap_or("").to_string(),
+                        card_id: v["card_id"].as_str().map(|s| s.to_string()),
+                    });
+                }
+                EventItem::Message(_) => pending = true,
+                EventItem::KeepAlive => {
+                    // A quiet node still gets a fresh board once a minute.
+                    if last_fetch.elapsed() > Duration::from_secs(60) {
+                        pending = true;
+                    }
+                }
+            }
+            // Coalesce bursts: one fetch per 300 ms at most.
+            if pending && last_fetch.elapsed() > Duration::from_millis(300) {
+                pending = false;
+                last_fetch = Instant::now();
+                self.fetch_board(rec, state, &client)?;
+            }
+        }
+    }
+
+    fn fetch_board(
+        &self,
+        rec: &NodeRecord,
+        state: &Mutex<RemoteState>,
+        client: &ApiClient,
+    ) -> anyhow::Result<()> {
+        let board = client.board()?;
+        {
+            let mut st = state.lock().unwrap();
+            st.board = Some(board.clone());
+            st.last_seen = Some(Utc::now());
+        }
+        self.engine.save_node_cache(&rec.id, &board);
+        self.emit(HubEvent::BoardChanged {
+            node_id: rec.id.clone(),
+        });
+        Ok(())
+    }
+
+    /// Fetch a node's board now, after an action on it. Best effort.
+    fn refetch(&self, node_id: &str) {
+        let (rec, state, client) = {
+            let rs = self.remotes.read().unwrap();
+            let Some(r) = rs.iter().find(|r| r.rec.id == node_id) else {
+                return;
+            };
+            let st = r.state.lock().unwrap();
+            let Some(c) = st.client.clone() else {
+                return;
+            };
+            (r.rec.clone(), Arc::clone(&r.state), c)
+        };
+        if let Err(e) = self.fetch_board(&rec, &state, &client) {
+            warn!("node refetch: {e}");
+        }
+    }
+
+    // ------------------------------------------------------------ status
+
+    fn node_name_of(&self, rec: &NodeRecord, identity: Option<&NodeIdentity>) -> String {
+        if !rec.name.trim().is_empty() {
+            return rec.name.trim().to_string();
+        }
+        if let Some(h) = &rec.ssh_host {
+            return h.clone();
+        }
+        identity
+            .map(|i| i.node_name.clone())
+            .unwrap_or_else(|| format!("node {}", &rec.id[..8.min(rec.id.len())]))
+    }
+
+    fn local_status(&self) -> NodeStatus {
+        NodeStatus {
+            id: LOCAL.into(),
+            name: self.engine.node_name(),
+            kind: "local".into(),
+            online: true,
+            enabled: true,
+            paired: true,
+            ssh_host: None,
+            remote_port: self.engine.settings().hooks_port,
+            version: Some(crate::version().into()),
+            api_version: Some(API_VERSION),
+            remote_node_id: Some(self.engine.node_id()),
+            last_seen: Some(Utc::now()),
+            error: None,
+        }
+    }
+
+    fn status_of(&self, r: &Remote) -> NodeStatus {
+        let st = r.state.lock().unwrap();
+        NodeStatus {
+            id: r.rec.id.clone(),
+            name: self.node_name_of(&r.rec, st.identity.as_ref()),
+            kind: "remote".into(),
+            online: st.online,
+            enabled: r.rec.enabled,
+            paired: st.paired,
+            ssh_host: r.rec.ssh_host.clone(),
+            remote_port: r.rec.remote_port,
+            version: st.identity.as_ref().map(|i| i.version.clone()),
+            api_version: st.identity.as_ref().map(|i| i.api_version),
+            remote_node_id: st.identity.as_ref().map(|i| i.node_id.clone()),
+            last_seen: st.last_seen,
+            error: if r.rec.enabled {
+                st.error.clone()
+            } else {
+                Some("disabled".into())
+            },
+        }
+    }
+
+    pub fn nodes(&self) -> Vec<NodeStatus> {
+        let mut out = vec![self.local_status()];
+        for r in self.remotes.read().unwrap().iter() {
+            out.push(self.status_of(r));
+        }
+        out
+    }
+
+    // ------------------------------------------------------------ board
+
+    /// A remote card keeps its column when the local board has it, else the
+    /// column that accepts its state.
+    fn map_column(columns: &[Column], view: &CardView) -> String {
+        if columns.iter().any(|c| c.id == view.column_id) {
+            return view.column_id.clone();
+        }
+        let by_state = columns
+            .iter()
+            .filter(|c| !c.hidden)
+            .find(|c| c.accepts.contains(&view.state))
+            .or_else(|| {
+                columns
+                    .iter()
+                    .find(|c| c.accepts.contains(&DerivedState::Unknown))
+            })
+            .or_else(|| columns.first());
+        by_state.map(|c| c.id.clone()).unwrap_or_default()
+    }
+
+    pub fn board(&self) -> HubBoard {
+        let lb = self.engine.board();
+        let local_name = self.engine.node_name();
+        let mut nodes = vec![self.local_status()];
+        let mut cards: Vec<HubCard> = lb
+            .cards
+            .iter()
+            .cloned()
+            .map(|view| HubCard {
+                node_id: LOCAL.into(),
+                node_name: local_name.clone(),
+                view,
+            })
+            .collect();
+        let mut quotas = vec![NodeQuota {
+            node_id: LOCAL.into(),
+            node_name: local_name.clone(),
+            quota: lb.quota.clone(),
+            calibration: lb.calibration.clone(),
+        }];
+        let mut proposals: Vec<NodeProposal> = lb
+            .proposal
+            .clone()
+            .map(|p| NodeProposal {
+                node_id: LOCAL.into(),
+                node_name: local_name.clone(),
+                proposal: p,
+            })
+            .into_iter()
+            .collect();
+        for r in self.remotes.read().unwrap().iter() {
+            let status = self.status_of(r);
+            let st = r.state.lock().unwrap();
+            if r.rec.enabled {
+                if let Some(b) = &st.board {
+                    for view in &b.cards {
+                        let mut v = view.clone();
+                        v.column_id = Self::map_column(&lb.columns, &v);
+                        cards.push(HubCard {
+                            node_id: r.rec.id.clone(),
+                            node_name: status.name.clone(),
+                            view: v,
+                        });
+                    }
+                    quotas.push(NodeQuota {
+                        node_id: r.rec.id.clone(),
+                        node_name: status.name.clone(),
+                        quota: b.quota.clone(),
+                        calibration: b.calibration.clone(),
+                    });
+                    if let Some(p) = &b.proposal {
+                        proposals.push(NodeProposal {
+                            node_id: r.rec.id.clone(),
+                            node_name: status.name.clone(),
+                            proposal: p.clone(),
+                        });
+                    }
+                }
+            }
+            drop(st);
+            nodes.push(status);
+        }
+        HubBoard {
+            columns: lb.columns,
+            nodes,
+            cards,
+            quotas,
+            proposals,
+            generated_at: Utc::now(),
+            scanning: lb.scanning,
+            herdr_connected: lb.herdr_connected,
+            hooks_installed: lb.hooks_installed,
+            hooks_port: lb.hooks_port,
+        }
+    }
+
+    pub fn refresh_all(&self) {
+        let e = Arc::clone(&self.engine);
+        std::thread::spawn(move || e.refresh_all());
+        for c in self.online_clients() {
+            let _ = c.1.refresh();
+        }
+    }
+
+    fn online_clients(&self) -> Vec<(String, ApiClient)> {
+        self.remotes
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|r| {
+                let st = r.state.lock().unwrap();
+                st.client
+                    .clone()
+                    .filter(|_| st.online)
+                    .map(|c| (r.rec.id.clone(), c))
+            })
+            .collect()
+    }
+
+    fn client_of(&self, node_id: &str) -> anyhow::Result<(ApiClient, NodeRecord)> {
+        let rs = self.remotes.read().unwrap();
+        let Some(r) = rs.iter().find(|r| r.rec.id == node_id) else {
+            anyhow::bail!("unknown node {node_id}")
+        };
+        let st = r.state.lock().unwrap();
+        match (&st.client, st.online) {
+            (Some(c), true) => Ok((c.clone(), r.rec.clone())),
+            _ => anyhow::bail!(
+                "node {} is offline{}",
+                self.node_name_of(&r.rec, st.identity.as_ref()),
+                st.error
+                    .as_ref()
+                    .map(|e| format!(": {e}"))
+                    .unwrap_or_default()
+            ),
+        }
+    }
+
+    /// Run an action on the node that owns a card.
+    fn on_node<T>(
+        &self,
+        node_id: &str,
+        local: impl FnOnce(&Arc<Engine>) -> anyhow::Result<T>,
+        remote: impl FnOnce(&ApiClient) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        if node_id == LOCAL || node_id.is_empty() {
+            return local(&self.engine);
+        }
+        let (c, _) = self.client_of(node_id)?;
+        let out = remote(&c)?;
+        self.refetch(node_id);
+        Ok(out)
+    }
+
+    // ------------------------------------------------------------ card actions
+
+    pub fn move_card(&self, node: &str, card: &str, column: &str) -> anyhow::Result<()> {
+        self.on_node(
+            node,
+            |e| e.move_card(card, column),
+            |c| c.move_card(card, column),
+        )
+    }
+
+    pub fn add_task(&self, node: &str, t: NewTask) -> anyhow::Result<Card> {
+        let t2 = t.clone();
+        self.on_node(node, move |e| e.add_task(t), move |c| c.add_task(&t2))
+    }
+
+    pub fn patch_card(&self, node: &str, card: &str, p: CardPatch) -> anyhow::Result<Card> {
+        let p2 = p.clone();
+        self.on_node(
+            node,
+            move |e| e.patch_card(card, p),
+            move |c| c.patch_card(card, &p2),
+        )
+    }
+
+    pub fn delete_card(&self, node: &str, card: &str) -> anyhow::Result<()> {
+        self.on_node(node, |e| e.delete_card(card), |c| c.delete_card(card))
+    }
+
+    pub fn start_card(
+        &self,
+        node: &str,
+        card: &str,
+        prompt: Option<String>,
+    ) -> anyhow::Result<String> {
+        let p2 = prompt.clone();
+        self.on_node(
+            node,
+            move |e| e.start_card(card, prompt),
+            move |c| c.start_card(card, p2),
+        )
+    }
+
+    pub fn stop_card(&self, node: &str, card: &str) -> anyhow::Result<()> {
+        self.on_node(node, |e| e.stop_card(card), |c| c.stop_card(card))
+    }
+
+    pub fn summarize_card(&self, node: &str, card: &str) -> anyhow::Result<Summary> {
+        self.on_node(node, |e| e.summarize_card(card), |c| c.summarize_card(card))
+    }
+
+    pub fn job_log(&self, node: &str, card: &str, limit: usize) -> Vec<JobLogEntry> {
+        if node == LOCAL {
+            return self.engine.job_log(card, limit);
+        }
+        self.client_of(node)
+            .and_then(|(c, _)| c.job_log(card, limit))
+            .unwrap_or_default()
+    }
+
+    pub fn projects(&self, node: &str) -> Vec<(String, String)> {
+        if node == LOCAL {
+            return self.engine.projects();
+        }
+        self.client_of(node)
+            .and_then(|(c, _)| c.projects())
+            .unwrap_or_default()
+    }
+
+    pub fn quota_history(&self, node: &str, limit: usize) -> Vec<QuotaSample> {
+        if node == LOCAL {
+            return self.engine.quota_history(limit);
+        }
+        self.client_of(node)
+            .and_then(|(c, _)| c.quota_history(limit))
+            .unwrap_or_default()
+    }
+
+    /// Jump in where the user sits. A remote card opens a local terminal that
+    /// runs the node's plan over SSH.
+    pub fn jump_in(&self, node: &str, card: &str) -> anyhow::Result<String> {
+        if node == LOCAL {
+            return self.engine.jump_in(card);
+        }
+        let (c, rec) = self.client_of(node)?;
+        let plan = c.jump(card)?;
+        let Some(host) = rec.ssh_host.as_deref() else {
+            anyhow::bail!(
+                "node has no SSH host; run there: cd {} && {}",
+                plan.cwd,
+                plan.command
+            )
+        };
+        let settings = self.engine.settings();
+        let home = paths::home().to_string_lossy().into_owned();
+        let cmd = if plan.command.is_empty() {
+            // The node focused a herdr pane. Land the user in a shell there.
+            format!("ssh -t {}", launcher::sh_quote(host))
+        } else {
+            launcher::ssh_command(host, &plan.cwd, &plan.command)
+        };
+        launcher::open_in_terminal(&settings.terminal_app, &home, &cmd)?;
+        let name = self.node_name_of(&rec, None);
+        Ok(format!("{} on {name}", plan.message))
+    }
+
+    // ------------------------------------------------------------ proposals
+
+    pub fn propose_now(&self, node: &str) -> anyhow::Result<Proposal> {
+        self.on_node(node, |e| e.propose_now(), |c| c.propose_now())
+    }
+
+    pub fn proposal(&self, node: &str) -> Option<Proposal> {
+        if node == LOCAL {
+            return self.engine.proposal();
+        }
+        self.client_of(node)
+            .ok()
+            .and_then(|(c, _)| c.proposal().ok().flatten())
+    }
+
+    pub fn proposal_history(&self, node: &str, limit: usize) -> Vec<Proposal> {
+        if node == LOCAL {
+            return self.engine.proposal_history(limit);
+        }
+        self.client_of(node)
+            .and_then(|(c, _)| c.proposal_history(limit))
+            .unwrap_or_default()
+    }
+
+    pub fn accept_proposal(
+        &self,
+        node: &str,
+        id: &str,
+        card_ids: Option<Vec<String>>,
+    ) -> anyhow::Result<usize> {
+        let ids2 = card_ids.clone();
+        self.on_node(
+            node,
+            move |e| e.accept_proposal(id, card_ids, false),
+            move |c| c.accept_proposal(id, ids2),
+        )
+    }
+
+    pub fn snooze_proposal(&self, node: &str, id: &str, minutes: i64) -> anyhow::Result<()> {
+        self.on_node(
+            node,
+            |e| e.snooze_proposal(id, minutes),
+            |c| c.snooze_proposal(id, minutes),
+        )
+    }
+
+    pub fn dismiss_proposal(&self, node: &str, id: &str) -> anyhow::Result<()> {
+        self.on_node(node, |e| e.dismiss_proposal(id), |c| c.dismiss_proposal(id))
+    }
+
+    pub fn stop_proposal(&self, node: &str, id: &str) -> anyhow::Result<usize> {
+        self.on_node(node, |e| e.stop_proposal(id), |c| c.stop_proposal(id))
+    }
+
+    /// The kill switch: every kari-started job on every online node.
+    pub fn stop_all(&self) -> anyhow::Result<usize> {
+        let mut n = self.engine.stop_all()?;
+        for (id, c) in self.online_clients() {
+            match c.stop_all() {
+                Ok(k) => n += k,
+                Err(e) => warn!("stop all on {id}: {e}"),
+            }
+            self.refetch(&id);
+        }
+        Ok(n)
+    }
+
+    // ------------------------------------------------------------ columns
+
+    fn push_columns(&self) {
+        let cols = self.engine.columns();
+        for (id, c) in self.online_clients() {
+            if let Err(e) = c.set_columns(&cols) {
+                warn!("columns not pushed to {id}: {e}");
+            }
+            self.refetch(&id);
+        }
+    }
+
+    pub fn set_columns(&self, cols: Vec<Column>) -> anyhow::Result<()> {
+        self.engine.set_columns(cols)?;
+        self.push_columns();
+        Ok(())
+    }
+
+    pub fn reset_columns(&self) -> anyhow::Result<()> {
+        self.engine.reset_columns()?;
+        self.push_columns();
+        Ok(())
+    }
+
+    // ------------------------------------------------------------ node management
+
+    fn status_by_id(&self, id: &str) -> anyhow::Result<NodeStatus> {
+        self.nodes()
+            .into_iter()
+            .find(|n| n.id == id)
+            .ok_or_else(|| anyhow::anyhow!("unknown node {id}"))
+    }
+
+    /// Add a node and pair it at once when it has an SSH host. A failed pairing
+    /// still saves the node; the status shows why.
+    pub fn add_node(self: &Arc<Self>, n: NewNode) -> anyhow::Result<NodeStatus> {
+        let ssh_host = n
+            .ssh_host
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let rec = NodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: n.name.trim().to_string(),
+            ssh_host,
+            remote_port: if n.remote_port == 0 {
+                47311
+            } else {
+                n.remote_port
+            },
+            enabled: true,
+            created_at: Utc::now(),
+        };
+        self.engine.save_node(&rec)?;
+        let pair_error = match &rec.ssh_host {
+            Some(host) => match crate::tunnel::read_remote_token(host) {
+                Ok(tok) => keychain::store_token(&rec.id, &tok)
+                    .err()
+                    .map(|e| e.to_string()),
+                Err(e) => Some(e.to_string()),
+            },
+            None => None,
+        };
+        self.spawn_remote(rec.clone());
+        if let Some(e) = pair_error {
+            if let Some(r) = self
+                .remotes
+                .read()
+                .unwrap()
+                .iter()
+                .find(|r| r.rec.id == rec.id)
+            {
+                r.state.lock().unwrap().error = Some(format!("pairing failed: {e}"));
+            }
+        }
+        self.emit(HubEvent::BoardChanged {
+            node_id: rec.id.clone(),
+        });
+        self.status_by_id(&rec.id)
+    }
+
+    /// Change a node. A changed host or port reconnects; a disabled node stops.
+    pub fn update_node(self: &Arc<Self>, id: &str, p: NodePatch) -> anyhow::Result<NodeStatus> {
+        let Some(mut rec) = self.stop_remote(id) else {
+            anyhow::bail!("unknown node {id}")
+        };
+        if let Some(n) = p.name {
+            rec.name = n.trim().to_string();
+        }
+        if let Some(h) = p.ssh_host {
+            rec.ssh_host = h.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        }
+        if let Some(port) = p.remote_port {
+            if port != 0 {
+                rec.remote_port = port;
+            }
+        }
+        if let Some(en) = p.enabled {
+            rec.enabled = en;
+        }
+        self.engine.save_node(&rec)?;
+        self.spawn_remote(rec);
+        self.emit(HubEvent::BoardChanged {
+            node_id: id.to_string(),
+        });
+        self.status_by_id(id)
+    }
+
+    pub fn remove_node(&self, id: &str) -> anyhow::Result<()> {
+        self.stop_remote(id);
+        self.engine.delete_node(id)?;
+        keychain::delete_token(id);
+        self.emit(HubEvent::BoardChanged {
+            node_id: id.to_string(),
+        });
+        Ok(())
+    }
+
+    /// Read the node's token over SSH again and reconnect.
+    pub fn pair_node(self: &Arc<Self>, id: &str) -> anyhow::Result<String> {
+        let rec = self
+            .remotes
+            .read()
+            .unwrap()
+            .iter()
+            .find(|r| r.rec.id == id)
+            .map(|r| r.rec.clone())
+            .ok_or_else(|| anyhow::anyhow!("unknown node {id}"))?;
+        let Some(host) = rec.ssh_host.as_deref() else {
+            anyhow::bail!("a node without an SSH host is paired by hand: copy its hook-token into the keychain item kari-node/{id}")
+        };
+        let tok = crate::tunnel::read_remote_token(host)?;
+        keychain::store_token(id, &tok)?;
+        // Reconnect with the new token.
+        if let Some(rec) = self.stop_remote(id) {
+            self.spawn_remote(rec);
+        }
+        Ok(format!("paired with {host}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn col(id: &str, accepts: &[DerivedState]) -> Column {
+        Column {
+            id: id.into(),
+            name: id.into(),
+            order: 0,
+            accepts: accepts.to_vec(),
+            wip_limit: None,
+            color: None,
+            hidden: false,
+        }
+    }
+
+    fn view(column_id: &str, state: DerivedState) -> CardView {
+        CardView {
+            card: Card {
+                id: "c".into(),
+                kind: CardKind::Task,
+                title: None,
+                session_id: None,
+                project_cwd: None,
+                priority: 0,
+                auto_run: false,
+                run_prompt: None,
+                permission_mode: None,
+                model: None,
+                estimate_weighted_tokens: None,
+                manual_column: None,
+                manual_lock_priority: None,
+                tags: vec![],
+                notes: None,
+                archived: false,
+                bg_job_id: None,
+                last_job_state: None,
+                last_job_at: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                done_at: None,
+            },
+            title: "t".into(),
+            state,
+            column_id: column_id.into(),
+            locked: false,
+            project_name: None,
+            session: None,
+            live: None,
+            bg_job: None,
+            herdr: None,
+            summary: None,
+            hooks: None,
+            estimate: None,
+            last_activity_at: None,
+            reason: String::new(),
+        }
+    }
+
+    #[test]
+    fn remote_column_kept_when_local_has_it() {
+        let cols = vec![
+            col("a", &[DerivedState::Working]),
+            col("b", &[DerivedState::Done]),
+        ];
+        assert_eq!(
+            Hub::map_column(&cols, &view("b", DerivedState::Working)),
+            "b"
+        );
+    }
+
+    #[test]
+    fn remote_column_mapped_by_state_when_unknown() {
+        let cols = vec![
+            col("a", &[DerivedState::Working]),
+            col("b", &[DerivedState::Done]),
+        ];
+        assert_eq!(
+            Hub::map_column(&cols, &view("zzz", DerivedState::Done)),
+            "b"
+        );
+    }
+
+    #[test]
+    fn remote_column_falls_back_to_unknown_then_first() {
+        let cols = vec![
+            col("a", &[DerivedState::Working]),
+            col("u", &[DerivedState::Unknown]),
+        ];
+        assert_eq!(
+            Hub::map_column(&cols, &view("zzz", DerivedState::Stale)),
+            "u"
+        );
+        let cols = vec![col("a", &[DerivedState::Working])];
+        assert_eq!(
+            Hub::map_column(&cols, &view("zzz", DerivedState::Stale)),
+            "a"
+        );
+    }
+}
