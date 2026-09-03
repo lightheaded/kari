@@ -566,7 +566,7 @@ const settings = {
   done_after_days: 3,
   stale_after_days: 14,
   terminal_app: "iTerm",
-  default_permission_mode: "bypassPermissions",
+  default_permission_mode: "auto",
   default_run_model: "",
   max_parallel_bg: 2,
   summaries_enabled: true,
