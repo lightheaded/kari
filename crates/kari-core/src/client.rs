@@ -1,7 +1,7 @@
 //! Blocking client for the node API in `api.rs`. The hub uses it for every
 //! remote node, through an SSH port forward that ends on the node's loopback.
 
-use crate::hooks::TOKEN_HEADER;
+use crate::hooks::{HUB_HEADER, TOKEN_HEADER};
 use crate::model::*;
 use reqwest::blocking::{Client, Response};
 use serde::de::DeserializeOwned;
@@ -12,6 +12,8 @@ use std::time::Duration;
 pub struct ApiClient {
     base: String,
     token: String,
+    /// The hub id sent with column pushes. The node checks it against its lease.
+    hub_id: Option<String>,
     http: Client,
 }
 
@@ -79,14 +81,38 @@ fn error_of(resp: Response) -> anyhow::Error {
 impl ApiClient {
     /// A client for a node reachable at `127.0.0.1:port`.
     pub fn new(port: u16, token: &str) -> ApiClient {
+        Self::at(&format!("http://127.0.0.1:{port}"), token)
+    }
+
+    /// A client for a node at a base URL, such as `http://host:47311`.
+    pub fn at(base: &str, token: &str) -> ApiClient {
         ApiClient {
-            base: format!("http://127.0.0.1:{port}"),
+            base: base.trim_end_matches('/').to_string(),
             token: token.to_string(),
+            hub_id: None,
             http: Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()
                 .expect("http client"),
         }
+    }
+
+    /// Send this hub id with every request. Column pushes need it.
+    pub fn with_hub(mut self, hub_id: &str) -> ApiClient {
+        self.hub_id = Some(hub_id.to_string());
+        self
+    }
+
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
+    fn headers(&self, mut req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+        req = req.header(TOKEN_HEADER, &self.token);
+        if let Some(h) = &self.hub_id {
+            req = req.header(HUB_HEADER, h);
+        }
+        req
     }
 
     fn json<T: DeserializeOwned>(&self, resp: Response) -> anyhow::Result<T> {
@@ -98,9 +124,7 @@ impl ApiClient {
 
     fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         let r = self
-            .http
-            .get(format!("{}{path}", self.base))
-            .header(TOKEN_HEADER, &self.token)
+            .headers(self.http.get(format!("{}{path}", self.base)))
             .send()?;
         self.json(r)
     }
@@ -111,10 +135,7 @@ impl ApiClient {
         path: &str,
         body: Option<serde_json::Value>,
     ) -> anyhow::Result<T> {
-        let mut req = self
-            .http
-            .request(method, format!("{}{path}", self.base))
-            .header(TOKEN_HEADER, &self.token);
+        let mut req = self.headers(self.http.request(method, format!("{}{path}", self.base)));
         if let Some(b) = body {
             req = req.json(&b);
         }
@@ -240,6 +261,32 @@ impl ApiClient {
 
     pub fn settings(&self) -> anyhow::Result<Settings> {
         self.get("/kari/v1/settings")
+    }
+
+    // ---- lease ----
+
+    /// The node's column lease. `Ok(None)` when free. An older node without
+    /// the route answers 404, which reads as "no lease" too.
+    pub fn lease(&self) -> anyhow::Result<Option<Lease>> {
+        let r = self
+            .headers(self.http.get(format!("{}/kari/v1/lease", self.base)))
+            .send()?;
+        if r.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        self.json(r)
+    }
+
+    pub fn claim_lease(&self, claim: &LeaseClaim) -> anyhow::Result<Lease> {
+        self.post("/kari/v1/lease", Some(serde_json::to_value(claim)?))
+    }
+
+    pub fn release_lease(&self, hub_id: &str) -> anyhow::Result<()> {
+        self.send(
+            reqwest::Method::DELETE,
+            "/kari/v1/lease",
+            Some(serde_json::json!({ "hub_id": hub_id })),
+        )
     }
 
     pub fn set_settings(&self, s: &Settings) -> anyhow::Result<()> {

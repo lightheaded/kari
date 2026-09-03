@@ -313,6 +313,18 @@ async fn pair_node(state: State<'_, AppState>, node_id: String) -> R<String> {
     off_thread(&state.hub, move |h| h.pair_node(&node_id)).await
 }
 
+/// Take the column lease on every node. This device then pushes columns.
+#[tauri::command]
+async fn claim_primary(state: State<'_, AppState>) -> R<String> {
+    off_thread(&state.hub, |h| h.claim_primary()).await
+}
+
+/// Addresses this machine has, for the "also listen on" picker in Settings.
+#[tauri::command]
+fn local_addresses() -> Vec<kari_core::net::LocalAddress> {
+    kari_core::net::local_addresses()
+}
+
 // ---------------------------------------------------------------- shell
 
 fn show_main(app: &AppHandle) {
@@ -451,10 +463,22 @@ pub fn run() {
         .setup(move |app| {
             // The API serves the hook relay on this Mac and, over an SSH
             // forward, any other kari that treats this Mac as a node.
-            let port = engine.settings().hooks_port;
+            let settings = engine.settings();
+            let port = settings.hooks_port;
+            // A second address, such as a WireGuard one, lets a hub on a phone reach this node.
+            let extra = match settings.extra_listen.trim() {
+                "" => None,
+                a => match a.parse::<std::net::SocketAddr>() {
+                    Ok(sa) => Some(sa),
+                    Err(e) => {
+                        tracing::warn!("extra listen address {a:?} ignored: {e}");
+                        None
+                    }
+                },
+            };
             let e = Arc::clone(&engine);
             tauri::async_runtime::spawn(async move {
-                kari_core::api::spawn(e, port);
+                kari_core::api::spawn(e, port, extra);
             });
             forward_events(app.handle().clone(), Arc::clone(&hub));
 
@@ -567,7 +591,9 @@ pub fn run() {
             add_node,
             update_node,
             remove_node,
-            pair_node
+            pair_node,
+            claim_primary,
+            local_addresses
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

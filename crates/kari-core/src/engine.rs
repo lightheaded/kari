@@ -23,6 +23,8 @@ fn short(s: &str) -> String {
 #[derive(Debug, Clone)]
 pub enum Event {
     BoardChanged,
+    /// The column lease of this node changed hands.
+    LeaseChanged,
     Notice {
         title: String,
         body: String,
@@ -62,6 +64,14 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Open the store at a chosen directory instead of the default kari
+    /// directory. For a hub on a device without a home directory, such as a
+    /// phone. Call it once, before any other path lookup.
+    pub fn open_at(dir: &std::path::Path) -> anyhow::Result<Arc<Engine>> {
+        paths::set_kari_dir(dir);
+        Self::open()
+    }
+
     pub fn open() -> anyhow::Result<Arc<Engine>> {
         let store = Store::open(&paths::kari_db())?;
         let settings = store.load_settings()?;
@@ -1268,6 +1278,107 @@ impl Engine {
         }
     }
 
+    /// Small facts the hub keeps beside the board, such as its primary intent.
+    pub fn kv_get(&self, key: &str) -> Option<String> {
+        self.store.lock().unwrap().kv_get(key).ok().flatten()
+    }
+
+    pub fn kv_set(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        self.store.lock().unwrap().kv_set(key, value)
+    }
+
+    // ---------------------------------------------------------------- column lease
+
+    const LEASE_KEY: &'static str = "lease";
+
+    /// The hub that may push columns to this node, if any.
+    pub fn lease(&self) -> Option<Lease> {
+        let store = self.store.lock().unwrap();
+        store
+            .kv_get(Self::LEASE_KEY)
+            .ok()
+            .flatten()
+            .and_then(|j| serde_json::from_str(&j).ok())
+    }
+
+    /// True when a hub with this id may push columns: no lease, an expired
+    /// lease, or its own lease. `None` is a caller without a hub id, such as a
+    /// script or an older kari; it passes only while no hub holds the lease.
+    pub fn lease_allows(&self, hub_id: Option<&str>) -> bool {
+        match self.lease() {
+            None => true,
+            Some(l) if l.expired(Utc::now()) => true,
+            Some(l) => hub_id == Some(l.hub_id.as_str()),
+        }
+    }
+
+    /// Claim or renew the lease. One SQLite transaction, so two hubs that claim
+    /// at once see one winner.
+    pub fn claim_lease(&self, claim: LeaseClaim) -> anyhow::Result<Lease> {
+        if claim.hub_id.trim().is_empty() {
+            anyhow::bail!("a claim needs a hub id");
+        }
+        let now = Utc::now();
+        let changed;
+        let lease = {
+            let store = self.store.lock().unwrap();
+            let current: Option<Lease> = store
+                .kv_get(Self::LEASE_KEY)?
+                .and_then(|j| serde_json::from_str(&j).ok());
+            let lease = match current {
+                Some(l) if l.hub_id == claim.hub_id => {
+                    changed = false;
+                    Lease {
+                        hub_name: claim.hub_name.clone(),
+                        renewed_at: now,
+                        ..l
+                    }
+                }
+                Some(l) if !l.expired(now) && !claim.take => {
+                    anyhow::bail!("not primary: {} holds the lease", l.hub_name);
+                }
+                _ => {
+                    changed = true;
+                    Lease {
+                        hub_id: claim.hub_id.clone(),
+                        hub_name: claim.hub_name.clone(),
+                        claimed_at: now,
+                        renewed_at: now,
+                    }
+                }
+            };
+            store.kv_set(Self::LEASE_KEY, &serde_json::to_string(&lease)?)?;
+            lease
+        };
+        if changed {
+            info!("lease taken by {} ({})", lease.hub_name, lease.hub_id);
+            let _ = self.tx.send(Event::LeaseChanged);
+        }
+        Ok(lease)
+    }
+
+    /// Give the lease back. Only the holder can.
+    pub fn release_lease(&self, hub_id: &str) -> anyhow::Result<()> {
+        let released = {
+            let store = self.store.lock().unwrap();
+            let current: Option<Lease> = store
+                .kv_get(Self::LEASE_KEY)?
+                .and_then(|j| serde_json::from_str(&j).ok());
+            match current {
+                Some(l) if l.hub_id == hub_id => {
+                    store.kv_delete(Self::LEASE_KEY)?;
+                    true
+                }
+                Some(l) => anyhow::bail!("not primary: {} holds the lease", l.hub_name),
+                None => false,
+            }
+        };
+        if released {
+            let _ = self.tx.send(Event::LeaseChanged);
+        }
+        Ok(())
+    }
+
     // ---------------------------------------------------------------- remote nodes (hub side)
 
     pub fn list_nodes(&self) -> Vec<NodeRecord> {
@@ -1900,5 +2011,67 @@ impl Engine {
                 }
             })
             .expect("spawn");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The one test that opens an engine: `open_at` fixes the kari directory
+    /// for the whole process, so every other test must stay away from it.
+    #[test]
+    fn lease_claim_rules() {
+        let dir = std::env::temp_dir().join(format!("kari-lease-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let e = Engine::open_at(&dir).unwrap();
+        let claim = |id: &str, take: bool| LeaseClaim {
+            hub_id: id.into(),
+            hub_name: id.to_uppercase(),
+            take,
+        };
+        assert!(e.lease().is_none());
+        assert!(e.lease_allows(None), "a free lease lets an old client push");
+
+        let a = e.claim_lease(claim("a", false)).unwrap();
+        assert_eq!(a.hub_id, "a");
+        assert!(e.lease_allows(Some("a")));
+        assert!(!e.lease_allows(Some("b")));
+        assert!(!e.lease_allows(None), "a held lease keeps an anonymous client out");
+
+        // Renewal by the holder keeps the claim time and moves the renewal time.
+        let a2 = e.claim_lease(claim("a", false)).unwrap();
+        assert_eq!(a2.claimed_at, a.claimed_at);
+        assert!(a2.renewed_at >= a.renewed_at);
+
+        // Another hub without `take` is refused while the lease is fresh.
+        let err = e.claim_lease(claim("b", false)).unwrap_err().to_string();
+        assert!(err.contains("not primary"), "{err}");
+        assert_eq!(e.lease().unwrap().hub_id, "a");
+
+        // With `take` it wins.
+        let b = e.claim_lease(claim("b", true)).unwrap();
+        assert_eq!(b.hub_id, "b");
+        assert!(e.lease_allows(Some("b")));
+        assert!(!e.lease_allows(Some("a")));
+
+        // Only the holder releases.
+        assert!(e.release_lease("a").is_err());
+        e.release_lease("b").unwrap();
+        assert!(e.lease().is_none());
+
+        // An expired lease is free for anyone.
+        let old = Lease {
+            hub_id: "c".into(),
+            hub_name: "C".into(),
+            claimed_at: Utc::now() - Duration::hours(2),
+            renewed_at: Utc::now() - Duration::hours(1),
+        };
+        e.kv_set(Engine::LEASE_KEY, &serde_json::to_string(&old).unwrap()).unwrap();
+        assert!(e.lease_allows(None));
+        assert!(e.lease_allows(Some("a")));
+        let a3 = e.claim_lease(claim("a", false)).unwrap();
+        assert_eq!(a3.hub_id, "a");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

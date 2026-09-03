@@ -678,6 +678,12 @@ impl Store {
             .optional()?)
     }
 
+    pub fn kv_delete(&self, key: &str) -> anyhow::Result<()> {
+        self.conn
+            .execute("DELETE FROM kv WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
     pub fn kv_set(&self, key: &str, value: &str) -> anyhow::Result<()> {
         self.conn.execute(
             "INSERT INTO kv (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",

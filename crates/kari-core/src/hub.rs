@@ -1,11 +1,16 @@
 //! The hub: one board over many nodes.
 //!
 //! The local node is the engine in this process. Every remote node is a
-//! `kari-node` daemon reached through an SSH port forward (or a direct loopback
-//! port for tests). The hub keeps one thread per remote node that holds the
-//! forward, follows the node's event stream and caches its board. Card actions
-//! go to the node that owns the card. Columns come from the local node and are
-//! pushed to every remote node on connect and on change.
+//! `kari-node` daemon reached through an SSH port forward, a direct address on
+//! a private network, or a loopback port for tests. The hub keeps one thread
+//! per remote node that holds the connection, follows the node's event stream
+//! and caches its board. Card actions go to the node that owns the card.
+//!
+//! Columns live in the hub's own store. Only the primary hub pushes them, and
+//! each node decides who the primary is: it keeps a lease, and refuses a push
+//! from any other hub. "Make this device primary" takes the lease on every
+//! node and adopts the columns found there, so a switch changes no columns.
+//! A hub without a local engine, such as a phone, shows only remote nodes.
 
 use crate::client::{ApiClient, EventItem};
 use crate::model::*;
@@ -18,6 +23,9 @@ use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 pub const LOCAL: &str = "local";
+const INTENT_KEY: &str = "primary_intent";
+/// Seconds between two renewals of a lease this hub holds.
+const RENEW_EVERY: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub enum HubEvent {
@@ -43,6 +51,8 @@ struct RemoteState {
     client: Option<ApiClient>,
     tunnel: Option<Tunnel>,
     paired: bool,
+    /// The node's column lease as it last reported it.
+    lease: Option<Lease>,
 }
 
 struct Remote {
@@ -55,16 +65,42 @@ pub struct Hub {
     engine: Arc<Engine>,
     remotes: RwLock<Vec<Remote>>,
     tx: broadcast::Sender<HubEvent>,
+    /// This hub's id and name, as the nodes record them in their lease.
+    hub_id: String,
+    hub_name: String,
+    /// True when the engine in this process is a node on the board. A phone
+    /// runs no Claude Code, so its engine is only the hub's store.
+    with_local: bool,
+    /// This hub wants to be primary. Set by `claim_primary`, cleared when a
+    /// node reports another holder. Persisted, so a restart keeps the role.
+    primary: AtomicBool,
 }
 
 impl Hub {
+    /// A hub whose engine is also a node on the board: the desktop app.
     pub fn new(local: Arc<Engine>) -> Arc<Hub> {
+        Self::build(local, true)
+    }
+
+    /// A hub whose engine is only its store: a device without Claude Code.
+    pub fn without_local(store: Arc<Engine>) -> Arc<Hub> {
+        Self::build(store, false)
+    }
+
+    fn build(local: Arc<Engine>, with_local: bool) -> Arc<Hub> {
         let (tx, _) = broadcast::channel(256);
+        let hub_id = local.node_id();
+        let hub_name = local.node_name();
         let hub = Arc::new(Hub {
             engine: Arc::clone(&local),
             remotes: RwLock::new(vec![]),
             tx,
+            hub_id,
+            hub_name,
+            with_local,
+            primary: AtomicBool::new(false),
         });
+        hub.restore_intent();
         // Local engine events become hub events with the local node id.
         let h = Arc::clone(&hub);
         let mut rx = local.subscribe();
@@ -75,6 +111,17 @@ impl Hub {
                     Ok(Event::BoardChanged) => h.emit(HubEvent::BoardChanged {
                         node_id: LOCAL.into(),
                     }),
+                    // Another hub took the local node's lease.
+                    Ok(Event::LeaseChanged) => {
+                        if let Some(l) = h.engine.lease() {
+                            if l.hub_id != h.hub_id {
+                                h.lose_primary(&l.hub_name);
+                            }
+                        }
+                        h.emit(HubEvent::BoardChanged {
+                            node_id: LOCAL.into(),
+                        });
+                    }
                     Ok(Event::Notice {
                         title,
                         body,
@@ -94,11 +141,179 @@ impl Hub {
         for rec in local.list_nodes() {
             hub.spawn_remote(rec);
         }
+        hub.start_lease_keeper();
         hub
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<HubEvent> {
         self.tx.subscribe()
+    }
+
+    pub fn hub_id(&self) -> &str {
+        &self.hub_id
+    }
+
+    // ------------------------------------------------------------ primary lease
+
+    /// True when this hub pushes columns.
+    pub fn is_primary(&self) -> bool {
+        self.primary.load(Ordering::Relaxed)
+    }
+
+    fn set_intent(&self, on: bool) {
+        self.primary.store(on, Ordering::Relaxed);
+        let _ = self
+            .engine
+            .kv_set(INTENT_KEY, if on { "1" } else { "0" });
+    }
+
+    fn claim(&self, take: bool) -> LeaseClaim {
+        LeaseClaim {
+            hub_id: self.hub_id.clone(),
+            hub_name: self.hub_name.clone(),
+            take,
+        }
+    }
+
+    /// On start: a desktop whose local lease is free is primary, as every
+    /// kari before the lease was. A stored intent wins over that default.
+    fn restore_intent(&self) {
+        let stored = self.engine.kv_get(INTENT_KEY);
+        let want = match stored.as_deref() {
+            Some("1") => true,
+            Some(_) => false,
+            None => self.with_local,
+        };
+        if want && self.with_local {
+            match self.engine.claim_lease(self.claim(false)) {
+                Ok(_) => self.primary.store(true, Ordering::Relaxed),
+                Err(e) => {
+                    info!("not primary on start: {e}");
+                    self.set_intent(false);
+                }
+            }
+        } else {
+            self.primary.store(want, Ordering::Relaxed);
+        }
+    }
+
+    /// A node reported another holder. Step back and tell the user once.
+    fn lose_primary(&self, holder: &str) {
+        if !self.is_primary() {
+            return;
+        }
+        self.set_intent(false);
+        warn!("lease lost to {holder}");
+        self.emit(HubEvent::Notice {
+            node_id: LOCAL.into(),
+            node_name: self.hub_name.clone(),
+            title: format!("{holder} is primary now"),
+            body: "This device follows. Columns are read-only here until you make it primary again."
+                .into(),
+            card_id: None,
+        });
+    }
+
+    /// Become the hub that pushes columns: take the lease on the local node and
+    /// on every online remote node, then adopt the columns the previous primary
+    /// left on the nodes. Offline nodes get the claim when they reconnect.
+    pub fn claim_primary(&self) -> anyhow::Result<String> {
+        self.set_intent(true);
+        let mut taken = 0usize;
+        let mut failed = vec![];
+        if self.with_local {
+            match self.engine.claim_lease(self.claim(true)) {
+                Ok(_) => taken += 1,
+                Err(e) => failed.push(format!("this machine: {e}")),
+            }
+        }
+        // The columns to adopt: from the node whose foreign lease was renewed last.
+        let mut adopt: Option<(DateTime<Utc>, ApiClient)> = None;
+        let remotes: Vec<(String, Arc<Mutex<RemoteState>>)> = self
+            .remotes
+            .read()
+            .unwrap()
+            .iter()
+            .map(|r| (r.rec.id.clone(), Arc::clone(&r.state)))
+            .collect();
+        for (id, state) in remotes {
+            let (client, previous) = {
+                let st = state.lock().unwrap();
+                match (&st.client, st.online) {
+                    (Some(c), true) => (c.clone(), st.lease.clone()),
+                    _ => continue,
+                }
+            };
+            match client.claim_lease(&self.claim(true)) {
+                Ok(l) => {
+                    taken += 1;
+                    state.lock().unwrap().lease = Some(l);
+                    if let Some(p) = previous.filter(|p| p.hub_id != self.hub_id) {
+                        if adopt.as_ref().is_none_or(|(at, _)| p.renewed_at > *at) {
+                            adopt = Some((p.renewed_at, client.clone()));
+                        }
+                    }
+                }
+                Err(e) => failed.push(format!("{id}: {e}")),
+            }
+        }
+        if let Some((_, client)) = adopt {
+            match client.columns() {
+                Ok(cols) if !cols.is_empty() => {
+                    if let Err(e) = self.engine.set_columns(cols) {
+                        warn!("columns not adopted: {e}");
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => warn!("columns not read from the previous primary: {e}"),
+            }
+        }
+        self.push_columns();
+        self.emit(HubEvent::BoardChanged {
+            node_id: LOCAL.into(),
+        });
+        if failed.is_empty() {
+            Ok(format!("primary on {taken} node(s)"))
+        } else {
+            Ok(format!(
+                "primary on {taken} node(s); not yet on {}",
+                failed.join(", ")
+            ))
+        }
+    }
+
+    /// Renew the local lease while this hub is primary. Remote leases renew in
+    /// their node threads.
+    fn start_lease_keeper(self: &Arc<Self>) {
+        if !self.with_local {
+            return;
+        }
+        let h = Arc::clone(self);
+        std::thread::Builder::new()
+            .name("kari-hub-lease".into())
+            .spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(RENEW_EVERY));
+                if h.is_primary() {
+                    if let Err(e) = h.engine.claim_lease(h.claim(false)) {
+                        let holder = h
+                            .engine
+                            .lease()
+                            .map(|l| l.hub_name)
+                            .unwrap_or_else(|| "another hub".into());
+                        warn!("local lease renewal refused: {e}");
+                        h.lose_primary(&holder);
+                    }
+                }
+            })
+            .expect("spawn");
+    }
+
+    /// Whether this hub may push columns to a node with the given lease.
+    fn lease_ours(&self, lease: &Option<Lease>) -> bool {
+        match lease {
+            None => true,
+            Some(l) => l.hub_id == self.hub_id || l.expired(Utc::now()),
+        }
     }
 
     /// The engine of this machine, for the parts of the app that are local
@@ -170,6 +385,7 @@ impl Hub {
         let label = rec
             .ssh_host
             .clone()
+            .or_else(|| rec.address.clone())
             .unwrap_or_else(|| format!("127.0.0.1:{}", rec.remote_port));
         while !stop.load(Ordering::Relaxed) {
             let started = Instant::now();
@@ -213,16 +429,17 @@ impl Hub {
             anyhow::bail!("not paired: no token for this node; use Pair in Settings");
         };
         state.lock().unwrap().paired = true;
-        let port = match &rec.ssh_host {
-            Some(host) => {
+        let base = match (&rec.ssh_host, &rec.address) {
+            (Some(host), _) => {
                 let t = Tunnel::open(host, rec.remote_port)?;
                 let p = t.local_port;
                 state.lock().unwrap().tunnel = Some(t);
-                p
+                format!("http://127.0.0.1:{p}")
             }
-            None => rec.remote_port,
+            (None, Some(addr)) => format!("http://{addr}"),
+            (None, None) => format!("http://127.0.0.1:{}", rec.remote_port),
         };
-        let client = ApiClient::new(port, &token);
+        let client = ApiClient::at(&base, &token).with_hub(&self.hub_id);
         // The forward needs a moment. Poll health, and give up when ssh exits.
         let deadline = Instant::now() + Duration::from_secs(20);
         let identity = loop {
@@ -258,8 +475,26 @@ impl Hub {
         let board = client
             .board()
             .map_err(|e| anyhow::anyhow!("token rejected or board failed: {e}"))?;
-        if let Err(e) = client.set_columns(&self.engine.columns()) {
-            warn!("node {}: columns not pushed: {e}", identity.node_name);
+        // The lease decides who pushes columns. A primary hub renews or takes
+        // its claim on connect; a follower only reads.
+        let mut lease = client.lease().unwrap_or_default();
+        if self.is_primary() {
+            match client.claim_lease(&self.claim(false)) {
+                Ok(l) => lease = Some(l),
+                Err(e) => {
+                    let holder = lease
+                        .as_ref()
+                        .map(|l| l.hub_name.clone())
+                        .unwrap_or_else(|| "another hub".into());
+                    warn!("node {}: {e}", identity.node_name);
+                    self.lose_primary(&holder);
+                }
+            }
+        }
+        if self.is_primary() && self.lease_ours(&lease) {
+            if let Err(e) = client.set_columns(&self.engine.columns()) {
+                warn!("node {}: columns not pushed: {e}", identity.node_name);
+            }
         }
         {
             let mut st = state.lock().unwrap();
@@ -269,6 +504,7 @@ impl Hub {
             st.client = Some(client.clone());
             st.last_seen = Some(Utc::now());
             st.board = Some(board.clone());
+            st.lease = lease;
         }
         self.engine.save_node_cache(&rec.id, &board);
         info!("node {} online ({})", identity.node_name, identity.version);
@@ -279,6 +515,7 @@ impl Hub {
 
         let mut reader = client.events()?;
         let mut last_fetch = Instant::now();
+        let mut last_renew = Instant::now();
         let mut pending = false;
         loop {
             if stop.load(Ordering::Relaxed) {
@@ -288,7 +525,35 @@ impl Hub {
                 anyhow::bail!("event stream ended");
             };
             state.lock().unwrap().last_seen = Some(Utc::now());
+            if self.is_primary() && last_renew.elapsed() > Duration::from_secs(RENEW_EVERY) {
+                last_renew = Instant::now();
+                match client.claim_lease(&self.claim(false)) {
+                    Ok(l) => state.lock().unwrap().lease = Some(l),
+                    Err(e) => {
+                        let holder = client
+                            .lease()
+                            .ok()
+                            .flatten()
+                            .map(|l| l.hub_name)
+                            .unwrap_or_else(|| "another hub".into());
+                        warn!("node {}: renewal refused: {e}", node_name);
+                        self.lose_primary(&holder);
+                    }
+                }
+            }
             match item {
+                EventItem::Message(m) if m.event == "lease_changed" => {
+                    let lease = client.lease().unwrap_or_default();
+                    if let Some(l) = lease.as_ref().filter(|l| l.hub_id != self.hub_id) {
+                        if !l.expired(Utc::now()) {
+                            self.lose_primary(&l.hub_name);
+                        }
+                    }
+                    state.lock().unwrap().lease = lease;
+                    self.emit(HubEvent::BoardChanged {
+                        node_id: rec.id.clone(),
+                    });
+                }
                 EventItem::Message(m) if m.event == "notice" => {
                     let v: serde_json::Value = serde_json::from_str(&m.data).unwrap_or_default();
                     self.emit(HubEvent::Notice {
@@ -368,6 +633,7 @@ impl Hub {
     }
 
     fn local_status(&self) -> NodeStatus {
+        let lease = self.engine.lease();
         NodeStatus {
             id: LOCAL.into(),
             name: self.engine.node_name(),
@@ -376,12 +642,15 @@ impl Hub {
             enabled: true,
             paired: true,
             ssh_host: None,
+            address: None,
             remote_port: self.engine.settings().hooks_port,
             version: Some(crate::version().into()),
             api_version: Some(API_VERSION),
             remote_node_id: Some(self.engine.node_id()),
             last_seen: Some(Utc::now()),
             error: None,
+            primary: lease.as_ref().is_some_and(|l| l.hub_id == self.hub_id),
+            lease,
         }
     }
 
@@ -395,6 +664,7 @@ impl Hub {
             enabled: r.rec.enabled,
             paired: st.paired,
             ssh_host: r.rec.ssh_host.clone(),
+            address: r.rec.address.clone(),
             remote_port: r.rec.remote_port,
             version: st.identity.as_ref().map(|i| i.version.clone()),
             api_version: st.identity.as_ref().map(|i| i.api_version),
@@ -405,11 +675,19 @@ impl Hub {
             } else {
                 Some("disabled".into())
             },
+            primary: st
+                .lease
+                .as_ref()
+                .is_some_and(|l| l.hub_id == self.hub_id && !l.expired(Utc::now())),
+            lease: st.lease.clone(),
         }
     }
 
     pub fn nodes(&self) -> Vec<NodeStatus> {
-        let mut out = vec![self.local_status()];
+        let mut out = vec![];
+        if self.with_local {
+            out.push(self.local_status());
+        }
         for r in self.remotes.read().unwrap().iter() {
             out.push(self.status_of(r));
         }
@@ -438,35 +716,37 @@ impl Hub {
     }
 
     pub fn board(&self) -> HubBoard {
-        let lb = self.engine.board();
+        let columns = self.engine.columns();
         let local_name = self.engine.node_name();
-        let mut nodes = vec![self.local_status()];
-        let mut cards: Vec<HubCard> = lb
-            .cards
-            .iter()
-            .cloned()
-            .map(|view| HubCard {
+        let mut nodes = vec![];
+        let mut cards: Vec<HubCard> = vec![];
+        let mut quotas = vec![];
+        let mut proposals: Vec<NodeProposal> = vec![];
+        // The local board is the whole engine scan; a hub without a local node skips it.
+        let lb = if self.with_local {
+            Some(self.engine.board())
+        } else {
+            None
+        };
+        if let Some(lb) = &lb {
+            nodes.push(self.local_status());
+            cards.extend(lb.cards.iter().cloned().map(|view| HubCard {
                 node_id: LOCAL.into(),
                 node_name: local_name.clone(),
                 view,
-            })
-            .collect();
-        let mut quotas = vec![NodeQuota {
-            node_id: LOCAL.into(),
-            node_name: local_name.clone(),
-            quota: lb.quota.clone(),
-            calibration: lb.calibration.clone(),
-        }];
-        let mut proposals: Vec<NodeProposal> = lb
-            .proposal
-            .clone()
-            .map(|p| NodeProposal {
+            }));
+            quotas.push(NodeQuota {
+                node_id: LOCAL.into(),
+                node_name: local_name.clone(),
+                quota: lb.quota.clone(),
+                calibration: lb.calibration.clone(),
+            });
+            proposals.extend(lb.proposal.clone().map(|p| NodeProposal {
                 node_id: LOCAL.into(),
                 node_name: local_name.clone(),
                 proposal: p,
-            })
-            .into_iter()
-            .collect();
+            }));
+        }
         for r in self.remotes.read().unwrap().iter() {
             let status = self.status_of(r);
             let st = r.state.lock().unwrap();
@@ -474,7 +754,7 @@ impl Hub {
                 if let Some(b) = &st.board {
                     for view in &b.cards {
                         let mut v = view.clone();
-                        v.column_id = Self::map_column(&lb.columns, &v);
+                        v.column_id = Self::map_column(&columns, &v);
                         cards.push(HubCard {
                             node_id: r.rec.id.clone(),
                             node_name: status.name.clone(),
@@ -500,22 +780,30 @@ impl Hub {
             nodes.push(status);
         }
         HubBoard {
-            columns: lb.columns,
+            columns,
+            hub_id: self.hub_id.clone(),
+            hub_name: self.hub_name.clone(),
+            primary: self.is_primary(),
             nodes,
             cards,
             quotas,
             proposals,
             generated_at: Utc::now(),
-            scanning: lb.scanning,
-            herdr_connected: lb.herdr_connected,
-            hooks_installed: lb.hooks_installed,
-            hooks_port: lb.hooks_port,
+            scanning: lb.as_ref().is_some_and(|b| b.scanning),
+            herdr_connected: lb.as_ref().is_some_and(|b| b.herdr_connected),
+            hooks_installed: lb.as_ref().is_some_and(|b| b.hooks_installed),
+            hooks_port: lb
+                .as_ref()
+                .map(|b| b.hooks_port)
+                .unwrap_or_else(|| self.engine.settings().hooks_port),
         }
     }
 
     pub fn refresh_all(&self) {
-        let e = Arc::clone(&self.engine);
-        std::thread::spawn(move || e.refresh_all());
+        if self.with_local {
+            let e = Arc::clone(&self.engine);
+            std::thread::spawn(move || e.refresh_all());
+        }
         for c in self.online_clients() {
             let _ = c.1.refresh();
         }
@@ -563,6 +851,9 @@ impl Hub {
         remote: impl FnOnce(&ApiClient) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         if node_id == LOCAL || node_id.is_empty() {
+            if !self.with_local {
+                anyhow::bail!("this device runs no Claude Code; pick a node");
+            }
             return local(&self.engine);
         }
         let (c, _) = self.client_of(node_id)?;
@@ -622,7 +913,7 @@ impl Hub {
     }
 
     pub fn job_log(&self, node: &str, card: &str, limit: usize) -> Vec<JobLogEntry> {
-        if node == LOCAL {
+        if node == LOCAL && self.with_local {
             return self.engine.job_log(card, limit);
         }
         self.client_of(node)
@@ -631,7 +922,7 @@ impl Hub {
     }
 
     pub fn projects(&self, node: &str) -> Vec<(String, String)> {
-        if node == LOCAL {
+        if node == LOCAL && self.with_local {
             return self.engine.projects();
         }
         self.client_of(node)
@@ -640,7 +931,7 @@ impl Hub {
     }
 
     pub fn quota_history(&self, node: &str, limit: usize) -> Vec<QuotaSample> {
-        if node == LOCAL {
+        if node == LOCAL && self.with_local {
             return self.engine.quota_history(limit);
         }
         self.client_of(node)
@@ -651,7 +942,7 @@ impl Hub {
     /// Jump in where the user sits. A remote card opens a local terminal that
     /// runs the node's plan over SSH.
     pub fn jump_in(&self, node: &str, card: &str) -> anyhow::Result<String> {
-        if node == LOCAL {
+        if node == LOCAL && self.with_local {
             return self.engine.jump_in(card);
         }
         let (c, rec) = self.client_of(node)?;
@@ -683,7 +974,7 @@ impl Hub {
     }
 
     pub fn proposal(&self, node: &str) -> Option<Proposal> {
-        if node == LOCAL {
+        if node == LOCAL && self.with_local {
             return self.engine.proposal();
         }
         self.client_of(node)
@@ -692,7 +983,7 @@ impl Hub {
     }
 
     pub fn proposal_history(&self, node: &str, limit: usize) -> Vec<Proposal> {
-        if node == LOCAL {
+        if node == LOCAL && self.with_local {
             return self.engine.proposal_history(limit);
         }
         self.client_of(node)
@@ -732,7 +1023,11 @@ impl Hub {
 
     /// The kill switch: every kari-started job on every online node.
     pub fn stop_all(&self) -> anyhow::Result<usize> {
-        let mut n = self.engine.stop_all()?;
+        let mut n = if self.with_local {
+            self.engine.stop_all()?
+        } else {
+            0
+        };
         for (id, c) in self.online_clients() {
             match c.stop_all() {
                 Ok(k) => n += k,
@@ -745,23 +1040,78 @@ impl Hub {
 
     // ------------------------------------------------------------ columns
 
+    /// Push the hub's columns to every online node whose lease is this hub's.
+    /// A node that refuses with 409 has a new primary; this hub steps back.
     fn push_columns(&self) {
+        if !self.is_primary() {
+            return;
+        }
         let cols = self.engine.columns();
-        for (id, c) in self.online_clients() {
+        let targets: Vec<(String, ApiClient, Option<Lease>)> = self
+            .remotes
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|r| {
+                let st = r.state.lock().unwrap();
+                st.client
+                    .clone()
+                    .filter(|_| st.online)
+                    .map(|c| (r.rec.id.clone(), c, st.lease.clone()))
+            })
+            .collect();
+        for (id, c, lease) in targets {
+            if !self.lease_ours(&lease) {
+                continue;
+            }
             if let Err(e) = c.set_columns(&cols) {
                 warn!("columns not pushed to {id}: {e}");
+                if e.to_string().contains("not primary") {
+                    let holder = lease.map(|l| l.hub_name).unwrap_or_else(|| "another hub".into());
+                    self.lose_primary(&holder);
+                    return;
+                }
             }
             self.refetch(&id);
         }
     }
 
+    /// Who holds the columns, for an error message: the first lease on any
+    /// node that names another hub.
+    fn holder_name(&self) -> String {
+        let foreign = |l: Lease| (l.hub_id != self.hub_id).then_some(l.hub_name);
+        if self.with_local {
+            if let Some(n) = self.engine.lease().and_then(foreign) {
+                return n;
+            }
+        }
+        self.remotes
+            .read()
+            .unwrap()
+            .iter()
+            .find_map(|r| r.state.lock().unwrap().lease.clone().and_then(foreign))
+            .unwrap_or_else(|| "another hub".into())
+    }
+
     pub fn set_columns(&self, cols: Vec<Column>) -> anyhow::Result<()> {
+        if !self.is_primary() {
+            anyhow::bail!(
+                "not primary: {} holds the columns; use Make this device primary first",
+                self.holder_name()
+            );
+        }
         self.engine.set_columns(cols)?;
         self.push_columns();
         Ok(())
     }
 
     pub fn reset_columns(&self) -> anyhow::Result<()> {
+        if !self.is_primary() {
+            anyhow::bail!(
+                "not primary: {} holds the columns; use Make this device primary first",
+                self.holder_name()
+            );
+        }
         self.engine.reset_columns()?;
         self.push_columns();
         Ok(())
@@ -783,10 +1133,15 @@ impl Hub {
             .ssh_host
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+        let address = n
+            .address
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let rec = NodeRecord {
             id: uuid::Uuid::new_v4().to_string(),
             name: n.name.trim().to_string(),
             ssh_host,
+            address,
             remote_port: if n.remote_port == 0 {
                 47311
             } else {
@@ -796,14 +1151,19 @@ impl Hub {
             created_at: Utc::now(),
         };
         self.engine.save_node(&rec)?;
-        let pair_error = match &rec.ssh_host {
-            Some(host) => match crate::tunnel::read_remote_token(host) {
+        let token = n.token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+        let pair_error = match (token, &rec.ssh_host) {
+            // The caller brought the token, for example from a pairing code.
+            (Some(tok), _) => keychain::store_token(&rec.id, &tok)
+                .err()
+                .map(|e| e.to_string()),
+            (None, Some(host)) => match crate::tunnel::read_remote_token(host) {
                 Ok(tok) => keychain::store_token(&rec.id, &tok)
                     .err()
                     .map(|e| e.to_string()),
                 Err(e) => Some(e.to_string()),
             },
-            None => None,
+            (None, None) => None,
         };
         self.spawn_remote(rec.clone());
         if let Some(e) = pair_error {
@@ -833,6 +1193,9 @@ impl Hub {
         }
         if let Some(h) = p.ssh_host {
             rec.ssh_host = h.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        }
+        if let Some(a) = p.address {
+            rec.address = a.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         }
         if let Some(port) = p.remote_port {
             if port != 0 {
@@ -871,7 +1234,7 @@ impl Hub {
             .map(|r| r.rec.clone())
             .ok_or_else(|| anyhow::anyhow!("unknown node {id}"))?;
         let Some(host) = rec.ssh_host.as_deref() else {
-            anyhow::bail!("a node without an SSH host is paired by hand: copy its hook-token into the keychain item kari-node/{id}")
+            anyhow::bail!("a node without an SSH host is paired with its token: add it again with the token, or scan a pairing code")
         };
         let tok = crate::tunnel::read_remote_token(host)?;
         keychain::store_token(id, &tok)?;

@@ -303,6 +303,7 @@ export interface Settings {
   autopilot_max_jobs: number;
   prefer_herdr: boolean;
   weekly_warn_unused_pct: number;
+  extra_listen: string;
 }
 export interface NewTask {
   title: string;
@@ -326,7 +327,14 @@ export interface CardPatch {
   estimate_weighted_tokens?: number | null;
 }
 
-/** One machine on the board: this machine ("local") or a remote kari node over SSH. */
+/** Who may push columns to a node. */
+export interface Lease {
+  hub_id: string;
+  hub_name: string;
+  claimed_at: string;
+  renewed_at: string;
+}
+/** One machine on the board: this machine ("local") or a remote kari node over SSH or a private address. */
 export interface NodeStatus {
   id: string;
   name: string;
@@ -335,12 +343,21 @@ export interface NodeStatus {
   enabled: boolean;
   paired: boolean;
   ssh_host: string | null;
+  address: string | null;
   remote_port: number;
   version: string | null;
   api_version: number | null;
   remote_node_id: string | null;
   last_seen: string | null;
   error: string | null;
+  lease: Lease | null;
+  /** True when this hub holds the lease on the node. */
+  primary: boolean;
+}
+export interface LocalAddress {
+  interface: string;
+  ip: string;
+  private: boolean;
 }
 export interface HubCard extends CardView {
   node_id: string;
@@ -360,6 +377,10 @@ export interface NodeProposal {
 /** Every node on one board. `get_board` returns this. */
 export interface HubBoard {
   columns: Column[];
+  hub_id: string;
+  hub_name: string;
+  /** True when this hub is the one that pushes columns. */
+  primary: boolean;
   nodes: NodeStatus[];
   cards: HubCard[];
   quotas: NodeQuota[];
@@ -373,11 +394,16 @@ export interface HubBoard {
 export interface NewNode {
   name: string;
   ssh_host: string | null;
+  /** host:port on a private network, when there is no SSH forward. */
+  address?: string | null;
   remote_port: number;
+  /** The node's token, when known already, for example from a pairing code. */
+  token?: string | null;
 }
 export interface NodePatch {
   name?: string;
   ssh_host?: string | null;
+  address?: string | null;
   remote_port?: number;
   enabled?: boolean;
 }

@@ -16,6 +16,9 @@ pub const HOOK_PATH: &str = "/kari/hook";
 /// secret from the token file at run time, so a rotated token needs no
 /// reinstall.
 pub const TOKEN_HEADER: &str = "x-kari-token";
+/// The header a hub sends with its id. A column push needs the id of the hub
+/// that holds the node's lease.
+pub const HUB_HEADER: &str = "x-kari-hub";
 const MARKER: &str = "kari/hook.sh";
 
 /// Events kari registers. PostToolUse clears a pending permission, so it needs every tool.
