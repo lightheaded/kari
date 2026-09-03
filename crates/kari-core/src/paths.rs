@@ -38,6 +38,18 @@ pub fn kari_dir() -> PathBuf {
     }
 }
 
+/// Work directory of kari's own `claude -p` runs, such as the summarizer.
+/// Sessions that start here are kari's, not the user's.
+pub fn internal_cwd_prefix() -> String {
+    kari_dir().join("summaries").to_string_lossy().into_owned()
+}
+
+/// True for a session that kari itself started for internal work.
+pub fn is_internal_cwd(cwd: &str) -> bool {
+    let prefix = internal_cwd_prefix();
+    cwd == prefix || cwd.starts_with(&format!("{prefix}/"))
+}
+
 pub fn kari_db() -> PathBuf {
     kari_dir().join("kari.db")
 }

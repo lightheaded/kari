@@ -109,31 +109,74 @@ pub fn start_background(
     }
     // `--` ends the options. A prompt that starts with `-` stays a prompt.
     cmd.arg("--").arg(prompt);
+    // The job id comes from stdout. Colour codes in it would break every later lookup.
+    cmd.env("NO_COLOR", "1")
+        .env_remove("FORCE_COLOR")
+        .env_remove("CLICOLOR_FORCE");
     let out = cmd.stdin(Stdio::null()).output()?;
-    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let stdout = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+    let stderr = strip_ansi(&String::from_utf8_lossy(&out.stderr));
     if !out.status.success() {
         anyhow::bail!("claude --bg failed: {stderr} {stdout}");
     }
-    // "backgrounded · 7c5dcf5d · flaky-test-fix"
-    let job_id = stdout
-        .lines()
-        .find_map(|l| {
-            let l = l.trim();
-            if !l.starts_with("backgrounded") {
-                return None;
-            }
-            l.split(['·', ' '])
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .nth(1)
-                .map(|s| s.to_string())
-        })
+    let job_id = parse_job_id(&stdout)
         .ok_or_else(|| anyhow::anyhow!("could not read job id from: {stdout}"))?;
     Ok(BgStart {
         job_id,
         raw: stdout,
     })
+}
+
+/// The job id in the `claude --bg` output: "backgrounded · 7c5dcf5d · flaky-test-fix".
+fn parse_job_id(stdout: &str) -> Option<String> {
+    stdout.lines().find_map(|l| {
+        let l = l.trim();
+        if !l.starts_with("backgrounded") {
+            return None;
+        }
+        l.split(['·', ' '])
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .nth(1)
+            .map(|s| s.to_string())
+    })
+}
+
+/// Remove ANSI escape sequences: colours, cursor moves, OSC hyperlinks.
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // CSI: ESC [ <params> <final byte 0x40..=0x7e>
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC: ESC ] ... BEL or ESC \
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            // Two-byte escapes such as ESC ( B. A lone ESC at the end is dropped.
+            Some(_) | None => {}
+        }
+    }
+    out
 }
 
 pub fn stop_background(job_id: &str) -> anyhow::Result<()> {
@@ -173,5 +216,32 @@ pub fn slugify(s: &str) -> String {
         "kari-task".into()
     } else {
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_id_plain() {
+        assert_eq!(
+            parse_job_id("backgrounded · 7c5dcf5d · flaky-test-fix\n").as_deref(),
+            Some("7c5dcf5d")
+        );
+    }
+
+    #[test]
+    fn job_id_coloured() {
+        let raw =
+            "\x1b[2mbackgrounded\x1b[22m · \x1b[36m4f678c99\x1b[39m · kari-plan-view-overhaul\n";
+        assert_eq!(parse_job_id(&strip_ansi(raw)).as_deref(), Some("4f678c99"));
+    }
+
+    #[test]
+    fn strip_ansi_keeps_text() {
+        assert_eq!(strip_ansi("plain"), "plain");
+        assert_eq!(strip_ansi("\x1b]8;;https://x\x07link\x1b]8;;\x07"), "link");
+        assert_eq!(strip_ansi("a\x1b[1;31mb\x1b[0mc"), "abc");
     }
 }
