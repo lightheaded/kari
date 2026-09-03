@@ -68,7 +68,7 @@ Build the Android app. It needs JDK 17, the Android SDK with `platforms;android-
 ```
 bun tauri android init                                   # once; the project it writes is not tracked
 bun tauri android build --debug --apk --target aarch64   # a debug APK for adb install
-bun tauri android build --apk --target aarch64           # an unsigned release APK; CI signs it
+bun tauri android build --apk --target aarch64           # an unsigned release APK; the release workflow signs it
 ```
 
 ## Quota tracking
@@ -167,7 +167,7 @@ The desktop app does the same with "Also listen on" in Settings. Pick the VPN in
 
 The same app builds for Android and runs as a second hub. It joins the private network, talks to every node directly, and shows the board, a "Needs you" inbox, the plans, and a task form. It runs no Claude Code, so it has no node of its own.
 
-- Install the APK from the release page. Open Nodes, paste the pairing code from the desktop (Settings, Nodes, "Show pairing code"). The code holds the node tokens: show it at home and hide it when done. Fill in the address of a node the code does not know.
+- Install `kari-latest.apk` from the release page, or add `https://github.com/lightheaded/kari` to Obtainium: the asset name never carries the version and the signing key never changes, so an update installs over the previous build. Then open Nodes and paste the pairing code from the desktop (Settings, Nodes, "Show pairing code"). The code holds the node tokens: show it at home and hide it when done. Fill in the address of a node the code does not know.
 - "Needs you" lists every card in approval, decision, my turn, validate and waiting, with the actions on the card: an option of an open question, a reply, stop, done. A reply to a session that is alive in a terminal gets a warning first, because a second process writes into the same transcript.
 - Notifications arrive while the app is open. Android stops the app in the background after a while; a foreground service is a later step.
 

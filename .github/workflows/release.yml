@@ -63,8 +63,10 @@ jobs:
                 'A Linux host can run the headless node from `kari-node-<tag>-x86_64-unknown-linux-gnu.tar.gz`.',
                 'Start it with `kari-node serve` and add it under Settings, Nodes in the app.',
                 '',
-                'An Android phone installs `kari-<tag>-android-arm64.apk`. It reaches the nodes over a private network,',
-                'such as a VPN, and pairs with the code from Settings, Nodes on the desktop. See TOUR.md.',
+                'An Android phone installs `kari-latest.apk`. Add this repository to Obtainium: the asset name never',
+                'carries the version and the signing key never changes, so an update installs over the previous build.',
+                'The phone reaches the nodes over a private network, such as a VPN, and pairs with the code from',
+                'Settings, Nodes on the desktop. See TOUR.md.',
                 '',
                 'See the README for requirements and setup.',
               ].join('\n'),
@@ -136,19 +138,27 @@ jobs:
           gh release upload "${{ github.ref_name }}" "$name.tar.gz" --clobber
 
   android-apk:
-    # The phone app, signed with the release key from the repository secrets.
-    # Without the key the job builds and stops: an unsigned APK installs nowhere.
-    # To make the key once: keytool -genkeypair -v -keystore kari-release.jks
-    #   -alias kari -keyalg RSA -keysize 4096 -validity 10000
-    # Then set ANDROID_KEYSTORE (base64 of the file), ANDROID_KEYSTORE_PASSWORD,
-    # ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD as repository secrets.
+    # The phone app, signed with the release key from the repository secrets:
+    # KARI_KEYSTORE_BASE64 (the .jks, base64) and KARI_KEYSTORE_PASSWORD (one
+    # password for the store and the key, alias `kari`). The key lives outside
+    # this repository. Obtainium installs the APK, so the asset name never
+    # carries the version and the key never changes.
     needs: create-release
     runs-on: ubuntu-latest
-    env:
-      # A step cannot test a secret directly; this flag carries the answer.
-      HAS_KEY: ${{ secrets.ANDROID_KEYSTORE != '' }}
     steps:
       - uses: actions/checkout@v5
+
+      - name: Refuse to run without a keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KARI_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KARI_KEYSTORE_PASSWORD }}
+        run: |
+          # A silent skip is a green run that ships no phone app. The release
+          # stops here instead.
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "KARI_KEYSTORE_BASE64 and KARI_KEYSTORE_PASSWORD are required repository secrets."
+            exit 1
+          fi
 
       - uses: oven-sh/setup-bun@v2
 
@@ -180,26 +190,28 @@ jobs:
           bun tauri android init
           bun tauri android build --apk --target aarch64
           apk=$(ls src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk | head -1)
+          test -n "$apk"
           echo "apk=$apk" >> "$GITHUB_ENV"
 
       - name: Sign and upload
-        if: env.HAS_KEY == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_B64: ${{ secrets.KARI_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KARI_KEYSTORE_PASSWORD }}
         run: |
-          tools="$ANDROID_HOME/build-tools/34.0.0"
-          printf '%s' "$KEYSTORE_B64" | base64 -d > release.jks
-          name="kari-${{ github.ref_name }}-android-arm64.apk"
-          "$tools/zipalign" -p 4 "$apk" aligned.apk
-          "$tools/apksigner" sign --ks release.jks --ks-pass env:KEYSTORE_PASSWORD \
-            --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD --out "$name" aligned.apk
-          "$tools/apksigner" verify "$name"
-          rm -f release.jks
-          gh release upload "${{ github.ref_name }}" "$name" --clobber
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          test -s "$RUNNER_TEMP/release.jks"
+          "$tools/zipalign" -p -f 4 "$apk" aligned.apk
+          # The name never carries the version, so
+          # /releases/latest/download/kari-latest.apk is a permanent link.
+          "$tools/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias kari --key-pass env:KEYSTORE_PASSWORD --out kari-latest.apk aligned.apk
+          "$tools/apksigner" verify kari-latest.apk
+          rm -f "$RUNNER_TEMP/release.jks"
+          sha256sum kari-latest.apk > kari-latest.apk.sha256
+          gh release upload "${{ github.ref_name }}" kari-latest.apk kari-latest.apk.sha256 --clobber
 
   publish-release:
     needs: [create-release, build, node-binary, android-apk]
