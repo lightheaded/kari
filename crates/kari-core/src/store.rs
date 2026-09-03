@@ -122,6 +122,41 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Older builds stored the `claude --bg` job id with the terminal colour codes around it.
+/// Such an id matches no job, so the card and its session drift apart.
+fn repair_job_ids(conn: &Connection) -> anyhow::Result<()> {
+    let mut stmt =
+        conn.prepare("SELECT id, bg_job_id FROM cards WHERE instr(bg_job_id, char(27)) > 0")?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    for (id, raw) in rows {
+        let clean = crate::launcher::strip_ansi(&raw).trim().to_string();
+        conn.execute(
+            "UPDATE cards SET bg_job_id = ?2 WHERE id = ?1",
+            params![id, clean],
+        )?;
+    }
+    Ok(())
+}
+
+/// Older builds made a session card for every summarizer run. Those runs keep no
+/// transcript, so their cards can never show anything. Remove the ones nobody touched.
+fn prune_internal_cards(conn: &Connection) -> anyhow::Result<()> {
+    let internal = crate::paths::internal_cwd_prefix();
+    let n = conn.execute(
+        "DELETE FROM cards WHERE kind = 'session' AND notes IS NULL AND tags = '[]'
+           AND (project_cwd = ?1 OR project_cwd LIKE ?1 || '/%')
+           AND session_id NOT IN (SELECT session_id FROM transcripts)",
+        params![internal],
+    )?;
+    if n > 0 {
+        tracing::info!("removed {n} internal session card(s)");
+    }
+    Ok(())
+}
+
 fn parse_ts(s: Option<String>) -> Option<DateTime<Utc>> {
     s.and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
         .map(|d| d.with_timezone(&Utc))
@@ -136,6 +171,8 @@ impl Store {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
+        repair_job_ids(&conn)?;
+        prune_internal_cards(&conn)?;
         let store = Store { conn };
         if store.load_columns()?.is_empty() {
             store.save_columns(&Column::defaults())?;
@@ -529,6 +566,19 @@ impl Store {
             params![Utc::now().timestamp() - 30 * 86400],
         )?;
         Ok(())
+    }
+
+    /// The card that ran a job, from the run log. Finds an older run after the
+    /// card moved on to a newer job.
+    pub fn card_id_for_job(&self, job_id: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT card_id FROM job_log WHERE job_id = ?1 AND card_id IS NOT NULL ORDER BY at DESC LIMIT 1",
+                params![job_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?)
     }
 
     pub fn job_log(&self, card_id: &str, limit: usize) -> anyhow::Result<Vec<JobLogEntry>> {

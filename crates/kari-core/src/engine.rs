@@ -225,6 +225,19 @@ impl Engine {
         cwd: Option<&str>,
     ) -> anyhow::Result<Option<Card>> {
         let store = self.store.lock().unwrap();
+        Self::ensure_session_card_in(&store, session_id, cwd)
+    }
+
+    /// The caller holds the store lock.
+    fn ensure_session_card_in(
+        store: &Store,
+        session_id: &str,
+        cwd: Option<&str>,
+    ) -> anyhow::Result<Option<Card>> {
+        // The summarizer and other internal runs are kari's own work, not board items.
+        if cwd.is_some_and(paths::is_internal_cwd) {
+            return Ok(None);
+        }
         if let Some(mut existing) = store.card_by_session(session_id)? {
             if existing.project_cwd.is_none() && cwd.is_some() {
                 existing.project_cwd = cwd.map(|s| s.to_string());
@@ -289,14 +302,84 @@ impl Engine {
             }
             Err(e) => warn!("claude agents: {e}"),
         }
-        // Link jobs to cards by session id when kari did not start them.
         let jobs: Vec<BgJob> = self.snap.read().unwrap().jobs.clone();
-        for j in jobs {
-            if let (Some(sid), Some(_id)) = (&j.session_id, &j.id) {
-                let _ = self.ensure_session_card(sid, j.cwd.as_deref());
-            }
+        if let Err(e) = self.link_jobs(&jobs) {
+            warn!("link jobs: {e}");
         }
         self.track_job_states();
+    }
+
+    /// Give every background job one card.
+    /// A job that kari started belongs to the card that holds its id, or that ran it
+    /// earlier by the run log. A card with no session adopts the job's session. A
+    /// session card made for the same session before the link existed merges into
+    /// the owner, so the board shows the task once. An older run of a card that moved
+    /// on to a new job stays in the run log only.
+    /// A job that kari did not start gets a session card of its own.
+    fn link_jobs(&self, jobs: &[BgJob]) -> anyhow::Result<()> {
+        let store = self.store.lock().unwrap();
+        let cards = store.list_cards()?;
+        let mut removed: HashSet<String> = HashSet::new();
+        for j in jobs {
+            let (Some(sid), Some(jid)) = (j.session_id.as_deref(), j.id.as_deref()) else {
+                continue;
+            };
+            let by_id = cards
+                .iter()
+                .find(|c| !removed.contains(&c.id) && c.bg_job_id.as_deref() == Some(jid));
+            let owner = match by_id {
+                Some(c) => Some(c),
+                None => store.card_id_for_job(jid)?.and_then(|id| {
+                    cards
+                        .iter()
+                        .find(|c| c.id == id && !removed.contains(&c.id))
+                }),
+            };
+            let Some(owner) = owner else {
+                Self::ensure_session_card_in(&store, sid, j.cwd.as_deref())?;
+                continue;
+            };
+            let mut owner = owner.clone();
+            let mut changed = false;
+            if owner.session_id.is_none() {
+                owner.session_id = Some(sid.to_string());
+                changed = true;
+                info!("card {} adopts session {}", short(&owner.id), short(sid));
+            }
+            let twins: Vec<&Card> = cards
+                .iter()
+                .filter(|c| {
+                    c.id != owner.id
+                        && c.kind == CardKind::Session
+                        && c.session_id.as_deref() == Some(sid)
+                        && !removed.contains(&c.id)
+                })
+                .collect();
+            for twin in twins {
+                if owner.notes.is_none() && twin.notes.is_some() {
+                    owner.notes = twin.notes.clone();
+                    changed = true;
+                }
+                for t in &twin.tags {
+                    if !owner.tags.contains(t) {
+                        owner.tags.push(t.clone());
+                        changed = true;
+                    }
+                }
+                store.delete_card(&twin.id)?;
+                removed.insert(twin.id.clone());
+                info!(
+                    "session card {} merged into card {}",
+                    short(&twin.id),
+                    short(&owner.id)
+                );
+            }
+            if changed {
+                owner.updated_at = Utc::now();
+                store.upsert_card(&owner)?;
+            }
+        }
+        Ok(())
     }
 
     /// Write one run-log line per job state change and remember the state on the card.
@@ -1157,12 +1240,15 @@ impl Engine {
             .unwrap_or(settings.default_permission_mode.clone());
         let model = Self::run_model(card, &settings);
         let name = launcher::slugify(&cv.title);
+        // A job that failed before its first turn leaves a session id with no transcript.
+        // Such a session cannot resume, so the run starts fresh.
+        let resume = card.session_id.as_deref().filter(|_| cv.session.is_some());
         let started = launcher::start_background(
             &cwd,
             &prompt,
             Some(&name),
             &mode,
-            card.session_id.as_deref(),
+            resume,
             model.as_deref(),
         )?;
         let mut c = card.clone();
