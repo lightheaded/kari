@@ -23,6 +23,9 @@ export const api = {
   addTask: (task: NewTask) => invoke<Card>("add_task", { task }),
   patchCard: (cardId: string, patch: CardPatch) => invoke<Card>("patch_card", { cardId, patch }),
   deleteCard: (cardId: string) => invoke<void>("delete_card", { cardId }),
+  reorderCards: (cardIds: string[]) => invoke<void>("reorder_cards", { cardIds }),
+  setDirty: (dirty: boolean) => (inTauri ? invoke<void>("set_dirty", { dirty }) : Promise.resolve()),
+  quitNow: () => invoke<void>("quit_now"),
   columns: () => invoke<Column[]>("get_columns"),
   setColumns: (columns: Column[]) => invoke<void>("set_columns", { columns }),
   resetColumns: () => invoke<void>("reset_columns"),
@@ -69,6 +72,15 @@ export function onBoardChanged(cb: () => void) {
 export function onNotice(cb: (n: { title: string; body: string; card_id: string | null }) => void) {
   if (!inTauri) return () => {};
   const p = listen<{ title: string; body: string; card_id: string | null }>("notice", (e) => cb(e.payload));
+  return () => {
+    p.then((un) => un());
+  };
+}
+
+/** The tray or Cmd+Q asked to quit while a form holds unsaved input. */
+export function onConfirmQuit(cb: () => void) {
+  if (!inTauri) return () => {};
+  const p = listen("confirm_quit", () => cb());
   return () => {
     p.then((un) => un());
   };

@@ -85,11 +85,12 @@ export function statePriority(s: DerivedState): number {
   )[s];
 }
 
+/** Manual order first (a reorder writes priorities), then the urgency of the state, then recency. */
 export function sortCards(a: CardView, b: CardView): number {
+  if (a.card.priority !== b.card.priority) return b.card.priority - a.card.priority;
   const pa = statePriority(a.state) + (a.live ? 5 : 0);
   const pb = statePriority(b.state) + (b.live ? 5 : 0);
   if (pa !== pb) return pb - pa;
-  if (a.card.priority !== b.card.priority) return b.card.priority - a.card.priority;
   const ta = a.last_activity_at ? new Date(a.last_activity_at).getTime() : 0;
   const tb = b.last_activity_at ? new Date(b.last_activity_at).getTime() : 0;
   return tb - ta;
@@ -98,3 +99,6 @@ export function sortCards(a: CardView, b: CardView): number {
 export function shortId(id: string | null | undefined): string {
   return id ? id.slice(0, 8) : "";
 }
+
+/** macOS WebKit autocorrects text fields unless told otherwise. Spread this on every free-text input. */
+export const noAutoCorrect = { autoCorrect: "off", autoCapitalize: "off" } as const;

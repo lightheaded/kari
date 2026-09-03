@@ -1,9 +1,44 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import type { CloseGuard } from "../dirty";
+import { useCloseGuard } from "../dirty";
 import type { Column, DerivedState, NewTask, Settings } from "../types";
-import { ALL_STATES, RUN_MODELS, STATE_LABEL } from "../types";
+import { ALL_STATES, RUN_MODELS, STATE_HELP, STATE_LABEL } from "../types";
+import { noAutoCorrect } from "../util";
 
-function Modal({ title, children, footer, onClose }: { title: string; children: React.ReactNode; footer?: React.ReactNode; onClose: () => void }) {
+/** The bar that a first Escape shows on a form with unsaved input. */
+export function UnsavedBar({ guard, text, extra }: { guard: CloseGuard; text: string; extra?: React.ReactNode }) {
+  if (!guard.asking) return null;
+  return (
+    <div className="unsaved" role="alert">
+      <span>{text} Press Escape again to discard.</span>
+      <div className="spacer" />
+      {extra}
+      <button className="btn sm" onClick={guard.keep} autoFocus>
+        Keep editing
+      </button>
+      <button className="btn danger sm" onClick={guard.discard}>
+        Discard
+      </button>
+    </div>
+  );
+}
+
+function Modal({
+  title,
+  children,
+  footer,
+  onClose,
+  guard,
+  unsavedText,
+}: {
+  title: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  onClose: () => void;
+  guard?: CloseGuard;
+  unsavedText?: string;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -21,80 +56,271 @@ function Modal({ title, children, footer, onClose }: { title: string; children: 
             ✕
           </button>
         </header>
-        <div className="body">{children}</div>
+        {guard && <UnsavedBar guard={guard} text={unsavedText ?? "This form holds unsaved input."} />}
+        <div className="body" onInput={guard?.asking ? guard.keep : undefined}>
+          {children}
+        </div>
         {footer && <footer>{footer}</footer>}
       </div>
     </div>
   );
 }
 
-export function AddTaskModal({ projects, onClose, onSubmit }: { projects: [string, string][]; onClose: () => void; onSubmit: (t: NewTask) => void }) {
-  const [title, setTitle] = useState("");
-  const [cwd, setCwd] = useState(projects[0]?.[0] ?? "");
-  const [custom, setCustom] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [autoRun, setAutoRun] = useState(false);
-  const [priority, setPriority] = useState(0);
-  const [notes, setNotes] = useState("");
-  const [model, setModel] = useState("");
-  const dir = cwd === "__custom" ? custom : cwd;
+// ------------------------------------------------------------------ project combobox
+
+/**
+ * A text field with a filtered list under it. The value is the directory. Typing
+ * filters known projects by name or path. A path that is not in the list is
+ * used as typed, so "Other path" needs no extra field.
+ */
+export function ProjectCombo({
+  projects,
+  value,
+  onChange,
+  autoFocus,
+}: {
+  projects: [string, string][];
+  value: string;
+  onChange: (cwd: string) => void;
+  autoFocus?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const q = value.trim().toLowerCase();
+  const matches = useMemo(() => {
+    const exact = projects.some(([c]) => c === value);
+    const list = exact || !q ? projects : projects.filter(([c, n]) => n.toLowerCase().includes(q) || c.toLowerCase().includes(q));
+    return list.slice(0, 12);
+  }, [projects, q, value]);
+  const known = projects.find(([c]) => c === value);
+  const listOpen = open && matches.length > 0;
+  const pick = (cwd: string) => {
+    onChange(cwd);
+    setOpen(false);
+  };
+  return (
+    <div className="combo">
+      <input
+        {...noAutoCorrect}
+        autoFocus={autoFocus}
+        value={value}
+        placeholder="Type to search projects, or paste a path"
+        role="combobox"
+        aria-expanded={listOpen}
+        aria-autocomplete="list"
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+          setHi(0);
+        }}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onKeyDown={(e) => {
+          if (!listOpen) {
+            if (e.key === "ArrowDown") setOpen(true);
+            return;
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHi((h) => Math.min(matches.length - 1, h + 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHi((h) => Math.max(0, h - 1));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            pick(matches[hi][0]);
+          } else if (e.key === "Escape") {
+            // Close the list only. The modal stays open.
+            e.preventDefault();
+            e.stopPropagation();
+            setOpen(false);
+          }
+        }}
+      />
+      <div className="hint">
+        {known
+          ? known[1]
+          : matches.length > 0 && q
+            ? `${matches.length} ${matches.length === 1 ? "project matches" : "projects match"}. Enter picks the highlighted one.`
+            : value.startsWith("/")
+              ? "A new path. kari adds it as a project."
+              : value
+                ? "No known project matches. Paste an absolute path."
+                : " "}
+      </div>
+      {listOpen && (
+        <ul className="combo-list" role="listbox">
+          {matches.map(([c, n], i) => (
+            <li
+              key={c}
+              role="option"
+              aria-selected={i === hi}
+              className={i === hi ? "hi" : ""}
+              onMouseEnter={() => setHi(i)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(c);
+              }}
+            >
+              <b>{n}</b>
+              <span>{c}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ new task
+
+interface Draft {
+  title: string;
+  cwd: string;
+  prompt: string;
+  autoRun: boolean;
+  priority: number;
+  notes: string;
+  model: string;
+}
+
+const DRAFT_KEY = "kari.newTaskDraft";
+
+function emptyDraft(cwd: string): Draft {
+  return { title: "", cwd, prompt: "", autoRun: false, priority: 0, notes: "", model: "" };
+}
+
+function draftDirty(d: Draft): boolean {
+  return !!(d.title.trim() || d.prompt.trim() || d.notes.trim() || d.autoRun || d.priority !== 0 || d.model);
+}
+
+function loadDraft(): Draft | null {
+  try {
+    const t = localStorage.getItem(DRAFT_KEY);
+    if (!t) return null;
+    const d = JSON.parse(t) as Partial<Draft>;
+    if (typeof d.title !== "string") return null;
+    return { ...emptyDraft(""), ...d };
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(d: Draft | null) {
+  try {
+    if (d) localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // Storage can be off. The form still works, it just forgets on a restart.
+  }
+}
+
+export function AddTaskModal({
+  projects,
+  onClose,
+  onSubmit,
+}: {
+  projects: [string, string][];
+  onClose: () => void;
+  /** Resolves true when the task was added. The draft is then cleared. */
+  onSubmit: (t: NewTask) => Promise<boolean>;
+}) {
+  // The draft lives in localStorage while the form is open, so a reload or a
+  // restart of the app (tauri dev rebuilds on every Rust save) loses nothing.
+  const [restored] = useState(() => {
+    const d = loadDraft();
+    return d && draftDirty(d) ? d : null;
+  });
+  const [d, setD] = useState<Draft>(() => restored ?? emptyDraft(projects[0]?.[0] ?? ""));
+  const [showRestored, setShowRestored] = useState(!!restored);
+  const dirty = draftDirty(d);
+  useEffect(() => {
+    saveDraft(dirty ? d : null);
+  }, [d, dirty]);
+
+  const guard = useCloseGuard(dirty, () => {
+    saveDraft(null);
+    onClose();
+  });
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!d.title.trim() || busy) return;
+    setBusy(true);
+    const ok = await onSubmit({
+      title: d.title.trim(),
+      project_cwd: d.cwd.trim() || null,
+      run_prompt: d.prompt.trim() || null,
+      auto_run: d.autoRun,
+      priority: d.priority,
+      notes: d.notes.trim() || null,
+      model: d.model || null,
+    });
+    setBusy(false);
+    if (ok) saveDraft(null);
+  };
+
   return (
     <Modal
       title="New task"
-      onClose={onClose}
+      onClose={guard.requestClose}
+      guard={guard}
+      unsavedText="This task is not saved yet."
       footer={
         <>
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={guard.requestClose}>
             Cancel
           </button>
-          <button
-            className="btn primary"
-            disabled={!title.trim()}
-            onClick={() =>
-              onSubmit({
-                title: title.trim(),
-                project_cwd: dir || null,
-                run_prompt: prompt.trim() || null,
-                auto_run: autoRun,
-                priority,
-                notes: notes.trim() || null,
-                model: model || null,
-              })
-            }
-          >
+          <button className="btn primary" disabled={!d.title.trim() || busy} onClick={submit}>
             Add
           </button>
         </>
       }
     >
+      {showRestored && (
+        <div className="hint restored">
+          Restored the task you typed before the app restarted.
+          <button
+            className="linkish"
+            onClick={() => {
+              setD(emptyDraft(projects[0]?.[0] ?? ""));
+              setShowRestored(false);
+            }}
+          >
+            Start fresh
+          </button>
+        </div>
+      )}
       <div className="field">
         <label>Title</label>
-        <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs to happen" />
+        <input
+          {...noAutoCorrect}
+          autoFocus
+          value={d.title}
+          onChange={(e) => set("title", e.target.value)}
+          placeholder="What needs to happen"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+          }}
+        />
       </div>
       <div className="field">
         <label>Project directory</label>
-        <select value={cwd} onChange={(e) => setCwd(e.target.value)}>
-          {projects.map(([c, n]) => (
-            <option key={c} value={c}>
-              {n} — {c}
-            </option>
-          ))}
-          <option value="__custom">Other path…</option>
-        </select>
-        {cwd === "__custom" && <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="/absolute/path" />}
+        <ProjectCombo projects={projects} value={d.cwd} onChange={(v) => set("cwd", v)} />
       </div>
       <div className="field">
         <label>Run prompt (what Claude gets when the task starts)</label>
-        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Leave empty to use the title" />
+        <textarea {...noAutoCorrect} value={d.prompt} onChange={(e) => set("prompt", e.target.value)} placeholder="Leave empty to use the title" />
       </div>
       <div className="grid2">
         <div className="field">
           <label>Priority</label>
-          <input type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
+          <input type="number" value={d.priority} onChange={(e) => set("priority", Number(e.target.value))} title="Higher runs first. A drag inside a column also sets this." />
         </div>
         <div className="field">
           <label>Model (optional)</label>
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
+          <select value={d.model} onChange={(e) => set("model", e.target.value)}>
             {RUN_MODELS.map((m) => (
               <option key={m.value} value={m.value}>
                 {m.label}
@@ -104,21 +330,27 @@ export function AddTaskModal({ projects, onClose, onSubmit }: { projects: [strin
         </div>
       </div>
       <label className="field inline">
-        <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} />
+        <input type="checkbox" checked={d.autoRun} onChange={(e) => set("autoRun", e.target.checked)} />
         <span>May run unattended</span>
       </label>
       <div className="field">
         <label>Notes</label>
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <textarea {...noAutoCorrect} value={d.notes} onChange={(e) => set("notes", e.target.value)} />
       </div>
+      <div className="hint">Cmd+Enter adds the task. The draft is kept until you add it or discard it.</div>
     </Modal>
   );
 }
 
+// ------------------------------------------------------------------ columns
+
 const COLORS = ["neutral", "green", "amber", "rust", "slate"];
 
 export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: Column[]; onClose: () => void; onSave: (c: Column[]) => void; onReset: () => void }) {
-  const [cols, setCols] = useState<Column[]>(() => [...columns].sort((a, b) => a.order - b.order).map((c) => ({ ...c })));
+  const initial = useMemo(() => [...columns].sort((a, b) => a.order - b.order).map((c) => ({ ...c })), [columns]);
+  const [cols, setCols] = useState<Column[]>(initial);
+  const dirty = JSON.stringify(cols) !== JSON.stringify(initial);
+  const guard = useCloseGuard(dirty, onClose);
   const update = (i: number, patch: Partial<Column>) => setCols((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const move = (i: number, d: number) =>
     setCols((cs) => {
@@ -134,14 +366,16 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
   return (
     <Modal
       title="Columns"
-      onClose={onClose}
+      onClose={guard.requestClose}
+      guard={guard}
+      unsavedText="The column changes are not saved."
       footer={
         <>
           <button className="btn ghost" onClick={onReset}>
             Reset to defaults
           </button>
           <div className="spacer" />
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={guard.requestClose}>
             Cancel
           </button>
           <button className="btn primary" onClick={() => onSave(cols.map((c, k) => ({ ...c, order: k })))}>
@@ -152,7 +386,7 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
     >
       <div className="hint">
         Each column accepts a set of derived states. A state that no visible column accepts falls back to the column that accepts Unknown. Stale cards are hidden unless a column
-        accepts Stale.
+        accepts Stale. Hover a state for what it means.
       </div>
       {unassigned.length > 0 && <div className="hint" style={{ color: "var(--amber)" }}>Not shown anywhere: {unassigned.map((s) => STATE_LABEL[s]).join(", ")}</div>}
       {cols.map((c, i) => (
@@ -165,7 +399,7 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
               ↓
             </button>
           </div>
-          <input type="text" value={c.name} onChange={(e) => update(i, { name: e.target.value })} />
+          <input {...noAutoCorrect} type="text" value={c.name} onChange={(e) => update(i, { name: e.target.value })} />
           <input type="number" placeholder="WIP" value={c.wip_limit ?? ""} onChange={(e) => update(i, { wip_limit: e.target.value === "" ? null : Number(e.target.value) })} title="WIP limit" />
           <select value={c.color ?? "neutral"} onChange={(e) => update(i, { color: e.target.value })}>
             {COLORS.map((k) => (
@@ -184,7 +418,7 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
           </div>
           <div className="accepts">
             {ALL_STATES.map((s) => (
-              <button key={s} className={`toggle ${c.accepts.includes(s) ? "on" : ""}`} onClick={() => toggleState(i, s)}>
+              <button key={s} className={`toggle ${c.accepts.includes(s) ? "on" : ""}`} onClick={() => toggleState(i, s)} title={STATE_HELP[s]}>
                 {STATE_LABEL[s]}
               </button>
             ))}
@@ -202,6 +436,8 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
     </Modal>
   );
 }
+
+// ------------------------------------------------------------------ settings
 
 export function SettingsModal({
   settings,
@@ -222,6 +458,8 @@ export function SettingsModal({
 }) {
   const [s, setS] = useState<Settings>({ ...settings });
   const [paths, setPaths] = useState<Record<string, string> | null>(null);
+  const dirty = JSON.stringify(s) !== JSON.stringify(settings);
+  const guard = useCloseGuard(dirty, onClose);
   useEffect(() => {
     api.paths().then(setPaths).catch(() => {});
   }, []);
@@ -229,14 +467,16 @@ export function SettingsModal({
   return (
     <Modal
       title="Settings"
-      onClose={onClose}
+      onClose={guard.requestClose}
+      guard={guard}
+      unsavedText="The settings are not saved."
       footer={
         <>
           <button className="btn danger" onClick={onStopAll} title="Stop every background job kari started">
             Stop all kari jobs
           </button>
           <div className="spacer" />
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={guard.requestClose}>
             Cancel
           </button>
           <button className="btn primary" onClick={() => onSave(s)}>
@@ -323,7 +563,7 @@ export function SettingsModal({
           </label>
           <div className="field">
             <label>Model</label>
-            <input value={s.summary_model} onChange={(e) => setS({ ...s, summary_model: e.target.value })} />
+            <input {...noAutoCorrect} value={s.summary_model} onChange={(e) => setS({ ...s, summary_model: e.target.value })} />
           </div>
           <div className="field">
             <label>Max calls per hour</label>
@@ -408,15 +648,17 @@ export function SettingsModal({
       <div className="section">
         <h5>Quota tracking</h5>
         <div className="hint">
-          kari reads the 5-hour and 7-day windows from the Claude Code status line. Run the installer once. It wraps your current status line command and keeps a backup.
+          kari reads the 5-hour and 7-day windows from the Claude Code status line. Run the installer once. It wraps your current status line command and keeps a backup. The
+          status line only refreshes while a session runs. Without one, the sample ages and the quota bar shows "stale".
         </div>
         <pre className="code">scripts/install-statusline.sh</pre>
         <label className="field inline" style={{ marginTop: 8 }}>
           <input type="checkbox" checked={s.usage_endpoint_enabled} onChange={(e) => setS({ ...s, usage_endpoint_enabled: e.target.checked })} />
-          <span>Ask the usage endpoint when no session refreshed the status line for 5 minutes</span>
+          <span>Refresh the quota by yourself when no session updated it for 5 minutes</span>
         </label>
         <div className="hint">
-          The endpoint is undocumented. kari reads the Claude Code login token from the keychain and asks at most once every 3 minutes. macOS shows a keychain prompt the first time.
+          This asks the usage endpoint of the Claude account, at most once every 3 minutes, also when no process runs. The endpoint is undocumented. kari reads the Claude Code
+          login token from the keychain, and macOS shows a keychain prompt the first time. A click on "stale" in the quota bar asks once, with this setting on or off.
         </div>
         {paths && (
           <div className="hint">

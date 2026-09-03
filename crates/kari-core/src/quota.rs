@@ -203,10 +203,15 @@ fn oauth_token() -> Option<String> {
 /// Ask the OAuth usage endpoint. Rate limited to one call per 3 minutes.
 /// The token goes to curl through stdin, so it never appears in the process list.
 pub fn fetch_usage() -> anyhow::Result<QuotaSample> {
+    fetch_usage_with(false)
+}
+
+/// Ask the usage endpoint. With `force`, a click by the user skips the rate limit.
+pub fn fetch_usage_with(force: bool) -> anyhow::Result<QuotaSample> {
     {
         let mut last = LAST_FETCH.lock().unwrap();
         if let Some(t) = *last {
-            if t.elapsed().as_secs() < ENDPOINT_FLOOR_SECS {
+            if !force && t.elapsed().as_secs() < ENDPOINT_FLOOR_SECS {
                 anyhow::bail!("usage endpoint asked less than {ENDPOINT_FLOOR_SECS}s ago");
             }
         }

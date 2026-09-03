@@ -1041,6 +1041,44 @@ impl Engine {
         Ok(card)
     }
 
+    /// Store a manual order for the cards of one column. The first id gets the
+    /// highest priority. Priority is also what the planner sorts by, so the top
+    /// of the backlog runs first.
+    pub fn reorder_cards(&self, ids: &[String]) -> anyhow::Result<()> {
+        let now = Utc::now();
+        {
+            let store = self.store.lock().unwrap();
+            let n = ids.len() as i32;
+            for (i, id) in ids.iter().enumerate() {
+                let Some(mut c) = store.get_card(id)? else { continue };
+                let want = n - i as i32;
+                if c.priority == want {
+                    continue;
+                }
+                c.priority = want;
+                c.updated_at = now;
+                store.upsert_card(&c)?;
+            }
+        }
+        self.emit_changed();
+        Ok(())
+    }
+
+    /// The user clicked the stale mark: ask the usage endpoint now, keep the
+    /// sample, and refresh the board.
+    pub fn fetch_usage_now(self: &Arc<Self>) -> anyhow::Result<QuotaSample> {
+        let s = quota::fetch_usage_with(true)?;
+        let _ = self.store.lock().unwrap().insert_quota_sample(&s);
+        {
+            let mut snap = self.snap.write().unwrap();
+            if snap.quota.as_ref().is_none_or(|q| s.at >= q.at) {
+                snap.quota = Some(s.clone());
+            }
+        }
+        self.emit_changed();
+        Ok(s)
+    }
+
     pub fn patch_card(&self, id: &str, p: CardPatch) -> anyhow::Result<Card> {
         let store = self.store.lock().unwrap();
         let Some(mut c) = store.get_card(id)? else {

@@ -48,6 +48,21 @@ export const STATE_LABEL: Record<DerivedState, string> = {
   unknown: "Unknown",
 };
 
+/** One sentence per state: what the signal means and what the user does about it. */
+export const STATE_HELP: Record<DerivedState, string> = {
+  backlog: "A task without a session. Nothing runs. Add a run prompt and mark it \"May run unattended\" to make it eligible for a plan.",
+  ready: "A backlog task with a run prompt that may run unattended. The planner picks from here when quota is left over.",
+  working: "Claude is busy on this session right now, in a terminal or as a background job.",
+  my_turn: "The session is alive and idle. Claude answered, and the next prompt is yours.",
+  needs_decision: "Claude asked a question with options and waits for your answer.",
+  needs_approval: "Claude waits for a permission, a plan approval, or a dialog. Nothing moves until you approve.",
+  waiting_on_others: "Someone else must act: a review, a reply, a deploy. Placed by you or judged from the summary.",
+  validate: "The work looks finished but is not verified: a PR is open, a background job finished, or the summary judged it complete.",
+  done: "Finished. The PR merged, you marked it done, or the session was judged done and went quiet.",
+  stale: "No process and no activity for a long time, not judged done. Hidden unless a column accepts Stale.",
+  unknown: "kari could not derive a state from the signals it has.",
+};
+
 export interface Column {
   id: string;
   name: string;

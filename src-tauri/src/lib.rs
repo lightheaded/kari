@@ -16,6 +16,9 @@ use tauri_plugin_notification::NotificationExt;
 
 struct AppState {
     engine: Arc<Engine>,
+    /// The window holds unsaved input (a task draft, an edited card). A quit
+    /// from the tray or from Cmd+Q asks first.
+    dirty: std::sync::atomic::AtomicBool,
 }
 
 /// The tray keeps its own small state: the stop item, and the arm time that
@@ -63,6 +66,25 @@ fn patch_card(state: State<'_, AppState>, card_id: String, patch: CardPatch) -> 
 #[tauri::command]
 fn delete_card(state: State<'_, AppState>, card_id: String) -> R<()> {
     state.engine.delete_card(&card_id).map_err(err)
+}
+
+#[tauri::command]
+fn reorder_cards(state: State<'_, AppState>, card_ids: Vec<String>) -> R<()> {
+    state.engine.reorder_cards(&card_ids).map_err(err)
+}
+
+/// The frontend reports whether a form holds unsaved input.
+#[tauri::command]
+fn set_dirty(state: State<'_, AppState>, dirty: bool) {
+    state
+        .dirty
+        .store(dirty, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The user confirmed the quit in the window.
+#[tauri::command]
+fn quit_now(app: AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -214,8 +236,8 @@ fn get_calibration(state: State<'_, AppState>) -> Calibration {
 /// Ask the OAuth usage endpoint once, outside the stale check. For a manual test.
 #[tauri::command]
 async fn fetch_usage_now(state: State<'_, AppState>) -> R<QuotaSample> {
-    let _ = Arc::clone(&state.engine);
-    tauri::async_runtime::spawn_blocking(|| kari_core::quota::fetch_usage().map_err(err))
+    let e = Arc::clone(&state.engine);
+    tauri::async_runtime::spawn_blocking(move || e.fetch_usage_now().map_err(err))
         .await
         .map_err(err)?
 }
@@ -321,6 +343,21 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// Quit, unless the window holds unsaved input. Then show the window and let
+/// the frontend ask. It calls `quit_now` when the user confirms.
+fn request_quit(app: &AppHandle) -> bool {
+    let dirty = app
+        .try_state::<AppState>()
+        .is_some_and(|s| s.dirty.load(std::sync::atomic::Ordering::Relaxed));
+    if dirty {
+        show_main(app);
+        let _ = app.emit("confirm_quit", ());
+        return false;
+    }
+    app.exit(0);
+    true
+}
+
 /// Show the counts that matter on the tray icon.
 fn update_tray(app: &AppHandle, engine: &Arc<Engine>) {
     let board = engine.board();
@@ -422,6 +459,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             engine: Arc::clone(&engine),
+            dirty: std::sync::atomic::AtomicBool::new(false),
         })
         .setup(move |app| {
             forward_events(app.handle().clone(), Arc::clone(&engine));
@@ -485,7 +523,9 @@ pub fn run() {
                                 .set_text(format!("Click again to stop {n} job(s)"));
                         }
                     }
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        request_quit(app);
+                    }
                     _ => {}
                 })
                 .build(app)?;
@@ -505,6 +545,9 @@ pub fn run() {
             add_task,
             patch_card,
             delete_card,
+            reorder_cards,
+            set_dirty,
+            quit_now,
             get_columns,
             set_columns,
             reset_columns,
@@ -532,6 +575,16 @@ pub fn run() {
             proposal_history,
             kari_paths
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Cmd+Q and the app menu ask for an exit without a code. With unsaved
+            // input, kari keeps running and asks in the window. `quit_now` exits
+            // with a code, and that passes.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                if code.is_none() && !request_quit(app) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

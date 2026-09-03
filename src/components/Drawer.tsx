@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { useCloseGuard } from "../dirty";
 import type { CardView, Column, JobLogEntry, Settings } from "../types";
-import { RUN_MODELS, STATE_LABEL } from "../types";
-import { clock, fmtM, fmtPct, relTime, shortId, weighted } from "../util";
+import { RUN_MODELS, STATE_HELP, STATE_LABEL } from "../types";
+import { clock, fmtM, fmtPct, noAutoCorrect, relTime, shortId, weighted } from "../util";
+import { UnsavedBar } from "./Modals";
 
 interface Props {
   view: CardView;
@@ -48,14 +50,6 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
     };
   }, [c.id, c.updated_at]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const dirty =
     title !== (c.title ?? "") ||
     prompt !== (c.run_prompt ?? "") ||
@@ -64,6 +58,17 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
     autoRun !== c.auto_run ||
     mode !== (c.permission_mode ?? "") ||
     model !== (c.model ?? "");
+
+  // Escape and the close button ask first while the card form holds unsaved edits.
+  const guard = useCloseGuard(dirty, onClose);
+  const { requestClose } = guard;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [requestClose]);
 
   const save = () =>
     onAction(
@@ -86,12 +91,12 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
 
   return (
     <aside className="drawer">
-      <button className="btn ghost sm close" onClick={onClose} aria-label="Close">
+      <button className="btn ghost sm close" onClick={requestClose} aria-label="Close">
         ✕
       </button>
       <header>
         <h2>{view.title}</h2>
-        <div className="hint">
+        <div className="hint" title={STATE_HELP[view.state]}>
           {STATE_LABEL[view.state]} · {view.reason}
           {view.locked ? " · manual placement" : ""}
         </div>
@@ -133,6 +138,15 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
           )}
         </div>
       </header>
+      <UnsavedBar
+        guard={guard}
+        text="This card has unsaved edits."
+        extra={
+          <button className="btn primary sm" onClick={() => save().then(onClose)}>
+            Save and close
+          </button>
+        }
+      />
       <div className="body">
         {q.length > 0 && (
           <div className="section">
@@ -318,11 +332,11 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div className="field">
               <label>Title override</label>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={view.title} />
+              <input {...noAutoCorrect} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={view.title} />
             </div>
             <div className="field">
               <label>{c.session_id ? "Continue prompt (used by Start in bg and the scheduler)" : "Run prompt"}</label>
-              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={c.session_id ? "Continue with the next step. Stop when done." : "What Claude must do"} />
+              <textarea {...noAutoCorrect} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={c.session_id ? "Continue with the next step. Stop when done." : "What Claude must do"} />
             </div>
             <div className="grid2">
               <div className="field">
@@ -356,7 +370,7 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
             </label>
             <div className="field">
               <label>Notes</label>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <textarea {...noAutoCorrect} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn primary sm" disabled={!dirty} onClick={save}>
@@ -370,7 +384,7 @@ export function Drawer({ view, columns, settings, onClose, onAction }: Props) {
           <div className="section">
             <h5>One-off background prompt</h5>
             <div className="field">
-              <textarea value={startPrompt} onChange={(e) => setStartPrompt(e.target.value)} placeholder="Optional prompt for the next Start / Continue in bg. Empty uses the card prompt." />
+              <textarea {...noAutoCorrect} value={startPrompt} onChange={(e) => setStartPrompt(e.target.value)} placeholder="Optional prompt for the next Start / Continue in bg. Empty uses the card prompt." />
             </div>
           </div>
         )}
