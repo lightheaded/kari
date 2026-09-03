@@ -57,7 +57,9 @@ impl Tunnel {
     /// health to know when it is.
     pub fn open(ssh_host: &str, remote_port: u16) -> anyhow::Result<Tunnel> {
         if cfg!(target_os = "android") {
-            anyhow::bail!("SSH forwards are not available on this device; give the node an address instead");
+            anyhow::bail!(
+                "SSH forwards are not available on this device; give the node an address instead"
+            );
         }
         let local_port = free_port()?;
         let child = ssh_command()

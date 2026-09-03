@@ -20,8 +20,8 @@ use axum::{
     Json, Router,
 };
 use futures_util::stream::{Stream, StreamExt};
-use std::future::IntoFuture;
 use serde::Deserialize;
+use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_stream::wrappers::BroadcastStream;
@@ -134,7 +134,11 @@ async fn hook(
     let Some(rx) = st.engine.hold_permission(&payload) else {
         return Json(serde_json::json!({}));
     };
-    let hold = st.engine.settings().away_hold_secs.clamp(5, hooks::HELD_TIMEOUT_SECS - 30);
+    let hold = st
+        .engine
+        .settings()
+        .away_hold_secs
+        .clamp(5, hooks::HELD_TIMEOUT_SECS - 30);
     let id = st
         .engine
         .pending_permissions()

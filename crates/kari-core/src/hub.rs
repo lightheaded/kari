@@ -162,9 +162,7 @@ impl Hub {
 
     fn set_intent(&self, on: bool) {
         self.primary.store(on, Ordering::Relaxed);
-        let _ = self
-            .engine
-            .kv_set(INTENT_KEY, if on { "1" } else { "0" });
+        let _ = self.engine.kv_set(INTENT_KEY, if on { "1" } else { "0" });
     }
 
     fn claim(&self, take: bool) -> LeaseClaim {
@@ -208,8 +206,9 @@ impl Hub {
             node_id: LOCAL.into(),
             node_name: self.hub_name.clone(),
             title: format!("{holder} is primary now"),
-            body: "This device follows. Columns are read-only here until you make it primary again."
-                .into(),
+            body:
+                "This device follows. Columns are read-only here until you make it primary again."
+                    .into(),
             card_id: None,
         });
     }
@@ -1083,7 +1082,9 @@ impl Hub {
             if let Err(e) = c.set_columns(&cols) {
                 warn!("columns not pushed to {id}: {e}");
                 if e.to_string().contains("not primary") {
-                    let holder = lease.map(|l| l.hub_name).unwrap_or_else(|| "another hub".into());
+                    let holder = lease
+                        .map(|l| l.hub_name)
+                        .unwrap_or_else(|| "another hub".into());
                     self.lose_primary(&holder);
                     return;
                 }
@@ -1161,7 +1162,9 @@ impl Hub {
                 "token": token,
             }));
         }
-        Ok(serde_json::to_string(&serde_json::json!({ "kari": 1, "nodes": nodes }))?)
+        Ok(serde_json::to_string(
+            &serde_json::json!({ "kari": 1, "nodes": nodes }),
+        )?)
     }
 
     // ------------------------------------------------------------ node management
@@ -1198,7 +1201,10 @@ impl Hub {
             created_at: Utc::now(),
         };
         self.engine.save_node(&rec)?;
-        let token = n.token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+        let token = n
+            .token
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
         let pair_error = match (token, &rec.ssh_host) {
             // The caller brought the token, for example from a pairing code.
             (Some(tok), _) => keychain::store_token(&rec.id, &tok)

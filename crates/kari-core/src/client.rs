@@ -107,7 +107,10 @@ impl ApiClient {
         &self.base
     }
 
-    fn headers(&self, mut req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    fn headers(
+        &self,
+        mut req: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
         req = req.header(TOKEN_HEADER, &self.token);
         if let Some(h) = &self.hub_id {
             req = req.header(HUB_HEADER, h);

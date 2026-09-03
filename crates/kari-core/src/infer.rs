@@ -113,7 +113,10 @@ pub fn derive(i: &Inputs<'_>) -> (DerivedState, String) {
 
     // kari holds a permission prompt of this session for a remote answer.
     if let Some(p) = i.permission {
-        return (NeedsApproval, format!("{} waits for permission", p.tool_name));
+        return (
+            NeedsApproval,
+            format!("{} waits for permission", p.tool_name),
+        );
     }
 
     // Pending questions and plan approvals at the transcript tail.

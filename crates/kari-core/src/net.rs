@@ -37,7 +37,11 @@ pub fn local_addresses() -> Vec<LocalAddress> {
             }
         })
         .collect();
-    out.sort_by(|a, b| b.private.cmp(&a.private).then(a.interface.cmp(&b.interface)));
+    out.sort_by(|a, b| {
+        b.private
+            .cmp(&a.private)
+            .then(a.interface.cmp(&b.interface))
+    });
     out
 }
 
@@ -61,7 +65,11 @@ mod tests {
         assert!(v4(100, 127, 255, 254));
         assert!(!v4(100, 128, 0, 1));
         assert!(!v4(8, 8, 8, 8));
-        assert!(is_private(&IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1))));
-        assert!(!is_private(&IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))));
+        assert!(is_private(&IpAddr::V6(Ipv6Addr::new(
+            0xfd00, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_private(&IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
+        ))));
     }
 }

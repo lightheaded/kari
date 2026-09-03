@@ -315,7 +315,11 @@ pub fn install(port: u16) -> anyhow::Result<PathBuf> {
     strip_kari(hooks);
     let cmd = sp.to_string_lossy().into_owned();
     for (event, matcher) in EVENTS {
-        let timeout = if *event == HELD_EVENT { HELD_TIMEOUT_SECS } else { 5 };
+        let timeout = if *event == HELD_EVENT {
+            HELD_TIMEOUT_SECS
+        } else {
+            5
+        };
         let mut group =
             json!({ "hooks": [ { "type": "command", "command": cmd, "timeout": timeout } ] });
         if let Some(m) = matcher {

@@ -58,7 +58,13 @@ fn main() -> anyhow::Result<()> {
     let home = std::env::temp_dir().join(format!("kari-perm-example-{port}"));
     std::fs::create_dir_all(home.join(".claude/projects"))?;
     let child = Command::new(bin)
-        .args(["serve", "--listen", &format!("127.0.0.1:{port}"), "--summaries", "false"])
+        .args([
+            "serve",
+            "--listen",
+            &format!("127.0.0.1:{port}"),
+            "--summaries",
+            "false",
+        ])
         .env("HOME", &home)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -94,8 +100,14 @@ fn main() -> anyhow::Result<()> {
     let t0 = Instant::now();
     let r = relay(port, &token, &payload("sess-off-000001"))?;
     anyhow::ensure!(r == serde_json::json!({}), "expected no decision, got {r}");
-    anyhow::ensure!(t0.elapsed() < Duration::from_secs(2), "the hook waited with Away mode off");
-    println!("desk       Away mode off: no hold, no decision ({:?})", t0.elapsed());
+    anyhow::ensure!(
+        t0.elapsed() < Duration::from_secs(2),
+        "the hook waited with Away mode off"
+    );
+    println!(
+        "desk       Away mode off: no hold, no decision ({:?})",
+        t0.elapsed()
+    );
 
     // 2. Away mode on, the phone allows.
     let mut s = client.settings()?;
@@ -127,12 +139,21 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .find(|c| c.card.session_id.as_deref() == Some("sess-allow-00001"))
         .ok_or_else(|| anyhow::anyhow!("no card for the held session"))?;
-    anyhow::ensure!(card.permission.is_some(), "the card does not carry the prompt");
+    anyhow::ensure!(
+        card.permission.is_some(),
+        "the card does not carry the prompt"
+    );
     println!("card       {:?} carries the prompt", card.state);
     client.answer_permission(&pending.id, "allow")?;
     let r = held.join().expect("relay thread")?;
-    anyhow::ensure!(r == hooks::decision_json("allow"), "unexpected relay output {r}");
-    anyhow::ensure!(client.permissions()?.is_empty(), "the prompt is still listed");
+    anyhow::ensure!(
+        r == hooks::decision_json("allow"),
+        "unexpected relay output {r}"
+    );
+    anyhow::ensure!(
+        client.permissions()?.is_empty(),
+        "the prompt is still listed"
+    );
     println!("allowed    the relay got {r}");
 
     // 3. Away mode on, nobody answers: the hold runs out with no decision.
@@ -141,13 +162,28 @@ fn main() -> anyhow::Result<()> {
     client.set_settings(&s)?;
     let t0 = Instant::now();
     let r = relay(port, &token, &payload("sess-quiet-00001"))?;
-    anyhow::ensure!(r == serde_json::json!({}), "expected no decision after the hold, got {r}");
-    anyhow::ensure!(t0.elapsed() >= Duration::from_secs(5), "the hold ended early");
-    anyhow::ensure!(client.permissions()?.is_empty(), "the timed-out prompt is still listed");
-    println!("timeout    no answer in 5 s: no decision, prompt dropped ({:?})", t0.elapsed());
+    anyhow::ensure!(
+        r == serde_json::json!({}),
+        "expected no decision after the hold, got {r}"
+    );
+    anyhow::ensure!(
+        t0.elapsed() >= Duration::from_secs(5),
+        "the hold ended early"
+    );
+    anyhow::ensure!(
+        client.permissions()?.is_empty(),
+        "the timed-out prompt is still listed"
+    );
+    println!(
+        "timeout    no answer in 5 s: no decision, prompt dropped ({:?})",
+        t0.elapsed()
+    );
 
     // 4. A late answer is refused.
-    let err = client.answer_permission(&pending.id, "allow").unwrap_err().to_string();
+    let err = client
+        .answer_permission(&pending.id, "allow")
+        .unwrap_err()
+        .to_string();
     anyhow::ensure!(err.contains("no longer held"), "{err}");
     println!("late       a second answer is refused: {err}");
     println!("ok");

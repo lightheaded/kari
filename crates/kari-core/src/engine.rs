@@ -572,7 +572,10 @@ impl Engine {
             }
             // The session moved on, so a held prompt of it is stale. The
             // handler that waits on it answers with no decision.
-            if matches!(ev.event.as_str(), "Stop" | "SessionEnd" | "PostToolUse" | "UserPromptSubmit") {
+            if matches!(
+                ev.event.as_str(),
+                "Stop" | "SessionEnd" | "PostToolUse" | "UserPromptSubmit"
+            ) {
                 let stale: Vec<String> = snap
                     .permissions
                     .iter()
@@ -617,7 +620,12 @@ impl Engine {
         self: &Arc<Self>,
         payload: &serde_json::Value,
     ) -> Option<oneshot::Receiver<String>> {
-        let s = |k: &str| payload.get(k).and_then(|v| v.as_str()).map(|v| v.to_string());
+        let s = |k: &str| {
+            payload
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string())
+        };
         if s("hook_event_name").as_deref() != Some(hooks::HELD_EVENT) {
             return None;
         }
@@ -628,12 +636,17 @@ impl Engine {
         let session_id = s("session_id").filter(|x| hooks::valid_session_id(x))?;
         let tool_name = s("tool_name").unwrap_or_else(|| "tool".into());
         let now = Utc::now();
-        let hold = settings.away_hold_secs.clamp(5, hooks::HELD_TIMEOUT_SECS - 30) as i64;
+        let hold = settings
+            .away_hold_secs
+            .clamp(5, hooks::HELD_TIMEOUT_SECS - 30) as i64;
         let pending = PendingPermission {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session_id.clone(),
             tool_name: tool_name.clone(),
-            tool_input: payload.get("tool_input").cloned().unwrap_or(serde_json::Value::Null),
+            tool_input: payload
+                .get("tool_input")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
             message: s("message"),
             since: now,
             until: now + Duration::seconds(hold),
@@ -661,7 +674,10 @@ impl Engine {
             .unwrap()
             .permissions
             .insert(pending.id.clone(), (pending, Some(tx)));
-        info!("holding a {tool_name} permission for {} up to {hold} s", short(&session_id));
+        info!(
+            "holding a {tool_name} permission for {} up to {hold} s",
+            short(&session_id)
+        );
         let _ = self.tx.send(Event::Notice {
             title: format!("Allow {tool_name}? · {title}"),
             body: summary,
@@ -694,7 +710,11 @@ impl Engine {
         if tx.send(behavior.to_string()).is_err() {
             anyhow::bail!("the hook gave up on this prompt already");
         }
-        info!("{behavior}: {} for {}", pending.tool_name, short(&pending.session_id));
+        info!(
+            "{behavior}: {} for {}",
+            pending.tool_name,
+            short(&pending.session_id)
+        );
         self.emit_changed();
         Ok(())
     }
@@ -2177,15 +2197,28 @@ fn summarize_input(tool: &str, input: &serde_json::Value) -> String {
     };
     let text = match tool {
         "Bash" => pick(&["command"]),
-        "Edit" | "Write" | "MultiEdit" | "Read" | "NotebookEdit" => pick(&["file_path", "notebook_path"]),
+        "Edit" | "Write" | "MultiEdit" | "Read" | "NotebookEdit" => {
+            pick(&["file_path", "notebook_path"])
+        }
         "WebFetch" => pick(&["url"]),
         "Agent" | "Task" => pick(&["description", "prompt"]),
-        _ => pick(&["command", "file_path", "url", "query", "pattern", "description"]),
+        _ => pick(&[
+            "command",
+            "file_path",
+            "url",
+            "query",
+            "pattern",
+            "description",
+        ]),
     }
     .or_else(|| input.as_str().map(|s| s.to_string()))
     .unwrap_or_else(|| {
         let raw = input.to_string();
-        if raw == "null" { String::new() } else { raw }
+        if raw == "null" {
+            String::new()
+        } else {
+            raw
+        }
     });
     let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     truncate(&one_line, 160)
@@ -2223,7 +2256,10 @@ mod tests {
         assert_eq!(a.hub_id, "a");
         assert!(e.lease_allows(Some("a")));
         assert!(!e.lease_allows(Some("b")));
-        assert!(!e.lease_allows(None), "a held lease keeps an anonymous client out");
+        assert!(
+            !e.lease_allows(None),
+            "a held lease keeps an anonymous client out"
+        );
 
         // Renewal by the holder keeps the claim time and moves the renewal time.
         let a2 = e.claim_lease(claim("a", false)).unwrap();
@@ -2253,7 +2289,8 @@ mod tests {
             claimed_at: Utc::now() - Duration::hours(2),
             renewed_at: Utc::now() - Duration::hours(1),
         };
-        e.kv_set(Engine::LEASE_KEY, &serde_json::to_string(&old).unwrap()).unwrap();
+        e.kv_set(Engine::LEASE_KEY, &serde_json::to_string(&old).unwrap())
+            .unwrap();
         assert!(e.lease_allows(None));
         assert!(e.lease_allows(Some("a")));
         let a3 = e.claim_lease(claim("a", false)).unwrap();

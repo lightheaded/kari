@@ -164,7 +164,9 @@ fn main() -> anyhow::Result<()> {
         .with_hub("phone-example");
     let refused = other.set_columns(&engine.columns());
     anyhow::ensure!(
-        refused.as_ref().is_err_and(|e| e.to_string().contains("not primary")),
+        refused
+            .as_ref()
+            .is_err_and(|e| e.to_string().contains("not primary")),
         "the node let a foreign hub push columns: {refused:?}"
     );
     println!("gate       a foreign hub got 409 on a column push");
@@ -185,8 +187,13 @@ fn main() -> anyhow::Result<()> {
     anyhow::ensure!(e.contains("not primary"), "{e}");
     println!("follower   this hub refuses to edit columns: {e}");
     println!("primary    {}", hub.claim_primary()?);
-    let lease = other.lease()?.ok_or_else(|| anyhow::anyhow!("no lease on the node"))?;
-    anyhow::ensure!(lease.hub_id == engine.node_id(), "the node's lease is not this hub's");
+    let lease = other
+        .lease()?
+        .ok_or_else(|| anyhow::anyhow!("no lease on the node"))?;
+    anyhow::ensure!(
+        lease.hub_id == engine.node_id(),
+        "the node's lease is not this hub's"
+    );
     println!("taken back the node's lease names this hub again");
 
     hub.remove_node(&status.id)?;
