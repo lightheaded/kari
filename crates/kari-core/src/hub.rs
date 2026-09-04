@@ -396,8 +396,8 @@ impl Hub {
             match self.connect_once(&rec, &state, &stop) {
                 Ok(()) => {}
                 Err(e) => {
-                    warn!("node {label}: {e}");
-                    Self::set_error(&state, e.to_string());
+                    warn!("node {label}: {e:#}");
+                    Self::set_error(&state, format!("{e:#}"));
                 }
             }
             self.emit(HubEvent::BoardChanged {
@@ -410,7 +410,10 @@ impl Hub {
                 backoff = 1;
             }
             let wait = backoff;
-            backoff = (backoff * 2).min(60);
+            // A phone loses every socket while the screen sleeps, and then the
+            // user opens the app and waits for the reconnect. A minute of that
+            // reads as "offline", so the wait stops growing at twenty seconds.
+            backoff = (backoff * 2).min(20);
             for _ in 0..wait * 4 {
                 if stop.load(Ordering::Relaxed) {
                     return;
@@ -729,9 +732,13 @@ impl Hub {
                 anyhow::bail!("stopped");
             }
             let client = ApiClient::at(&format!("http://{addr}"), token);
-            match client.probe(3) {
+            // Long enough for a VPN that must shake hands first, short enough
+            // that a dead address does not hold the list. The whole error
+            // chain goes into the message: the reason a socket failed is in
+            // the source, not in the first line.
+            match client.probe(8) {
                 Ok(id) => return Ok((addr.clone(), id)),
-                Err(e) => last = format!("{addr}: {e}"),
+                Err(e) => last = format!("{addr}: {e:#}"),
             }
         }
         anyhow::bail!(

@@ -46,9 +46,30 @@ where
         .map_err(err)?
 }
 
+/// The board of every node. On a phone this is the one call the first screen
+/// waits for, and the only window into it is the system log, so it says when it
+/// starts and what it answered. `adb logcat | grep kari` shows the pair.
 #[tauri::command]
 async fn get_board(state: State<'_, AppState>) -> R<HubBoard> {
-    off_thread(&state.hub, |h| Ok(h.board())).await
+    #[cfg(mobile)]
+    let t0 = std::time::Instant::now();
+    #[cfg(mobile)]
+    tracing::info!("get_board: start");
+    let b = off_thread(&state.hub, |h| Ok(h.board())).await;
+    #[cfg(mobile)]
+    match &b {
+        Ok(v) => tracing::info!(
+            "get_board: {} cards, {} nodes, {} ms",
+            v.cards.len(),
+            v.nodes.len(),
+            t0.elapsed().as_millis()
+        ),
+        Err(e) => tracing::warn!(
+            "get_board: failed after {} ms: {e}",
+            t0.elapsed().as_millis()
+        ),
+    }
+    b
 }
 
 #[tauri::command]

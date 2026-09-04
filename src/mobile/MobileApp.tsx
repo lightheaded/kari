@@ -11,6 +11,28 @@ import "./mobile.css";
 
 type Tab = "inbox" | "board" | "add" | "nodes";
 
+/** A call that never answers must not hold the first screen forever.
+ *
+ * The web view of the app can send its first request before the Rust side
+ * finished opening its store, and such a request is answered by nobody: the
+ * promise stays pending, so no error ever arrives. A deadline turns that into
+ * a failure the retry below can act on. */
+function within<T>(p: Promise<T>, secs: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(`${what} did not answer in ${secs}s`)), secs * 1000);
+    p.then(
+      (v) => {
+        window.clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        window.clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 /** Stands in until the first board arrives, so pairing works at once. */
 const EMPTY_BOARD: HubBoard = {
   columns: [],
@@ -58,7 +80,7 @@ export default function MobileApp() {
   const load = useCallback(
     async function run(attempt = 0): Promise<void> {
       try {
-        const b = await api.board();
+        const b = await within(api.board(), 6, "the board");
         setBoard(b);
         setError(null);
       } catch (e) {
@@ -70,7 +92,13 @@ export default function MobileApp() {
     [],
   );
 
-  const loadSettings = useCallback(() => api.settings().then(setSettings).catch(() => {}), []);
+  const loadSettings = useCallback(
+    () =>
+      within(api.settings(), 6, "the settings")
+        .then(setSettings)
+        .catch(() => {}),
+    [],
+  );
 
   useEffect(() => {
     load();
