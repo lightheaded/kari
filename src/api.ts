@@ -109,6 +109,10 @@ export const api = {
   addTask: (nodeId: string, task: NewTask) => invoke<Card>("add_task", { nodeId, task }),
   patchCard: (nodeId: string, cardId: string, patch: CardPatch) => invoke<Card>("patch_card", { nodeId, cardId, patch }),
   deleteCard: (nodeId: string, cardId: string) => invoke<void>("delete_card", { nodeId, cardId }),
+  /** Move one task card to another node. The card is recreated there, so the
+   *  returned card has a new id. */
+  moveCardToNode: (nodeId: string, cardId: string, toNodeId: string) =>
+    invoke<Card>("move_card_to_node", { nodeId, cardId, toNodeId }),
   /** Tell the app whether a form holds unsaved input, so a quit can ask first. */
   setDirty: (dirty: boolean) => (inTauri ? invoke<void>("set_dirty", { dirty }) : Promise.resolve()),
   quitNow: () => invoke<void>("quit_now"),

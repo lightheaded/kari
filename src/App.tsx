@@ -11,7 +11,7 @@ import { AddTaskModal, ColumnsModal, SettingsModal } from "./components/Modals";
 import { ProposalPanel } from "./components/Proposals";
 import { useSticky } from "./hooks";
 import { anyDirty } from "./dirty";
-import { noAutoFill } from "./util";
+import { addTarget, noAutoFill } from "./util";
 
 interface Toast {
   id: number;
@@ -82,6 +82,8 @@ export default function App() {
   const [modal, setModal] = useState<"add" | "columns" | "settings" | null>(null);
   /** Column a new task must land in, when the dialog came from a column foot. */
   const [addColumn, setAddColumn] = useState<string | null>(null);
+  /** The line already typed at the foot of a column, carried into the dialog. */
+  const [addTitle, setAddTitle] = useState("");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -182,15 +184,14 @@ export default function App() {
     return out;
   }, [projects]);
 
-  /** The project a new task starts in: the filter first, then the last one used. */
-  const addNode = node || localNodeId;
-  const addProject = useMemo(() => {
-    const pick = (key: string) => {
-      const p = projects.find(([k]) => k === key);
-      return p && (!node || p[1].node === node) ? p[1] : null;
-    };
-    return (pick(project) ?? pick(lastProject))?.cwd ?? null;
-  }, [project, lastProject, projects, node]);
+  /** Where a new task goes: read from the filters, with the last project used
+   *  as the fallback. */
+  const addTo = useMemo(
+    () => addTarget(projects, project, node, lastProject),
+    [projects, project, node, lastProject],
+  );
+  const addNode = addTo.node || localNodeId;
+  const addProject = addTo.cwd;
 
   const filtered: HubCard[] = useMemo(() => {
     if (!board) return [];
@@ -284,6 +285,7 @@ export default function App() {
           className="btn primary"
           onClick={() => {
             setAddColumn(null);
+            setAddTitle("");
             setModal("add");
           }}
         >
@@ -364,10 +366,12 @@ export default function App() {
             onJump={(nodeId, id) => run(() => api.jumpIn(nodeId, id), "Opened")}
             onFilterNode={(nodeId) => setNodeFilter(node === nodeId ? "" : nodeId)}
             onAdd={addInline}
-            onAddFull={(columnId) => {
+            onAddFull={(columnId, title) => {
               setAddColumn(columnId);
+              setAddTitle(title);
               setModal("add");
             }}
+            addTarget={{ node: manyNodes ? nodeById.get(addNode)?.name ?? addNode : "", project: addTo.name }}
           />
         ) : (
           <div className="empty">Loading the herd…</div>
@@ -395,10 +399,13 @@ export default function App() {
           view={selectedCard}
           columns={board?.columns ?? []}
           settings={settings}
+          nodes={nodes}
+          projects={projectsByNode[selectedCard.node_id] ?? []}
           showNode={manyNodes}
           offline={selectedOffline}
           onClose={() => setSelected(null)}
           onAction={run}
+          onMoved={(nodeId, id) => setSelected({ node: nodeId, id })}
         />
       )}
 
@@ -408,12 +415,17 @@ export default function App() {
           defaultNode={addNode}
           defaultProject={addProject}
           columnId={addColumn}
+          defaultTitle={addTitle}
           columns={board?.columns ?? []}
           projectsByNode={projectsByNode}
-          onClose={() => setModal(null)}
+          onClose={() => {
+            setAddTitle("");
+            setModal(null);
+          }}
           onSubmit={(nodeId, t) =>
             run(() => api.addTask(nodeId, t), "Task added").then(() => {
               rememberProject(nodeId, t.project_cwd);
+              setAddTitle("");
               setModal(null);
             })
           }

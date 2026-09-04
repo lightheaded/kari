@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fuzzyScore, planReorder, sortCards, type Rankable } from "./util";
+import { addTarget, fuzzyScore, planReorder, sortCards, type FilterProject, type Rankable } from "./util";
 import type { CardView, DerivedState } from "./types";
 
 /** One card in a column, for the reorder tests. */
@@ -144,5 +144,64 @@ describe("fuzzyScore", () => {
   test("a match at a word start scores higher", () => {
     // "web" starts a word in "storefront-web" but not in "webbing-store".
     expect(fuzzyScore("storefront-web", "web")).toBeGreaterThan(fuzzyScore("astorefrontweb", "web"));
+  });
+});
+
+describe("addTarget", () => {
+  const SEP = "\u0001";
+  const proj = (node: string, cwd: string, name: string): [string, FilterProject] => [
+    `${node}${SEP}${cwd}`,
+    { node, cwd, name },
+  ];
+  // The same project name on two nodes, under two different paths, plus one
+  // project that only the first node has.
+  const apiHere = proj("studio", "/src/atlas-api", "atlas-api");
+  const apiThere = proj("lab", "/home/dev/src/atlas-api", "atlas-api");
+  const docs = proj("studio", "/src/docs-site", "docs-site");
+  const all = [apiHere, apiThere, docs];
+
+  test("the project filter names the node as well", () => {
+    // The bug this replaces: a project on the second node sent the card to the
+    // first one, which has no such path.
+    const t = addTarget(all, apiThere[0], "", "");
+    expect(t.node).toBe("lab");
+    expect(t.cwd).toBe("/home/dev/src/atlas-api");
+    expect(t.name).toBe("atlas-api");
+  });
+
+  test("no filter and nothing remembered names no project", () => {
+    const t = addTarget(all, "", "", "");
+    expect(t.node).toBe("");
+    expect(t.cwd).toBeNull();
+    expect(t.name).toBeNull();
+  });
+
+  test("the last project used fills in for no filter", () => {
+    const t = addTarget(all, "", "", docs[0]);
+    expect(t.node).toBe("studio");
+    expect(t.cwd).toBe("/src/docs-site");
+  });
+
+  test("a node filter drops a remembered project on another node", () => {
+    const t = addTarget(all, "", "lab", docs[0]);
+    expect(t.node).toBe("lab");
+    expect(t.cwd).toBeNull();
+  });
+
+  test("a node filter keeps a remembered project on that node", () => {
+    const t = addTarget(all, "", "lab", apiThere[0]);
+    expect(t.node).toBe("lab");
+    expect(t.cwd).toBe("/home/dev/src/atlas-api");
+  });
+
+  test("the project filter wins over the remembered project", () => {
+    const t = addTarget(all, docs[0], "", apiHere[0]);
+    expect(t.cwd).toBe("/src/docs-site");
+  });
+
+  test("a filter the board lost falls back and never guesses", () => {
+    const t = addTarget(all, `gone${SEP}/nowhere`, "", `gone${SEP}/nowhere`);
+    expect(t.node).toBe("");
+    expect(t.cwd).toBeNull();
   });
 });

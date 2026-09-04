@@ -388,6 +388,9 @@ export interface NewTask {
 }
 export interface CardPatch {
   title?: string | null;
+  /** The project directory. An empty string clears it. The node refuses a path
+   *  that is not a directory on that node. */
+  project_cwd?: string | null;
   model?: string | null;
   priority?: number | null;
   auto_run?: boolean | null;

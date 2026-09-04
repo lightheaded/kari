@@ -819,9 +819,15 @@ pub struct NewTask {
     pub column_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The fields of one card a caller wants to change. None leaves a field as it
+/// is. An empty string clears a field that can hold nothing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CardPatch {
     pub title: Option<String>,
+    /// The project directory of the card. The node refuses a path that is not
+    /// a directory on that node, so a card can never hold a display name.
+    #[serde(default)]
+    pub project_cwd: Option<String>,
     pub model: Option<String>,
     pub priority: Option<i32>,
     pub auto_run: Option<bool>,
