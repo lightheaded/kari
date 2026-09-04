@@ -99,9 +99,13 @@ impl Engine {
             hooks_installed: hooks::installed(),
             ..Default::default()
         };
+        // Restore the plan panel only while the plan is still current. A plan
+        // that timed out must not come back on the next start.
+        let now = Utc::now();
         snap.proposal = store
             .latest_proposal(&["open", "accepted"])
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .filter(|p| p.is_live(now));
         // Seed the job states kari already knows, so a restart logs nothing twice.
         for c in store.list_cards().unwrap_or_default() {
             if let (Some(job), Some(state)) = (c.bg_job_id, c.last_job_state) {
@@ -1918,14 +1922,16 @@ impl Engine {
         let Some(p) = snap.proposal.as_mut() else {
             return;
         };
-        let stale_accept = p.state == "accepted"
-            && p.accepted_at
-                .is_none_or(|t| now - t > Duration::minutes(30));
-        if p.state == "open" && p.expires_at < now {
-            p.state = "expired".into();
-        } else if !stale_accept {
+        if p.is_live(now) {
             return;
         }
+        // Give the row a state the board never restores. An accepted plan that
+        // keeps the state "accepted" comes back on every start.
+        p.state = match p.state.as_str() {
+            "open" => "expired".into(),
+            "accepted" => "started".into(),
+            other => other.to_string(),
+        };
         let done = p.clone();
         snap.proposal = None;
         drop(snap);
@@ -1940,10 +1946,12 @@ impl Engine {
     pub fn proposal_tick(self: &Arc<Self>) {
         let settings = self.settings();
         self.snap.write().unwrap().proposal_checked_at = Some(Utc::now());
+        // Retire a plan that timed out even when plans are off, so the panel
+        // does not stay on the board after the user turns automation off.
+        self.expire_proposal();
         if settings.automation() == AutomationMode::Off {
             return;
         }
-        self.expire_proposal();
         if self.snap.read().unwrap().proposal.is_some() {
             return; // one offer at a time
         }
@@ -2033,7 +2041,7 @@ impl Engine {
             .unwrap()
             .get_proposal(id)?
             .ok_or_else(|| anyhow::anyhow!("proposal not found"))?;
-        if p.state == "accepted" && card_ids.is_none() {
+        if matches!(p.state.as_str(), "accepted" | "started") && card_ids.is_none() {
             anyhow::bail!("proposal already started");
         }
         let settings = self.settings();
