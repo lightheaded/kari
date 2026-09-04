@@ -18,8 +18,20 @@ struct AppState {
     /// a server once one is configured. Nothing below this line knows which.
     hub: Arc<dyn HubApi>,
     /// The window holds unsaved input: a task draft, an edited card. A quit
-    /// from the tray or from Cmd+Q asks before it throws that away.
+    /// from the tray, from Cmd+Q, or from a signal asks before it throws that
+    /// away.
     dirty: std::sync::atomic::AtomicBool,
+    /// Counts the quit asks that a signal started. `cancel_quit` steps it, so
+    /// the grace timer of an answered ask does not quit later.
+    quit_gen: std::sync::atomic::AtomicU64,
+}
+
+/// The payload of the `confirm_quit` event.
+#[derive(Clone, serde::Serialize)]
+struct QuitAsk {
+    /// Seconds the window must count down before kari quits anyway. Null for a
+    /// question a person asked: it waits quietly, with no clock on screen.
+    grace: Option<u64>,
 }
 
 /// The tray keeps its own small state: the stop item, and the arm time that
@@ -205,6 +217,14 @@ fn set_dirty(state: State<'_, AppState>, dirty: bool) {
 #[tauri::command]
 fn quit_now(app: AppHandle) {
     app.exit(0);
+}
+
+/// The user chose to keep working. Stop the grace timer of the open ask.
+#[tauri::command]
+fn cancel_quit(state: State<'_, AppState>) {
+    state
+        .quit_gen
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Store a manual order for one column on one node.
@@ -744,22 +764,144 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// Seconds a quit asked for by a signal waits for an answer. A rebuild that
+/// replaces the app runs with nobody at the keyboard, so the ask must not hold
+/// the app forever. Long enough to read the question and press a button.
+#[cfg(desktop)]
+const QUIT_GRACE_SECONDS: u64 = 20;
+
+/// Seconds a quit asked for by a person waits. Cmd+Q, the tray, and an
+/// AppleScript quit all arrive on that path, and a script cannot tell them
+/// apart from a keypress. Long enough that nobody ever meets it by hand, and
+/// short enough that a script gets its app back. The forms keep a draft, so
+/// this costs no input.
+#[cfg(desktop)]
+const QUIT_HANG_SECONDS: u64 = 600;
+
+/// Who asked for the quit. It decides how long the question waits, and whether
+/// the window counts the seconds down.
+#[cfg(desktop)]
+#[derive(Clone, Copy)]
+enum Grace {
+    /// A rebuild asked. The window counts down, because nobody may be there.
+    Rebuild,
+    /// A person asked. The question waits quietly, and the long backstop only
+    /// catches a script that quit the app this way and then waited.
+    Person,
+}
+
+#[cfg(desktop)]
+impl Grace {
+    /// Seconds before kari quits with no answer.
+    fn secs(self) -> u64 {
+        match self {
+            Grace::Rebuild => QUIT_GRACE_SECONDS,
+            Grace::Person => QUIT_HANG_SECONDS,
+        }
+    }
+
+    /// The seconds the window counts down. None keeps the question quiet.
+    fn countdown(self) -> Option<u64> {
+        match self {
+            Grace::Rebuild => Some(QUIT_GRACE_SECONDS),
+            Grace::Person => None,
+        }
+    }
+}
+
 /// Quit, unless the window holds unsaved input. Then show the window and let
 /// the frontend ask. It calls `quit_now` when the user confirms.
 ///
+/// Every question has an end, or a script that quit the app never gets it
+/// back. `grace` sets how long, and what the window shows.
+///
 /// Returns true when the app is on its way out.
 #[cfg(desktop)]
-fn request_quit(app: &AppHandle) -> bool {
+fn request_quit(app: &AppHandle, grace: Grace) -> bool {
     let dirty = app
         .try_state::<AppState>()
         .is_some_and(|s| s.dirty.load(std::sync::atomic::Ordering::Relaxed));
     if dirty {
         show_main(app);
-        let _ = app.emit("confirm_quit", ());
+        let _ = app.emit(
+            "confirm_quit",
+            QuitAsk {
+                grace: grace.countdown(),
+            },
+        );
+        start_grace_timer(app.clone(), grace.secs());
         return false;
     }
     app.exit(0);
     true
+}
+
+/// Quit after `secs`, unless the user answers the ask first. An answer steps
+/// `quit_gen`, and this timer then does nothing.
+#[cfg(desktop)]
+fn start_grace_timer(app: AppHandle, secs: u64) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let gen = state.quit_gen.load(std::sync::atomic::Ordering::Relaxed);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        if state.quit_gen.load(std::sync::atomic::Ordering::Relaxed) == gen {
+            tracing::info!("no answer to the quit question in {secs}s: quitting");
+            app.exit(0);
+        }
+    });
+}
+
+/// Quit on SIGTERM and SIGINT, unless the window holds unsaved input. A
+/// rebuild that replaces the app sends SIGTERM, and that must not throw away a
+/// card that is half typed. The window asks, and the grace timer lets an
+/// unattended build go through.
+///
+/// A second signal while the question is open quits at once. Ctrl+C twice in a
+/// terminal must always work.
+///
+/// A hard kill cannot be caught. The forms also keep a draft for that.
+#[cfg(all(desktop, unix))]
+fn watch_signals(app: AppHandle) {
+    use tokio::signal::unix::{signal, SignalKind};
+    tauri::async_runtime::spawn(async move {
+        let (Ok(mut term), Ok(mut int)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) else {
+            tracing::warn!("no signal handler: a rebuild can throw away unsaved input");
+            return;
+        };
+        // The generation of the open question, while one waits for an answer.
+        let mut asked: Option<u64> = None;
+        loop {
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = int.recv() => {}
+            }
+            let gen = app
+                .try_state::<AppState>()
+                .map(|s| s.quit_gen.load(std::sync::atomic::Ordering::Relaxed));
+            // The user answered the last question, so this signal asks again.
+            if asked.is_some() && asked != gen {
+                asked = None;
+            }
+            if asked.is_some() {
+                tracing::info!("second quit signal: quitting now");
+                app.exit(0);
+                break;
+            }
+            tracing::info!("quit signal received");
+            if request_quit(&app, Grace::Rebuild) {
+                break;
+            }
+            asked = gen;
+        }
+    });
 }
 
 /// Show the counts that matter on the tray icon.
@@ -889,6 +1031,7 @@ macro_rules! handlers {
             move_card_to_node,
             set_dirty,
             quit_now,
+            cancel_quit,
             reorder_cards,
             set_automation_mode,
             get_server,
@@ -964,6 +1107,7 @@ pub fn run() {
             app.manage(AppState {
                 hub: Arc::clone(&hub),
                 dirty: std::sync::atomic::AtomicBool::new(false),
+                quit_gen: std::sync::atomic::AtomicU64::new(0),
             });
             forward_events(app.handle().clone(), hub);
             // Android 13 and later ask the user once before the first
@@ -1050,6 +1194,7 @@ pub fn run() {
         .manage(AppState {
             hub: Arc::clone(&hub),
             dirty: std::sync::atomic::AtomicBool::new(false),
+            quit_gen: std::sync::atomic::AtomicU64::new(0),
         })
         .setup(move |app| {
             // Put the window back where it was, before it is on screen.
@@ -1066,6 +1211,9 @@ pub fn run() {
                 kari_core::api::spawn(e, port);
             });
             forward_events(app.handle().clone(), Arc::clone(&hub));
+            // A rebuild sends SIGTERM. Ask before it takes unsaved input.
+            #[cfg(unix)]
+            watch_signals(app.handle().clone());
 
             let show = MenuItem::with_id(app, "show", "Open kari", true, None::<&str>)?;
             let refresh_item =
@@ -1127,7 +1275,7 @@ pub fn run() {
                         }
                     }
                     "quit" => {
-                        request_quit(app);
+                        request_quit(app, Grace::Person);
                     }
                     _ => {}
                 })
@@ -1163,7 +1311,7 @@ pub fn run() {
                 ..
             } = event
             {
-                if !request_quit(app) {
+                if !request_quit(app, Grace::Person) {
                     api.prevent_exit();
                 }
             }
@@ -1184,4 +1332,25 @@ pub fn run() {
                 let _ = (app, event);
             }
         });
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    use super::*;
+
+    /// A rebuild may ask with nobody at the keyboard, so the window shows the
+    /// clock. A person gets no clock, only the quiet backstop behind it.
+    #[test]
+    fn only_a_rebuild_counts_down() {
+        assert_eq!(Grace::Rebuild.countdown(), Some(QUIT_GRACE_SECONDS));
+        assert_eq!(Grace::Person.countdown(), None);
+    }
+
+    /// Every question must end. A script that quit kari and then waited for the
+    /// process always gets it back.
+    #[test]
+    fn every_question_ends() {
+        assert!(Grace::Rebuild.secs() > 0);
+        assert!(Grace::Person.secs() > Grace::Rebuild.secs());
+    }
 }

@@ -19,6 +19,42 @@ import { anyDirty } from "./dirty";
 import { accountByNode, addTarget, nodeDot, nodeHue, noAutoFill, taggedTask } from "./util";
 import { uploadPending } from "./components/Attachments";
 
+/** The quit question. A quit that a rebuild asked for counts down: with nobody
+ *  at the keyboard the build must still go through. Any answer stops it. */
+function QuitAsk({ grace, onKeep, onQuit }: { grace: number | null; onKeep: () => void; onQuit: () => void }) {
+  const [left, setLeft] = useState(grace ?? 0);
+  useEffect(() => {
+    if (grace === null) return;
+    const t = window.setInterval(() => setLeft((n) => Math.max(0, n - 1)), 1000);
+    return () => window.clearInterval(t);
+  }, [grace]);
+  return (
+    <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && onKeep()}>
+      <div className="modal narrow" role="alertdialog" aria-label="Quit kari?">
+        <header>
+          <h3>Quit kari?</h3>
+        </header>
+        <div className="body">
+          <p>A form holds unsaved input. Quitting now throws those edits away.</p>
+          {grace !== null && (
+            <p className="hint" role="status">
+              {left > 0 ? `kari quits in ${left}s unless you keep working.` : "kari is quitting."}
+            </p>
+          )}
+        </div>
+        <footer>
+          <button className="btn" onClick={onKeep} autoFocus>
+            Keep working
+          </button>
+          <button className="btn danger" onClick={onQuit}>
+            Quit anyway
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 /** Joins a node id and a project directory into one filter value. */
 const PROJ_SEP = "\u0001";
 
@@ -42,8 +78,9 @@ export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [planHidden, setPlanHidden] = useState<Set<string>>(() => new Set());
-  /** The tray or Cmd+Q asked to quit while a form holds unsaved input. */
-  const [quitAsk, setQuitAsk] = useState(false);
+  /** The tray, Cmd+Q, or a rebuild asked to quit while a form holds unsaved
+   *  input. `grace` counts the seconds left before kari quits anyway. */
+  const [quitAsk, setQuitAsk] = useState<{ grace: number | null } | null>(null);
   const [refreshingQuota, setRefreshingQuota] = useState(false);
 
   const { toasts, toast, drop: dropToast, clear: clearToasts } = useToasts();
@@ -65,7 +102,7 @@ export default function App() {
     const un2 = onNotice((n) =>
       toast(`${n.title} — ${n.body}`, { card: n.card_id ? { node: n.node_id, id: n.card_id } : null, ttl: 20000 }),
     );
-    const un3 = onConfirmQuit(() => setQuitAsk(true));
+    const un3 = onConfirmQuit((grace) => setQuitAsk({ grace }));
     const t = window.setInterval(load, 30000);
     // A reload from the dev server, or a navigation: warn while a form holds input.
     const onUnload = (e: BeforeUnloadEvent) => {
@@ -537,24 +574,14 @@ export default function App() {
       )}
 
       {quitAsk && (
-        <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && setQuitAsk(false)}>
-          <div className="modal narrow" role="alertdialog" aria-label="Quit kari?">
-            <header>
-              <h3>Quit kari?</h3>
-            </header>
-            <div className="body">
-              <p>A form holds unsaved input. Quitting now throws those edits away.</p>
-            </div>
-            <footer>
-              <button className="btn" onClick={() => setQuitAsk(false)} autoFocus>
-                Keep working
-              </button>
-              <button className="btn danger" onClick={() => api.quitNow()}>
-                Quit anyway
-              </button>
-            </footer>
-          </div>
-        </div>
+        <QuitAsk
+          grace={quitAsk.grace}
+          onKeep={() => {
+            api.cancelQuit().catch(() => {});
+            setQuitAsk(null);
+          }}
+          onQuit={() => api.quitNow()}
+        />
       )}
 
       <Toasts toasts={toasts} onDrop={dropToast} onClear={clearToasts} onOpen={setSelected} onUndo={undo} />
