@@ -137,6 +137,21 @@ async fn restore_card(state: State<'_, AppState>, node_id: String, card: Card) -
     off_thread(&state.hub, move |h| h.restore_card(&node_id, card)).await
 }
 
+/// Move one task card to another node. Returns the new card, which has a new
+/// id, because each node keeps its own store.
+#[tauri::command]
+async fn move_card_to_node(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    to_node_id: String,
+) -> R<Card> {
+    off_thread(&state.hub, move |h| {
+        h.move_card_to_node(&node_id, &card_id, &to_node_id)
+    })
+    .await
+}
+
 /// The frontend reports whether any form holds unsaved input.
 #[tauri::command]
 fn set_dirty(state: State<'_, AppState>, dirty: bool) {
@@ -738,6 +753,7 @@ macro_rules! handlers {
             patch_card,
             delete_card,
             restore_card,
+            move_card_to_node,
             set_dirty,
             quit_now,
             reorder_cards,
