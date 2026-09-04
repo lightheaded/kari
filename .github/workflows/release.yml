@@ -188,6 +188,7 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
         run: |
           bun tauri android init
+          scripts/android-icons.sh
           bun tauri android build --apk --target aarch64
           apk=$(ls src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk | head -1)
           test -n "$apk"
