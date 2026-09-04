@@ -773,10 +773,10 @@ impl Engine {
 
     pub fn install_hooks(&self) -> anyhow::Result<String> {
         let port = self.settings().hooks_port;
-        let p = hooks::install(port)?;
+        let cmd = hooks::install(port)?;
         self.snap.write().unwrap().hooks_installed = true;
         self.emit_changed();
-        Ok(format!("hooks installed, relay at {}", p.display()))
+        Ok(format!("hooks installed, relay is {cmd}"))
     }
 
     pub fn uninstall_hooks(&self) -> anyhow::Result<()> {

@@ -79,6 +79,58 @@ jobs:
           ./target/debug/kari-node identity | tee identity.json
           jq -e '.api_version == 1 and .app == "kari"' identity.json
 
+  windows-node:
+    # The headless node on Windows, where there is no `sh`, no `jq` and no
+    # Unix socket. Only a real Windows build proves the cfg branches compile.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: windows-node
+
+      - name: Lint the node
+        run: cargo clippy -p kari-core -p kari-cli --all-targets -- -D warnings
+
+      - name: Run the node tests
+        run: cargo test -p kari-core -p kari-cli
+
+      - name: Check that the node starts and answers
+        shell: bash
+        run: |
+          cargo build -p kari-cli
+          ./target/debug/kari-node.exe identity | tee identity.json
+          jq -e '.api_version == 1 and .app == "kari" and .platform == "windows"' identity.json
+
+      - name: Check that the hook relay and the status line survive a round trip
+        shell: bash
+        env:
+          # Keep the test off the runner's own Claude Code configuration.
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}\claude
+        run: |
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          ./target/debug/kari-node.exe hooks install
+          ./target/debug/kari-node.exe statusline install
+          # Both must register the binary, because Windows has no relay script.
+          grep -q 'hooks relay' "$CLAUDE_CONFIG_DIR/settings.json"
+          grep -q 'statusline capture' "$CLAUDE_CONFIG_DIR/settings.json"
+          # A refresh with rate limits must leave a sample behind.
+          echo '{"session_id":"s","rate_limits":{"five_hour":{"used_percentage":1}}}' \
+            | ./target/debug/kari-node.exe statusline capture
+          # With no node running, the relay still exits 0 and prints nothing.
+          echo '{"session_id":"s","hook_event_name":"SessionStart"}' \
+            | ./target/debug/kari-node.exe hooks relay --port 47399
+          ./target/debug/kari-node.exe hooks uninstall
+          ./target/debug/kari-node.exe statusline uninstall
+          # Uninstall has to recognise the Windows shape it wrote.
+          ! grep -q 'kari-node' "$CLAUDE_CONFIG_DIR/settings.json"
+
   android:
     # The phone app. The generated Android project is not tracked, so the job
     # creates it, then builds a debug APK for arm64 to prove the shell and the

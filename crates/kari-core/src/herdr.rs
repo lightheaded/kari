@@ -1,16 +1,34 @@
 //! herdr client. Reads over the newline-JSON socket, acts through the `herdr` CLI.
 
 use crate::model::HerdrAgent;
+#[cfg(unix)]
 use crate::paths;
 use serde_json::{json, Value};
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
+#[cfg(unix)]
 pub fn available() -> bool {
     paths::herdr_socket().exists()
 }
 
+/// herdr is a terminal multiplexer for Unix and speaks over a Unix socket, so
+/// a Windows node never has one. Every entry point below routes through
+/// `call`, so this one stub keeps the rest of the module honest.
+#[cfg(not(unix))]
+pub fn available() -> bool {
+    false
+}
+
+#[cfg(not(unix))]
+fn call(_method: &str, _params: Value) -> anyhow::Result<Value> {
+    anyhow::bail!("herdr does not run on this platform")
+}
+
+#[cfg(unix)]
 fn call(method: &str, params: Value) -> anyhow::Result<Value> {
     let sock = paths::herdr_socket();
     let mut stream = UnixStream::connect(&sock)?;

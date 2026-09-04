@@ -1,9 +1,11 @@
 //! Claude Code hooks: parse incoming events, fold them into per-session state,
 //! and install or remove the hook entries in `~/.claude/settings.json`.
 //!
-//! Claude Code runs a small shell script on each event. The script posts the
-//! JSON payload to kari on 127.0.0.1 and always exits 0, so a stopped kari
-//! never disturbs a session.
+//! Claude Code runs a relay on each event. The relay posts the JSON payload to
+//! kari on 127.0.0.1 and always exits 0, so a stopped kari never disturbs a
+//! session. On Unix the relay is a small `sh` script kari writes; on Windows,
+//! where there is neither `sh` nor a `curl` to count on, it is the node binary
+//! itself under `kari-node hooks relay`.
 
 use crate::model::{HookEvent, HookState};
 use crate::paths;
@@ -19,7 +21,64 @@ pub const TOKEN_HEADER: &str = "x-kari-token";
 /// The header a hub sends with its id. A column push needs the id of the hub
 /// that holds the node's lease.
 pub const HUB_HEADER: &str = "x-kari-hub";
-const MARKER: &str = "kari/hook.sh";
+/// The subcommand the node binary takes to act as the hook relay on Windows.
+const RELAY_SUBCOMMAND: &str = "hooks relay";
+
+/// How an entry in settings.json is recognised as kari's. Unix registers the
+/// relay script by path; Windows registers the node binary with a subcommand,
+/// so both shapes have to be matched. `uninstall` strips everything this
+/// returns true for, so the name must appear as well: a foreign hook that
+/// happens to mention the subcommand stays where it is.
+fn is_kari_command(c: &str) -> bool {
+    c.contains("kari") && (c.contains("hook.sh") || c.contains(RELAY_SUBCOMMAND))
+}
+
+/// Post one hook payload to the node on this host, the way the `sh` relay does.
+///
+/// Never returns an error to the caller: Claude Code runs this on every event,
+/// and a stopped node must not disturb a session. The return value is what to
+/// print on stdout, which is empty except for a held permission that kari
+/// decided.
+pub fn relay(payload: &str, port: u16) -> String {
+    let held = is_held_event(payload);
+    let timeout = if held { HELD_TIMEOUT_SECS } else { 3 };
+    let token = std::fs::read_to_string(paths::hook_token_file())
+        .map(|t| t.trim().to_string())
+        .unwrap_or_default();
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    let res = client
+        .post(format!("http://127.0.0.1:{port}{HOOK_PATH}"))
+        .header("content-type", "application/json")
+        .header(TOKEN_HEADER, token)
+        .body(payload.to_string())
+        .send();
+    // Only a held event has an answer worth printing. Anything else, including
+    // every failure, leaves Claude Code to carry on as if kari were not there.
+    match res {
+        Ok(r) if held => r.text().unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// True when this payload is the event kari may hold for a remote answer. Read
+/// from the text rather than from a parsed value, so a payload kari cannot
+/// parse still reaches the node with the right timeout.
+fn is_held_event(payload: &str) -> bool {
+    serde_json::from_str::<Value>(payload)
+        .ok()
+        .and_then(|v| {
+            v.get("hook_event_name")
+                .and_then(|e| e.as_str())
+                .map(|e| e == HELD_EVENT)
+        })
+        .unwrap_or_else(|| payload.contains(&format!("\"{HELD_EVENT}\"")))
+}
 
 /// Events kari registers. PostToolUse clears a pending permission, so it needs every tool.
 const EVENTS: &[(&str, Option<&str>)] = &[
@@ -138,6 +197,31 @@ pub fn script_path() -> PathBuf {
     paths::kari_dir().join("hook.sh")
 }
 
+/// The command line Claude Code runs on each event, and the side effect of
+/// preparing it.
+///
+/// Unix writes a small `sh` script and names it. Windows has no `sh` and no
+/// `curl` it can count on, so it names the node binary itself with a
+/// subcommand: one process, no shell, and nothing to keep executable.
+pub fn relay_command(port: u16) -> anyhow::Result<String> {
+    if cfg!(windows) {
+        let exe = std::env::current_exe()?;
+        return Ok(format!(
+            "\"{}\" {RELAY_SUBCOMMAND} --port {port}",
+            exe.display()
+        ));
+    }
+    let sp = script_path();
+    std::fs::create_dir_all(paths::kari_dir())?;
+    std::fs::write(&sp, script(port))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&sp, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(sp.to_string_lossy().into_owned())
+}
+
 pub fn script(port: u16) -> String {
     let token_file = paths::hook_token_file().to_string_lossy().into_owned();
     let url = format!("http://127.0.0.1:{port}{HOOK_PATH}");
@@ -171,10 +255,14 @@ pub fn token() -> anyhow::Result<String> {
             return Ok(t);
         }
     }
-    let mut bytes = [0u8; 32];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))?;
-    let t: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    // Two v4 UUIDs, hyphens removed: 256 bits from the platform's own random
+    // source. Windows has no /dev/urandom, and `uuid` already reaches the right
+    // generator on every platform kari runs on.
+    let t: String = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
     std::fs::create_dir_all(paths::kari_dir())?;
     std::fs::write(&p, &t)?;
     #[cfg(unix)]
@@ -258,7 +346,7 @@ fn is_kari_group(group: &Value) -> bool {
                 && arr.iter().all(|h| {
                     h.get("command")
                         .and_then(|c| c.as_str())
-                        .is_some_and(|c| c.contains(MARKER))
+                        .is_some_and(is_kari_command)
                 })
         })
         .unwrap_or(false)
@@ -290,16 +378,10 @@ pub fn installed() -> bool {
         .unwrap_or(false)
 }
 
-/// Write the relay script and register it for every event kari listens to.
-pub fn install(port: u16) -> anyhow::Result<PathBuf> {
-    let sp = script_path();
-    std::fs::create_dir_all(paths::kari_dir())?;
-    std::fs::write(&sp, script(port))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&sp, std::fs::Permissions::from_mode(0o755))?;
-    }
+/// Prepare the relay and register it for every event kari listens to.
+/// Returns the command line that went into settings.json.
+pub fn install(port: u16) -> anyhow::Result<String> {
+    let cmd = relay_command(port)?;
     let mut v = read_settings()?;
     if !v.is_object() {
         anyhow::bail!("settings.json is not a JSON object");
@@ -313,15 +395,13 @@ pub fn install(port: u16) -> anyhow::Result<PathBuf> {
         *hooks = json!({});
     }
     strip_kari(hooks);
-    let cmd = sp.to_string_lossy().into_owned();
     for (event, matcher) in EVENTS {
         let timeout = if *event == HELD_EVENT {
             HELD_TIMEOUT_SECS
         } else {
             5
         };
-        let mut group =
-            json!({ "hooks": [ { "type": "command", "command": cmd, "timeout": timeout } ] });
+        let mut group = json!({ "hooks": [ { "type": "command", "command": cmd.clone(), "timeout": timeout } ] });
         if let Some(m) = matcher {
             group["matcher"] = json!(m);
         }
@@ -336,7 +416,7 @@ pub fn install(port: u16) -> anyhow::Result<PathBuf> {
         arr.as_array_mut().unwrap().push(group);
     }
     write_settings(&v)?;
-    Ok(sp)
+    Ok(cmd)
 }
 
 /// Remove kari's hook entries. Other hooks stay untouched.
@@ -351,4 +431,42 @@ pub fn uninstall() -> anyhow::Result<()> {
     }
     let _ = std::fs::remove_file(script_path());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognises_both_shapes_of_its_own_entry() {
+        // Unix: the relay script, by path.
+        assert!(is_kari_command("/home/you/.config/kari/hook.sh"));
+        // Windows: the node binary with the relay subcommand.
+        assert!(is_kari_command(
+            "\"C:\\Users\\you\\kari\\kari-node.exe\" hooks relay --port 47311"
+        ));
+    }
+
+    #[test]
+    fn leaves_a_foreign_hook_alone() {
+        // `uninstall` strips every command this returns true for, so a hook
+        // that only looks similar must not match.
+        assert!(!is_kari_command("/usr/local/bin/my-own-hook.sh"));
+        assert!(!is_kari_command("notify-send 'hooks relay finished'"));
+        assert!(!is_kari_command(""));
+    }
+
+    #[test]
+    fn the_held_event_is_read_from_the_payload() {
+        assert!(is_held_event(
+            r#"{"session_id":"s","hook_event_name":"PermissionRequest"}"#
+        ));
+        assert!(!is_held_event(
+            r#"{"session_id":"s","hook_event_name":"SessionStart"}"#
+        ));
+        // A tool named after the event is not the event.
+        assert!(!is_held_event(
+            r#"{"hook_event_name":"PreToolUse","tool_name":"PermissionRequest"}"#
+        ));
+    }
 }

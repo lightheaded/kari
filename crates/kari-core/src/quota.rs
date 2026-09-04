@@ -55,6 +55,42 @@ pub fn read_latest() -> Option<QuotaSample> {
     sample_from_statusline(&v, at)
 }
 
+/// The envelope the status line wrapper stores: exactly the object the `jq`
+/// filter in `wrapper_script` builds, so `read_latest` parses either. None
+/// means the refresh carried no rate limits.
+fn envelope(input: &str, at: DateTime<Utc>) -> anyhow::Result<Option<Value>> {
+    let v: Value = serde_json::from_str(input)?;
+    let rate_limits = v.get("rate_limits").cloned().unwrap_or(Value::Null);
+    if rate_limits.is_null() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::json!({
+        "ts": at.timestamp(),
+        "session_id": v.get("session_id").cloned().unwrap_or(Value::Null),
+        "rate_limits": rate_limits,
+    })))
+}
+
+/// Write the sample the status line was handed, then hand the same bytes to
+/// the command kari wrapped. Used by `kari-node statusline capture`, which is
+/// what Windows registers in place of the shell wrapper below.
+pub fn capture(input: &str, at: DateTime<Utc>) -> anyhow::Result<()> {
+    let Some(envelope) = envelope(input, at)? else {
+        // No rate limits in this refresh. Not an error: the caller still runs
+        // the command kari wrapped.
+        return Ok(());
+    };
+    let file = paths::rate_limits_file();
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    // Write beside the target and rename, so a reader never sees half a file.
+    let tmp = file.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string(&envelope)?)?;
+    std::fs::rename(&tmp, &file)?;
+    Ok(())
+}
+
 /// Shell wrapper installed around the user's status line command.
 pub fn wrapper_script(original_command: &str) -> String {
     let file = paths::rate_limits_file();
@@ -281,6 +317,31 @@ mod tests {
         let w = s.five_hour.unwrap();
         assert_eq!(w.used_percentage, 7.0);
         assert!(w.resets_at.is_some());
+    }
+
+    #[test]
+    fn the_captured_envelope_reads_back_as_a_sample() {
+        // The Windows capture and the `jq` wrapper must agree on the envelope,
+        // or a Windows node records samples that nothing reads back.
+        let input = r#"{"session_id":"s","rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":1800000000},"seven_day":{"used_percentage":11.25}}}"#;
+        let e = envelope(input, Utc::now()).unwrap().unwrap();
+        assert!(e.get("ts").and_then(|t| t.as_i64()).is_some());
+        let s = sample_from_statusline(&e, Utc::now()).unwrap();
+        assert_eq!(s.five_hour.unwrap().used_percentage, 42.5);
+        assert_eq!(s.seven_day.unwrap().used_percentage, 11.25);
+    }
+
+    #[test]
+    fn a_refresh_without_rate_limits_records_nothing() {
+        // Claude Code sends the status line payload on every refresh; only some
+        // carry the windows. Overwriting a good sample with an empty one would
+        // make the meters flap.
+        let e = envelope(
+            r#"{"session_id":"s","model":{"display_name":"x"}}"#,
+            Utc::now(),
+        )
+        .unwrap();
+        assert!(e.is_none());
     }
 
     #[test]

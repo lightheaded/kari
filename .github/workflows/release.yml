@@ -60,7 +60,8 @@ jobs:
                 'xattr -dr com.apple.quarantine /Applications/kari.app',
                 '```',
                 '',
-                'A Linux host can run the headless node from `kari-node-<tag>-x86_64-unknown-linux-gnu.tar.gz`.',
+                'A Linux host runs the headless node from `kari-node-<tag>-x86_64-unknown-linux-gnu.tar.gz`,',
+                'a Windows host from `kari-node-<tag>-x86_64-pc-windows-msvc.zip`.',
                 'Start it with `kari-node serve` and add it under Settings, Nodes in the app.',
                 '',
                 'An Android phone installs `kari-latest.apk`. Add this repository to Obtainium: the asset name never',
@@ -136,6 +137,35 @@ jobs:
           cp target/release/kari-node LICENSE README.md "$name/"
           tar czf "$name.tar.gz" "$name"
           gh release upload "${{ github.ref_name }}" "$name.tar.gz" --clobber
+
+  windows-node-binary:
+    # The same headless node for a Windows host. A zip rather than a tarball,
+    # because Windows opens one without a tool.
+    needs: create-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: release-windows-node
+
+      - name: Build the node
+        run: cargo build --release -p kari-cli
+
+      - name: Pack and upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name="kari-node-${{ github.ref_name }}-x86_64-pc-windows-msvc"
+          mkdir -p "$name"
+          cp target/release/kari-node.exe LICENSE README.md "$name/"
+          7z a "$name.zip" "$name"
+          gh release upload "${{ github.ref_name }}" "$name.zip" --clobber
 
   android-apk:
     # The phone app, signed with the release key from the repository secrets:
