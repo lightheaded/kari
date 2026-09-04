@@ -410,7 +410,10 @@ impl Hub {
                 backoff = 1;
             }
             let wait = backoff;
-            backoff = (backoff * 2).min(60);
+            // A phone loses every socket while the screen sleeps, and then the
+            // user opens the app and waits for the reconnect. A minute of that
+            // reads as "offline", so the wait stops growing at twenty seconds.
+            backoff = (backoff * 2).min(20);
             for _ in 0..wait * 4 {
                 if stop.load(Ordering::Relaxed) {
                     return;
