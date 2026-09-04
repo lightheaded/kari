@@ -163,8 +163,9 @@ mod tests {
 
     #[test]
     fn a_display_name_is_not_a_working_directory() {
+        // Only paths this test controls. A build sandbox sets HOME to a
+        // directory that does not exist, so home() is not safe to assert on.
         assert!(is_usable_cwd("/"));
-        assert!(is_usable_cwd(&home().to_string_lossy()));
         // The bug this guards: a project name reached a card as its directory.
         assert!(!is_usable_cwd("kari"));
         assert!(!is_usable_cwd(""));
