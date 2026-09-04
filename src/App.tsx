@@ -277,14 +277,13 @@ export default function App() {
       </div>
 
       <StatsStrip
-        quotas={board?.quotas ?? []}
+        accounts={board?.accounts ?? []}
         nodes={nodes}
-        filter={node}
-        onFilter={setNodeFilter}
         onFill={(nodeId) => {
           unhidePlans(nodeId);
           run(() => api.proposeNow(nodeId), "Plan ready");
         }}
+        onRename={(key, alias) => run(() => api.setAccountAlias(key, alias), alias ? `Account named ${alias}` : "Account name cleared")}
         onHelp={() => setModal("settings")}
         refreshing={refreshingQuota}
         onRefresh={async () => {

@@ -901,6 +901,12 @@ pub struct NodeIdentity {
     /// The list is how the desktop learns where a node is, without a typed IP.
     #[serde(default)]
     pub addresses: Vec<String>,
+    /// The Claude Code account this node is signed in to. Quota belongs to the
+    /// account, so the hub groups the meters on it. None from a node running a
+    /// kari older than this field, and from one that has not logged in; both
+    /// then keep a row of their own, as every node used to.
+    #[serde(default)]
+    pub account: Option<crate::account::AccountIdentity>,
 }
 
 /// A remote kari node the desktop app connects to. Stored in the local database.
@@ -1066,6 +1072,36 @@ pub struct NodeQuota {
     pub calibration: Calibration,
 }
 
+/// One budget, and every node spending it. The 5-hour and 7-day windows belong
+/// to a Claude Code account, so the board shows one row per account rather than
+/// one per node: two machines on one login share a single window, and two rows
+/// would read as two budgets.
+///
+/// A node whose account kari cannot read gets a group of its own, keyed on the
+/// node. That is what kari did before it knew about accounts, and it is the
+/// right answer when the truth is unknown: never merge two budgets by guessing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountQuota {
+    /// Key the board groups on: the account id, or `node:<id>` for a node whose
+    /// account is unknown. Stable across restarts, so an alias sticks to it.
+    pub key: String,
+    /// What to show. The user's alias when they set one, else the name on the
+    /// account, else the login address, else the node's own name.
+    pub label: String,
+    /// The alias the user gave this account, if any.
+    pub alias: Option<String>,
+    /// The account itself, absent when the node did not report one.
+    pub account: Option<crate::account::AccountIdentity>,
+    /// Every node spending this budget, in board order.
+    pub node_ids: Vec<String>,
+    pub node_names: Vec<String>,
+    /// The freshest sample any of those nodes reported. They all describe the
+    /// same windows, so the newest is the most accurate.
+    pub quota: Option<QuotaSample>,
+    /// The calibration of the node the sample came from.
+    pub calibration: Option<Calibration>,
+}
+
 /// The dry run of one node's planner, as the queue strip shows it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeQueue {
@@ -1097,6 +1133,10 @@ pub struct HubBoard {
     pub nodes: Vec<NodeStatus>,
     pub cards: Vec<HubCard>,
     pub quotas: Vec<NodeQuota>,
+    /// The same quota, grouped by the account that owns it. What the header
+    /// shows. `quotas` stays beside it for the phone and for an older hub.
+    #[serde(default)]
+    pub accounts: Vec<AccountQuota>,
     /// One per node that answered. A node running an older kari sends none.
     #[serde(default)]
     pub queues: Vec<NodeQueue>,
