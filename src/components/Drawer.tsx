@@ -1,16 +1,21 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Column, HubCard, JobLogEntry, Settings } from "../types";
+import type { Column, HubCard, JobLogEntry, NodeStatus, Project, Settings } from "../types";
 import { RUN_MODELS, STATE_LABEL } from "../types";
 import { clock, fmtM, fmtPct, noAutoFill, proseField, relTime, shortId, weighted } from "../util";
 import { useAutoGrow } from "../hooks";
 import { useCloseGuard } from "../dirty";
 import { UnsavedBar } from "./Modals";
+import { ProjectPicker, type PickerItem } from "./ProjectPicker";
 
 interface Props {
   view: HubCard;
   columns: Column[];
   settings: Settings | null;
+  /** Every node on the board. A task card can move to another one. */
+  nodes?: NodeStatus[];
+  /** Projects of this card's node, from the board. Used until the node answers. */
+  projects?: Project[];
   /** Show which node the card comes from. Set when the board has more than one node. */
   showNode?: boolean;
   /** The node does not answer. Every action is off until it comes back. */
@@ -19,11 +24,28 @@ interface Props {
   mobile?: boolean;
   onClose: () => void;
   onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
+  /** The card moved to another node, where it has a new id. Select it there. */
+  onMoved?: (nodeId: string, cardId: string) => void;
 }
 
 const MODES = ["", "bypassPermissions", "acceptEdits", "auto", "plan", "default"];
 
-export function Drawer({ view, columns, settings, showNode, offline, mobile, onClose, onAction }: Props) {
+/** The picker value that asks for a typed path. No project directory uses it. */
+const OTHER = "__custom";
+
+export function Drawer({
+  view,
+  columns,
+  settings,
+  nodes = [],
+  projects = [],
+  showNode,
+  offline,
+  mobile,
+  onClose,
+  onAction,
+  onMoved,
+}: Props) {
   const c = view.card;
   const node = view.node_id;
   const s = view.session;
@@ -36,6 +58,16 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
   const [model, setModel] = useState(c.model ?? "");
   const [startPrompt, setStartPrompt] = useState("");
   const [log, setLog] = useState<JobLogEntry[]>([]);
+  /** The project directory of the card. OTHER means "use the typed path". */
+  const [cwd, setCwd] = useState(c.project_cwd ?? "");
+  const [customCwd, setCustomCwd] = useState("");
+  /** Every project one node knows, as that node answered. */
+  const [nodeProjects, setNodeProjects] = useState<{ node: string; list: Project[] } | null>(null);
+  /** The node the user picked in the move field, and the card it was picked
+   *  for. Reading the card back means another card resets the field, and a
+   *  poll of the board never does. */
+  const [picked, setPicked] = useState<{ card: string; node: string } | null>(null);
+  const moveTo = picked?.card === c.id ? picked.node : node;
   const promptGrow = useAutoGrow("drawer.prompt", prompt, 90, 520);
   const notesGrow = useAutoGrow("drawer.notes", notes, 68, 400);
   const startGrow = useAutoGrow("drawer.startPrompt", startPrompt);
@@ -48,7 +80,33 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
     setAutoRun(c.auto_run);
     setMode(c.permission_mode ?? "");
     setModel(c.model ?? "");
-  }, [c.id, c.updated_at, c.title, c.run_prompt, c.notes, c.priority, c.auto_run, c.permission_mode, c.model]);
+    setCwd(c.project_cwd ?? "");
+    setCustomCwd("");
+  }, [
+    c.id,
+    c.updated_at,
+    c.title,
+    c.run_prompt,
+    c.notes,
+    c.priority,
+    c.auto_run,
+    c.permission_mode,
+    c.model,
+    c.project_cwd,
+  ]);
+
+  // Ask the node for every project it knows. The board only names the projects
+  // that already have a card, so without this a first move has nothing to pick.
+  useEffect(() => {
+    let live = true;
+    api
+      .projects(node)
+      .then((list) => live && list.length > 0 && setNodeProjects({ node, list }))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [node]);
 
   useEffect(() => {
     let live = true;
@@ -61,6 +119,20 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
     };
   }, [node, c.id, c.updated_at]);
 
+  // The projects to choose from, and the path the card gets on save. The board
+  // names the projects that have a card, until the node lists them all.
+  const projectList = nodeProjects?.node === node ? nodeProjects.list : projects;
+  const dir = cwd === OTHER ? customCwd.trim() : cwd;
+  const projectItems: PickerItem[] = [
+    // A card can hold a path that no other card on this node holds, such as a
+    // typed one. Keep it in the list, or the picker reads as if it were empty.
+    ...(cwd && cwd !== OTHER && !projectList.some((p) => p.cwd === cwd)
+      ? [{ value: cwd, label: cwd.split("/").filter(Boolean).pop() ?? cwd, hint: cwd }]
+      : []),
+    ...projectList.map((p) => ({ value: p.cwd, label: p.name, hint: p.cwd })),
+    { value: OTHER, label: "Other path…" },
+  ];
+
   const dirty =
     title !== (c.title ?? "") ||
     prompt !== (c.run_prompt ?? "") ||
@@ -69,6 +141,7 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
     autoRun !== c.auto_run ||
     mode !== (c.permission_mode ?? "") ||
     model !== (c.model ?? "") ||
+    dir !== (c.project_cwd ?? "") ||
     startPrompt.trim() !== "";
 
   // An edit in the drawer is worth more than a stray Escape. The first one asks.
@@ -87,6 +160,7 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
       () =>
         api.patchCard(node, c.id, {
           title: c.kind === "task" || title !== (c.title ?? "") ? title : undefined,
+          project_cwd: dir !== (c.project_cwd ?? "") ? dir : undefined,
           run_prompt: prompt,
           notes,
           priority,
@@ -96,6 +170,17 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
         }),
       "Saved",
     );
+
+  // Only a task card that never ran can move. A session card follows a
+  // transcript that stays on its own machine.
+  const canMoveNode = nodes.length > 1 && c.kind === "task" && !c.session_id;
+  const moveTarget = nodes.find((n) => n.id === moveTo);
+  const move = () =>
+    onAction(async () => {
+      const moved = await api.moveCardToNode(node, c.id, moveTo);
+      onMoved?.(moveTo, moved.id);
+      return `Moved to ${moveTarget?.name ?? moveTo}`;
+    }, "Moved");
 
   const doneCol = columns.find((k) => k.accepts.includes("done"));
   const canStart = !!(c.project_cwd ?? s?.cwd) && !(view.bg_job && view.bg_job.state === "working");
@@ -378,6 +463,29 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
               <input {...noAutoFill} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={view.title} />
             </div>
             <div className="field">
+              <label>Project directory{showNode ? ` on ${view.node_name}` : ""}</label>
+              <ProjectPicker
+                items={projectItems}
+                value={cwd}
+                allLabel={c.session_id ? "From the session" : "No project"}
+                ariaLabel="Project directory"
+                onChange={setCwd}
+              />
+              {cwd === OTHER && (
+                <input
+                  {...noAutoFill}
+                  value={customCwd}
+                  onChange={(e) => setCustomCwd(e.target.value)}
+                  placeholder="/absolute/path"
+                />
+              )}
+              <div className="hint">
+                {c.session_id
+                  ? `Empty uses the directory of the session${s?.cwd ? `: ${s.cwd}` : ""}.`
+                  : "A run and Jump in both start here. The node refuses a path that is not a directory there."}
+              </div>
+            </div>
+            <div className="field">
               <label>
                 {c.session_id ? "Continue prompt (used by Start in bg and the scheduler)" : "Body (added under the title when the task runs)"}
               </label>
@@ -434,6 +542,47 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
               <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} />
               <span>May run unattended when quota is left over</span>
             </label>
+            {canMoveNode && (
+              <div className="field">
+                <label>Node</label>
+                <select value={moveTo} onChange={(e) => setPicked({ card: c.id, node: e.target.value })}>
+                  {nodes.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.name}
+                      {n.online ? "" : " (offline)"}
+                    </option>
+                  ))}
+                </select>
+                {moveTo !== node && (
+                  <>
+                    <div className="hint">
+                      Each node keeps its own cards, so a move writes the card again on{" "}
+                      {moveTarget?.name ?? moveTo} and gives it a new id. It keeps the project only when that
+                      node holds one project of the same name.
+                    </div>
+                    <div style={{ marginTop: 6 }}>
+                      <button
+                        className="btn sm"
+                        disabled={offline || dirty || moveTarget?.online === false}
+                        title={dirty ? "Save the card first" : `Move this card to ${moveTarget?.name ?? moveTo}`}
+                        onClick={move}
+                      >
+                        Move to {moveTarget?.name ?? moveTo}
+                      </button>
+                      {dirty && <span className="hint"> Save the card first.</span>}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {nodes.length > 1 && !canMoveNode && (
+              <div className="field">
+                <label>Node</label>
+                <div className="hint">
+                  {view.node_name}. This card follows a session on that node, so it cannot move.
+                </div>
+              </div>
+            )}
             <div className="field">
               <label>Notes</label>
               <textarea {...proseField} {...notesGrow} value={notes} onChange={(e) => setNotes(e.target.value)} />

@@ -1254,6 +1254,9 @@ impl Engine {
 
     pub fn add_task(&self, t: NewTask) -> anyhow::Result<Card> {
         let now = Utc::now();
+        // A path that is not a directory here gives a card that can neither run
+        // nor open a terminal. Refuse it while the dialog is still open.
+        let project_cwd = paths::checked_project_cwd(t.project_cwd.as_deref())?;
         let columns = self.columns();
         let target = t
             .column_id
@@ -1272,7 +1275,7 @@ impl Engine {
             kind: CardKind::Task,
             title: Some(t.title),
             session_id: None,
-            project_cwd: t.project_cwd,
+            project_cwd,
             priority: t.priority,
             auto_run,
             run_prompt: t.run_prompt,
@@ -1303,6 +1306,11 @@ impl Engine {
         };
         if let Some(v) = p.title {
             c.title = if v.trim().is_empty() { None } else { Some(v) };
+        }
+        // The project directory must be a directory on this node. An empty
+        // value clears it, and every other bad value is refused.
+        if let Some(v) = p.project_cwd {
+            c.project_cwd = paths::checked_project_cwd(Some(&v))?;
         }
         if let Some(v) = p.priority {
             c.priority = v;

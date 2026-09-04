@@ -41,7 +41,9 @@ interface Props {
   onJump: (nodeId: string, cardId: string) => void;
   onFilterNode: (nodeId: string) => void;
   onAdd: (columnId: string, title: string) => Promise<void>;
-  onAddFull: (columnId: string) => void;
+  onAddFull: (columnId: string, title: string) => void;
+  /** Where a one-line task lands, shown at the foot of every column. */
+  addTarget: { node: string; project: string | null };
 }
 
 /** The keys `planReorder` and `clearRanks` read, for one card. */
@@ -87,7 +89,8 @@ interface ColProps {
   onJump: (nodeId: string, cardId: string) => void;
   onFilterNode: (nodeId: string) => void;
   onAdd: (title: string) => Promise<void>;
-  onAddFull: () => void;
+  onAddFull: (title: string) => void;
+  addTarget: { node: string; project: string | null };
   /** Give every placed card of this column back to the automatic order. */
   onClearRanks: () => void;
 }
@@ -105,6 +108,7 @@ function ColumnView({
   onFilterNode,
   onAdd,
   onAddFull,
+  addTarget,
   onClearRanks,
 }: ColProps) {
   const { setNodeRef, isOver } = useDroppable({ id: col.id, data: { type: "column", columnId: col.id } });
@@ -172,7 +176,7 @@ function ColumnView({
           {cards.length === 0 && <div className="empty">—</div>}
         </div>
       </SortableContext>
-      <ColumnAdd columnName={col.name} onAdd={onAdd} onFull={onAddFull} />
+      <ColumnAdd columnName={col.name} target={addTarget} onAdd={onAdd} onFull={onAddFull} />
     </div>
   );
 }
@@ -189,6 +193,7 @@ export function Board({
   onFilterNode,
   onAdd,
   onAddFull,
+  addTarget,
 }: Props) {
   const [active, setActive] = useState<HubCard | null>(null);
   // The order the user just dropped, kept until the board comes back with it.
@@ -345,7 +350,8 @@ export function Board({
             onJump={onJump}
             onFilterNode={onFilterNode}
             onAdd={(title) => onAdd(col.id, title)}
-            onAddFull={() => onAddFull(col.id)}
+            onAddFull={(title) => onAddFull(col.id, title)}
+            addTarget={addTarget}
             onClearRanks={() => {
               // One call per node: priorities live in each node's own store.
               const column = (byColumn.get(col.id) ?? []).map(rankable);

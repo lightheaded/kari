@@ -1031,6 +1031,93 @@ impl Hub {
         self.on_node(node, |e| e.delete_card(card), |c| c.delete_card(card))
     }
 
+    /// Move one task card to another node.
+    ///
+    /// Each node keeps its own store, so the card is created on the target node
+    /// and then deleted from the source. The new card gets a new id, which the
+    /// caller reads from the returned card.
+    ///
+    /// A session card cannot move. It follows a Claude Code session that lives
+    /// on one machine, and the transcript does not travel with it.
+    ///
+    /// Project directories differ per machine. The move keeps the directory
+    /// only when the target node holds exactly one project with the same
+    /// display name. In every other case the new card starts with no project,
+    /// and the user sets it on the card.
+    pub fn move_card_to_node(&self, from: &str, card: &str, to: &str) -> anyhow::Result<Card> {
+        if from == to {
+            anyhow::bail!("the card is on that node already");
+        }
+        let board = self.board();
+        if !board.nodes.iter().any(|n| n.id == to) {
+            anyhow::bail!("no node with id {to}");
+        }
+        let Some(hc) = board
+            .cards
+            .iter()
+            .find(|c| c.node_id == from && c.view.card.id == card)
+        else {
+            anyhow::bail!("card not found")
+        };
+        let src = &hc.view.card;
+        if src.kind != CardKind::Task {
+            anyhow::bail!(
+                "this card follows a Claude Code session on {}. Only a task card can move.",
+                hc.node_name
+            );
+        }
+        if src.session_id.is_some() {
+            anyhow::bail!("this card ran a session on {}. Only a card that never ran can move, so that its transcript stays with its node.", hc.node_name);
+        }
+        if hc.view.bg_job.as_ref().and_then(|j| j.state.as_deref()) == Some("working") {
+            anyhow::bail!("a background job runs on this card. Stop the job, then move it.");
+        }
+        // The same project by name, on the target node. Two of that name is no
+        // answer, and neither is none.
+        let project_cwd = src
+            .project_cwd
+            .as_deref()
+            .map(paths::project_display_name)
+            .and_then(|name| {
+                let known = self.projects(to);
+                let mut hits = known.into_iter().filter(|p| p.name == name);
+                match (hits.next(), hits.next()) {
+                    (Some(p), None) => Some(p.cwd),
+                    _ => None,
+                }
+            });
+        let new = self.add_task(
+            to,
+            NewTask {
+                title: src.title.clone().unwrap_or_else(|| hc.view.title.clone()),
+                project_cwd,
+                run_prompt: src.run_prompt.clone(),
+                auto_run: src.auto_run,
+                priority: src.priority,
+                notes: src.notes.clone(),
+                model: src.model.clone(),
+                column_id: Some(hc.view.column_id.clone()),
+            },
+        )?;
+        // `add_task` carries what a new task can hold. The rest goes over in a
+        // patch, so nothing the user set on the card is lost.
+        if src.permission_mode.is_some() || !src.tags.is_empty() {
+            let p = CardPatch {
+                permission_mode: src.permission_mode.clone(),
+                tags: Some(src.tags.clone()),
+                ..Default::default()
+            };
+            if let Err(e) = self.patch_card(to, &new.id, p) {
+                warn!("move_card_to_node {card}: the new card kept no mode or tags: {e}");
+            }
+        }
+        // The new card exists. Drop the old one last, so a failure here leaves
+        // two cards and not none.
+        self.delete_card(from, card)?;
+        info!("moved card {card} from {from} to {to} as {}", new.id);
+        Ok(new)
+    }
+
     pub fn start_card(
         &self,
         node: &str,

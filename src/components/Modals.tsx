@@ -76,6 +76,9 @@ interface AddTaskProps {
   defaultProject: string | null;
   /** Column the card must land in, when the dialog came from a column foot. */
   columnId: string | null;
+  /** What the user already typed at the foot of a column. Carried over, so
+   *  "More" never throws the line away. */
+  defaultTitle?: string;
   columns: Column[];
   /** Projects taken from the cards of each node. Used until the node answers. */
   projectsByNode: Record<string, Project[]>;
@@ -88,6 +91,7 @@ export function AddTaskModal({
   defaultNode,
   defaultProject,
   columnId,
+  defaultTitle,
   columns,
   projectsByNode,
   onClose,
@@ -95,8 +99,12 @@ export function AddTaskModal({
 }: AddTaskProps) {
   const [node, setNode] = useState(defaultNode);
   const [loaded, setLoaded] = useState<Record<string, Project[]>>({});
-  const [title, setTitle] = useState("");
-  const [cwd, setCwd] = useState(defaultProject ?? "");
+  const [title, setTitle] = useState(defaultTitle ?? "");
+  /** The project, with the node it belongs to. A path lives on one machine, so
+   *  a switch of node must not carry the path over. */
+  const [picked, setPicked] = useState({ node: defaultNode, cwd: defaultProject ?? "" });
+  const cwd = picked.node === node ? picked.cwd : "";
+  const setCwd = (v: string) => setPicked({ node, cwd: v });
   const [custom, setCustom] = useState("");
   const [prompt, setPrompt] = useState("");
   const target = columns.find((c) => c.id === columnId);
@@ -108,9 +116,13 @@ export function AddTaskModal({
   const notesGrow = useAutoGrow("add.notes", notes);
   // The node answers with its projects. Until then the cards of that node name them.
   const projects = loaded[node] ?? projectsByNode[node] ?? [];
-  const chosen = cwd === "__custom" || projects.some((p) => p.cwd === cwd) ? cwd : projects[0]?.cwd ?? "";
-  const dir = chosen === "__custom" ? custom : chosen;
+  // The picker never guesses. A project the user did not pick, on a node the
+  // user did not mean, is the whole bug this replaces: an empty picker asks.
+  const known = cwd === "__custom" || projects.some((p) => p.cwd === cwd);
+  const dir = cwd === "__custom" ? custom.trim() : cwd;
   const projectItems: PickerItem[] = [
+    // The default can name a project that has no card of its own yet.
+    ...(cwd && !known ? [{ value: cwd, label: cwd.split("/").filter(Boolean).pop() ?? cwd, hint: cwd }] : []),
     ...projects.map((p) => ({ value: p.cwd, label: p.name, hint: p.cwd })),
     { value: "__custom", label: "Other path…" },
   ];
@@ -187,10 +199,17 @@ export function AddTaskModal({
       )}
       <div className="field">
         <label>Project directory</label>
-        <ProjectPicker items={projectItems} value={chosen} ariaLabel="Project directory" onChange={setCwd} />
-        {chosen === "__custom" && (
+        <ProjectPicker
+          items={projectItems}
+          value={cwd}
+          allLabel="No project"
+          ariaLabel="Project directory"
+          onChange={setCwd}
+        />
+        {cwd === "__custom" && (
           <input {...noAutoFill} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="/absolute/path" />
         )}
+        {!dir && <div className="hint">This task cannot run until it has a project. Set one here, or later on the card.</div>}
       </div>
       <div className="field">
         <label>Body (added under the title when the task runs)</label>

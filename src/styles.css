@@ -477,6 +477,8 @@ What the planner would run next, in order. It starts nothing. */
 .coldraft textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .draftbar { display: flex; align-items: center; gap: 6px; }
 .draftbar .hint { font-size: 11px; }
+/* Where a one-line task lands. Long paths and node names get an ellipsis. */
+.coltarget { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ------------------------------------------------------- fuzzy project picker */
 .picker { position: relative; min-width: 180px; }

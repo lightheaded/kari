@@ -187,11 +187,14 @@ export default function MobileApp() {
           view={selectedCard}
           columns={board?.columns ?? []}
           settings={settings}
+          nodes={nodes}
+          projects={projectsByNode[selectedCard.node_id] ?? []}
           showNode={nodes.length > 1}
           offline={selectedOffline}
           mobile
           onClose={() => setSelected(null)}
           onAction={run}
+          onMoved={(nodeId, id) => setSelected({ node: nodeId, id })}
         />
       )}
 
