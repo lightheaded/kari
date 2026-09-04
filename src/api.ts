@@ -19,6 +19,16 @@ import type {
 } from "./types";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+/** A browser preview served by the Vite dev server, where fixtures stand in
+ *  for the app core. A packaged app is served from its own protocol, so a
+ *  missing bridge there is a fault to report, not a reason to read fixtures. */
+const inDevServer = typeof window !== "undefined" && /^https?:\/\/localhost:\d+$/.test(window.location.origin);
+
+/** The page has no way to reach the app core. Fail loudly: a silent fall back
+ *  to fixtures inside a packaged app looks like a call that never answers. */
+function noBridge<T>(what: string): Promise<T> {
+  return Promise.reject(new Error(`${what}: this page cannot reach the app core (the Tauri bridge is missing)`));
+}
 
 /** Browser preview without Tauri: the Vite dev server serves `fixtures/*.json` at `/dev/*.json`.
  *  `board.json` comes from `cargo run -p kari-core --example board -- --json`. `settings.json` and
@@ -79,7 +89,12 @@ function toHubBoard(json: BoardView | HubBoard): HubBoard {
 }
 
 export const api = {
-  board: () => (inTauri ? invoke<HubBoard>("get_board") : devFixture<BoardView | HubBoard>("board").then(toHubBoard)),
+  board: () =>
+    inTauri
+      ? invoke<HubBoard>("get_board")
+      : inDevServer
+        ? devFixture<BoardView | HubBoard>("board").then(toHubBoard)
+        : noBridge<HubBoard>("board"),
   refresh: () => invoke<void>("refresh"),
   moveCard: (nodeId: string, cardId: string, columnId: string) => invoke<void>("move_card", { nodeId, cardId, columnId }),
   addTask: (nodeId: string, task: NewTask) => invoke<Card>("add_task", { nodeId, task }),
@@ -88,7 +103,8 @@ export const api = {
   columns: () => invoke<Column[]>("get_columns"),
   setColumns: (columns: Column[]) => invoke<void>("set_columns", { columns }),
   resetColumns: () => invoke<void>("reset_columns"),
-  settings: () => (inTauri ? invoke<Settings>("get_settings") : devFixture<Settings>("settings")),
+  settings: () =>
+    inTauri ? invoke<Settings>("get_settings") : inDevServer ? devFixture<Settings>("settings") : noBridge<Settings>("settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
   jumpIn: (nodeId: string, cardId: string) => invoke<string>("jump_in", { nodeId, cardId }),
   startCard: (nodeId: string, cardId: string, prompt?: string) => invoke<string>("start_card", { nodeId, cardId, prompt: prompt ?? null }),

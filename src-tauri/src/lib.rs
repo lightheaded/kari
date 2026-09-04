@@ -546,7 +546,10 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("kari_core=info".parse().unwrap()),
+                .add_directive("kari_core=info".parse().unwrap())
+                // Without this the app crate's own lines never reach the log,
+                // and the log is the only window into a phone.
+                .add_directive("kari=info".parse().unwrap()),
         )
         .init();
     tauri::Builder::default()
@@ -563,6 +566,7 @@ pub fn run() {
             forward_events(app.handle().clone(), hub);
             // Android 13 and later ask the user once before the first notification.
             let _ = app.notification().request_permission();
+            tracing::info!("mobile setup done");
             Ok(())
         })
         .invoke_handler(handlers!())
