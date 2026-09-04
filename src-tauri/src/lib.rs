@@ -46,9 +46,23 @@ where
         .map_err(err)?
 }
 
-/// The board of every node. On a phone this is the one call the first screen
-/// waits for, and the only window into it is the system log, so it says when it
-/// starts and what it answered. `adb logcat | grep kari` shows the pair.
+/// The board of every node, as a JSON string the caller parses.
+///
+/// Not an object on purpose. Tauri answers an object-shaped result through a
+/// channel, and on Android that channel makes the page fetch the payload over
+/// the internal protocol. That fetch does not complete on every device, and a
+/// page then waits for a board that never arrives. A string comes back on the
+/// direct path instead.
+///
+/// The phone has no console, so the call also writes a line to the system log
+/// when it starts and another with what it answered. `adb logcat | grep kari`
+/// shows the pair.
+#[tauri::command]
+async fn get_board_json(state: State<'_, AppState>) -> R<String> {
+    let b = get_board(state).await?;
+    serde_json::to_string(&b).map_err(err)
+}
+
 #[tauri::command]
 async fn get_board(state: State<'_, AppState>) -> R<HubBoard> {
     #[cfg(mobile)]
@@ -129,6 +143,12 @@ async fn reset_columns(state: State<'_, AppState>) -> R<()> {
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Settings {
     state.hub.engine().settings()
+}
+
+/// The settings as a JSON string. See `get_board_json` for why.
+#[tauri::command]
+fn get_settings_json(state: State<'_, AppState>) -> R<String> {
+    serde_json::to_string(&state.hub.engine().settings()).map_err(err)
 }
 
 #[tauri::command]
@@ -361,6 +381,8 @@ async fn set_away_mode(state: State<'_, AppState>, node_id: String, on: bool) ->
 /// Take the column lease on every node. This device then pushes columns.
 #[tauri::command]
 async fn claim_primary(state: State<'_, AppState>) -> R<String> {
+    #[cfg(mobile)]
+    tracing::info!("claim_primary: start");
     off_thread(&state.hub, |h| h.claim_primary()).await
 }
 
@@ -494,6 +516,8 @@ macro_rules! handlers {
     () => {
         tauri::generate_handler![
             get_board,
+            get_board_json,
+            get_settings_json,
             refresh,
             move_card,
             add_task,

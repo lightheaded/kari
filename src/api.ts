@@ -89,9 +89,13 @@ function toHubBoard(json: BoardView | HubBoard): HubBoard {
 }
 
 export const api = {
+  // The board and the settings come back as JSON strings. Tauri answers an
+  // object through a channel, and on Android that channel makes this page
+  // fetch the payload over the internal protocol, which does not complete on
+  // every device. A string takes the direct path.
   board: () =>
     inTauri
-      ? invoke<HubBoard>("get_board")
+      ? invoke<string>("get_board_json").then((s) => JSON.parse(s) as HubBoard)
       : inDevServer
         ? devFixture<BoardView | HubBoard>("board").then(toHubBoard)
         : noBridge<HubBoard>("board"),
@@ -104,7 +108,11 @@ export const api = {
   setColumns: (columns: Column[]) => invoke<void>("set_columns", { columns }),
   resetColumns: () => invoke<void>("reset_columns"),
   settings: () =>
-    inTauri ? invoke<Settings>("get_settings") : inDevServer ? devFixture<Settings>("settings") : noBridge<Settings>("settings"),
+    inTauri
+      ? invoke<string>("get_settings_json").then((s) => JSON.parse(s) as Settings)
+      : inDevServer
+        ? devFixture<Settings>("settings")
+        : noBridge<Settings>("settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
   jumpIn: (nodeId: string, cardId: string) => invoke<string>("jump_in", { nodeId, cardId }),
   startCard: (nodeId: string, cardId: string, prompt?: string) => invoke<string>("start_card", { nodeId, cardId, prompt: prompt ?? null }),
