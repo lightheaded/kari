@@ -1,6 +1,6 @@
 //! Domain types shared by the core, the Tauri shell and the UI (via serde).
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -468,11 +468,30 @@ pub struct Proposal {
     /// Cards that were eligible but did not fit.
     pub skipped: u32,
     pub expires_at: DateTime<Utc>,
-    /// open | accepted | snoozed | dismissed | expired
+    /// open | accepted | started | snoozed | dismissed | expired
     pub state: String,
     /// True when autopilot started it without a click.
     pub auto: bool,
     pub accepted_at: Option<DateTime<Utc>>,
+}
+
+/// How long an accepted plan stays on the board after its jobs start.
+pub const ACCEPTED_PROPOSAL_TTL_MINUTES: i64 = 30;
+
+impl Proposal {
+    /// True while the plan is still current: an open offer before it expires,
+    /// or an accepted plan that started in the last 30 minutes. A plan that
+    /// fails this test must not go back on the board, and must not come back
+    /// after a restart.
+    pub fn is_live(&self, now: DateTime<Utc>) -> bool {
+        match self.state.as_str() {
+            "open" => self.expires_at > now,
+            "accepted" => self
+                .accepted_at
+                .is_some_and(|t| now - t <= Duration::minutes(ACCEPTED_PROPOSAL_TTL_MINUTES)),
+            _ => false,
+        }
+    }
 }
 
 /// What the UI renders for one card.
@@ -1217,5 +1236,59 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(quiet.automation(), AutomationMode::Off);
+    }
+
+    #[test]
+    fn a_plan_stops_being_live_when_it_times_out() {
+        let now = Utc::now();
+        let base = Proposal {
+            id: "p1".into(),
+            created_at: now - Duration::hours(26),
+            trigger: ProposalTrigger::Manual,
+            reason: "you asked for a plan".into(),
+            items: vec![],
+            budget_pct: 39.0,
+            used_pct_before: 16.0,
+            total_pct: 5.9,
+            used_pct_after: 22.0,
+            skipped: 1,
+            expires_at: now - Duration::hours(25),
+            state: "open".into(),
+            auto: false,
+            accepted_at: None,
+        };
+
+        // An open offer lives until it expires.
+        assert!(!base.is_live(now));
+        let fresh = Proposal {
+            expires_at: now + Duration::minutes(10),
+            ..base.clone()
+        };
+        assert!(fresh.is_live(now));
+
+        // An accepted plan lives for 30 minutes after the jobs start.
+        let just_started = Proposal {
+            state: "accepted".into(),
+            accepted_at: Some(now - Duration::minutes(5)),
+            ..base.clone()
+        };
+        assert!(just_started.is_live(now));
+        let yesterday = Proposal {
+            state: "accepted".into(),
+            accepted_at: Some(now - Duration::hours(26)),
+            ..base.clone()
+        };
+        assert!(!yesterday.is_live(now));
+
+        // Every retired state stays retired.
+        for state in ["started", "snoozed", "dismissed", "expired"] {
+            let p = Proposal {
+                state: state.into(),
+                accepted_at: Some(now),
+                expires_at: now + Duration::hours(1),
+                ..base.clone()
+            };
+            assert!(!p.is_live(now), "{state} must not be live");
+        }
     }
 }
