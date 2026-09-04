@@ -560,6 +560,13 @@ fn write_geometry(window: &tauri::Window) {
     }
 }
 
+/// The interfaces of this machine, for the "let a phone reach this machine"
+/// picker in Settings.
+#[tauri::command]
+fn local_addresses() -> Vec<kari_core::net::LocalAddress> {
+    kari_core::net::local_addresses()
+}
+
 // ---------------------------------------------------------------- shell
 
 #[cfg(desktop)]
@@ -748,6 +755,7 @@ macro_rules! handlers {
             answer_permission,
             set_away_mode,
             pairing_code,
+            local_addresses,
         ]
     };
 }

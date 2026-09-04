@@ -694,9 +694,16 @@ pub struct Settings {
     pub away_mode: bool,
     /// Seconds a held permission prompt waits before the dialog appears.
     pub away_hold_secs: u64,
-    /// Answer on every private address of this machine, not on loopback only.
-    /// A hub on a phone needs it, because a phone cannot open an SSH forward.
-    /// Public addresses are never bound. Off by default.
+    /// Where the API answers besides loopback, for a hub on a phone that
+    /// cannot open an SSH forward. Empty means loopback only. An interface
+    /// name, such as `utun5`, means the private addresses of that interface,
+    /// which is what a VPN needs. `*` means every private address of the
+    /// machine. A public address is never bound.
+    pub listen_on: String,
+    /// The switch this replaced: it bound every private address. Read once so
+    /// that a machine set up before the picker keeps answering, then written
+    /// back as `*`. Never sent to the UI.
+    #[serde(default, skip_serializing)]
     pub listen_private: bool,
 }
 
@@ -770,6 +777,7 @@ impl Default for Settings {
             node_name: String::new(),
             away_mode: false,
             away_hold_secs: 600,
+            listen_on: String::new(),
             listen_private: false,
         }
     }

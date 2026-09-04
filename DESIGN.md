@@ -364,12 +364,17 @@ stay in one place. A node needs no open port, no certificate and no new secret.
 A client that cannot open an SSH forward, such as a phone app, reaches a node
 over a private network instead. The node record then carries an `address`
 (`host:port`) and the token comes with it, from a pairing code. The node
-answers on loopback for the hook relay, and on every private address of the
-machine while the setting `listen_private` is on (`kari-node serve --private`,
-or "Let a phone reach this machine" in the desktop Settings). A public address
-is never bound, so a laptop that visits other networks stays closed there. The
-listener reads the address list again every 20 seconds: a VPN interface that
-comes up later is bound without a restart, and one that goes away is dropped.
+answers on loopback for the hook relay, and on the addresses named by the
+setting `listen_on`: empty for loopback only, an interface name such as
+`utun5` for the private addresses of that interface, or `*` for every private
+address (`kari-node serve --private`, or the picker "Let a phone reach this
+machine on" in the desktop Settings). An interface name is the setting to
+prefer: `*` also binds an interface a corporate VPN adds, and then that
+address reaches the pairing code. A public address is never bound, so a laptop
+that visits other networks stays closed there. The listener reads the address
+list again every 20 seconds: a VPN interface that comes up later is bound
+without a restart, one that goes away is dropped, and an address that changes
+is followed.
 The token is the only guard on that path, so the private network is what
 carries the trust.
 

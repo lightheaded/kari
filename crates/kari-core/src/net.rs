@@ -51,11 +51,19 @@ pub fn local_addresses() -> Vec<LocalAddress> {
     out
 }
 
-/// Every private, non-loopback address of this machine, with `port`.
-pub fn private_sockets(port: u16) -> Vec<SocketAddr> {
+/// The private, non-loopback addresses to bind, with `port`.
+///
+/// `only` is an interface name, such as `utun5`, or `*` for every interface.
+/// An empty name binds nothing. A public address is never returned.
+pub fn private_sockets(port: u16, only: &str) -> Vec<SocketAddr> {
+    let only = only.trim();
+    if only.is_empty() {
+        return Vec::new();
+    }
     local_addresses()
         .into_iter()
         .filter(|a| a.private)
+        .filter(|a| only == "*" || a.interface == only)
         .filter_map(|a| a.ip.parse::<std::net::IpAddr>().ok())
         .map(|ip| SocketAddr::new(ip, port))
         .collect()

@@ -367,7 +367,7 @@ export interface Settings {
   weekly_warn_unused_pct: number;
   away_mode: boolean;
   away_hold_secs: number;
-  listen_private: boolean;
+  listen_on: string;
 }
 export interface NewTask {
   title: string;
@@ -463,6 +463,11 @@ export interface HubBoard {
   herdr_connected: boolean;
   hooks_installed: boolean;
   hooks_port: number;
+}
+export interface LocalAddress {
+  interface: string;
+  ip: string;
+  private: boolean;
 }
 export interface NewNode {
   name: string;

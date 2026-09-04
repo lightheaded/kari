@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AutomationMode, Column, DerivedState, NewTask, NodeStatus, Settings } from "../types";
+import type { AutomationMode, Column, DerivedState, LocalAddress, NewTask, NodeStatus, Settings } from "../types";
 import { ALL_STATES, AUTOMATION_MODES, RUN_MODELS, STATE_LABEL } from "../types";
 import { nodeDot, noAutoFill, proseField, relTime } from "../util";
 import { useAutoGrow } from "../hooks";
@@ -438,16 +438,16 @@ function NodesSection({
   onNodesChanged,
   localName,
   onLocalName,
-  listenPrivate,
-  onListenPrivate,
+  listenOn,
+  onListenOn,
 }: {
   nodes: NodeStatus[];
   primary: boolean;
   onNodesChanged: () => void;
   localName: string;
   onLocalName: (name: string) => void;
-  listenPrivate: boolean;
-  onListenPrivate: (on: boolean) => void;
+  listenOn: string;
+  onListenOn: (value: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -458,6 +458,12 @@ function NodesSection({
   const [port, setPort] = useState(47311);
   const [msg, setMsg] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
+  const [addrs, setAddrs] = useState<LocalAddress[]>([]);
+  useEffect(() => {
+    api.localAddresses().then(setAddrs).catch(() => {});
+  }, []);
+  /** One entry per interface that has a private address. */
+  const ifaces = addrs.filter((a) => a.private).filter((a, i, all) => all.findIndex((b) => b.interface === a.interface) === i);
   const holder = nodes.find((n) => n.lease && !n.primary)?.lease?.hub_name;
 
   /** Every change reloads the board, and the fresh node list comes back with it. */
@@ -527,16 +533,24 @@ function NodesSection({
         </button>
       </div>
       <div className="phonereach">
-        <label className="checkrow">
-          <input type="checkbox" checked={listenPrivate} onChange={(e) => onListenPrivate(e.target.checked)} />
-          <span>Let a phone reach this machine</span>
-        </label>
-        <div className="hint">
-          kari then answers on the private addresses of this machine as well, such as a VPN address. It never answers on a public address. A hub on a phone needs this, because a phone cannot open an SSH
-          forward. The list is checked again every 20 seconds, so a VPN that comes up later needs no restart.
+        <div className="field">
+          <label>Let a phone reach this machine on</label>
+          <select value={listenOn} onChange={(e) => onListenOn(e.target.value)}>
+            <option value="">loopback only</option>
+            {ifaces.map((a) => (
+              <option key={a.interface} value={a.interface}>
+                {a.interface} · {a.ip}
+              </option>
+            ))}
+            <option value="*">every private address</option>
+          </select>
+          <div className="hint">
+            A hub on a phone needs this, because a phone cannot open an SSH forward. Name the VPN interface: kari then answers on that address as well as on loopback, and the pairing code carries it. A
+            public address is never bound. The list is read again every 20 seconds, so a VPN that comes up later needs no restart, and an address that changes is followed.
+          </div>
         </div>
-        {listenPrivate && (
-          <div className="hint">{reach.length ? `reachable at ${reach.join(", ")}` : "no private address yet. Bring the VPN up, then look again in 20 seconds."}</div>
+        {listenOn && (
+          <div className="hint">{reach.length ? `reachable at ${reach.join(", ")}` : "not bound yet. Bring the interface up, then look again in 20 seconds."}</div>
         )}
       </div>
       {code && (
@@ -703,12 +717,12 @@ export function SettingsModal({
         onNodesChanged={onNodesChanged}
         localName={s.node_name ?? ""}
         onLocalName={(name) => setS({ ...s, node_name: name })}
-        listenPrivate={s.listen_private}
-        onListenPrivate={(on) => {
-          setS({ ...s, listen_private: on });
+        listenOn={s.listen_on}
+        onListenOn={(on) => {
+          setS({ ...s, listen_on: on });
           // Saved at once: the pairing code needs the addresses now, not after
           // the Save button.
-          onSaveNow({ ...settings, listen_private: on });
+          onSaveNow({ ...settings, listen_on: on });
         }}
       />
       <div className="section">

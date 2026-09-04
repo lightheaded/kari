@@ -555,15 +555,15 @@ pub async fn serve_dynamic(
         if pinned.iter().any(|h| h.is_finished()) {
             anyhow::bail!("the api stopped listening");
         }
-        let on = force_private || engine.settings().listen_private;
-        let want: Vec<SocketAddr> = if on {
-            crate::net::private_sockets(port)
-                .into_iter()
-                .filter(|a| !fixed.contains(a))
-                .collect()
+        let only = if force_private {
+            "*".to_string()
         } else {
-            Vec::new()
+            engine.settings().listen_on
         };
+        let want: Vec<SocketAddr> = crate::net::private_sockets(port, &only)
+            .into_iter()
+            .filter(|a| !fixed.contains(a))
+            .collect();
         extra.retain(|addr, _| {
             let keep = want.contains(addr);
             if !keep {

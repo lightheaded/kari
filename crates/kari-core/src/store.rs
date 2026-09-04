@@ -472,8 +472,16 @@ impl Store {
                 |r| r.get(0),
             )
             .optional()?;
-        Ok(v.and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default())
+        let mut s: Settings = v
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        // A machine set up before the interface picker had a switch that
+        // bound every private address. Keep it answering.
+        if s.listen_private && s.listen_on.is_empty() {
+            s.listen_on = "*".into();
+        }
+        s.listen_private = false;
+        Ok(s)
     }
 
     pub fn save_settings(&self, s: &Settings) -> anyhow::Result<()> {
