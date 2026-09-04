@@ -407,6 +407,7 @@ and says so in Settings. Every other route needs the token in the
 | `GET /kari/v1/events` | server-sent events: `board_changed`, `notice`, `lease_changed` |
 | `POST /kari/v1/cards` | `add_task()` |
 | `PATCH`, `DELETE /kari/v1/cards/{id}` | `patch_card()`, `delete_card()` |
+| `POST /kari/v1/cards/restore` | `restore_card()`: the undo of a delete, with the whole card in the body |
 | `POST /kari/v1/cards/{id}/move`, `/start`, `/stop`, `/summarize`, `/jump` | the card actions |
 | `GET /kari/v1/cards/{id}/jobs` | `job_log()` |
 | `GET`, `PUT /kari/v1/columns`, `/settings` | columns and settings; `PUT /columns` needs the lease |

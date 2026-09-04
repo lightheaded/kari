@@ -149,6 +149,12 @@ kari lives in the menu bar. The tray tooltip shows how many sessions work, how m
 
 kari sends a macOS notification when a card needs you, when a plan is ready, when mode Auto started a plan, when weekly quota is about to expire unused, and when a column passes its WIP limit. The same notice appears as a toast in the window. A click on the toast opens the card.
 
+## Toasts and undo
+
+Every command answers with a toast in the bottom left corner. A thin bar along the foot shows the time that is left. The stack holds while the pointer is on it, so you can read a long notice to the end. The close button drops one toast, and "Dismiss all" drops the whole stack.
+
+A toast carries an Undo button when kari can reverse the action. A delete, an archive, a move to another column and a new task all have an undo. A save of a card, of the settings or of the columns has one too. So do the hooks switch and the automation switch. Undo puts the old state back, and the next toast says so. A deleted card comes back with its id, its times and its session, because kari sends the whole card to the node again.
+
 ## Try the demo board
 
 ```

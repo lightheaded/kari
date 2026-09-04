@@ -1031,6 +1031,15 @@ impl Hub {
         self.on_node(node, |e| e.delete_card(card), |c| c.delete_card(card))
     }
 
+    pub fn restore_card(&self, node: &str, card: Card) -> anyhow::Result<Card> {
+        let c2 = card.clone();
+        self.on_node(
+            node,
+            move |e| e.restore_card(card),
+            move |c| c.restore_card(&c2),
+        )
+    }
+
     pub fn start_card(
         &self,
         node: &str,

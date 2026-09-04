@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
 import type { AutomationMode, Column, HubBoard, HubCard, Project, Settings } from "./types";
+import { AUTOMATION_MODES } from "./types";
 import { Board, type Picked, type Reorder } from "./components/Board";
 import { Drawer } from "./components/Drawer";
 import { StatsStrip } from "./components/StatsStrip";
@@ -9,63 +10,11 @@ import { QueueStrip } from "./components/QueueStrip";
 import { ProjectPicker, type PickerItem } from "./components/ProjectPicker";
 import { AddTaskModal, ColumnsModal, SettingsModal } from "./components/Modals";
 import { ProposalPanel } from "./components/Proposals";
+import { Toasts } from "./components/Toasts";
+import { useToasts, type Undo } from "./toasts";
 import { useSticky } from "./hooks";
 import { anyDirty } from "./dirty";
 import { noAutoFill } from "./util";
-
-interface Toast {
-  id: number;
-  text: string;
-  err?: boolean;
-  card?: Picked | null;
-  /** Milliseconds on screen. A notice from the engine holds long enough to read. */
-  ttl: number;
-}
-
-/** One toast. The countdown stops while the pointer is on it, so a long notice
- *  can be read to the end, and the close button drops it at once. */
-function ToastItem({ t, onClose, onOpen }: { t: Toast; onClose: () => void; onOpen?: () => void }) {
-  const left = useRef(t.ttl);
-  const timer = useRef<number | null>(null);
-  const startedAt = useRef(0);
-  const start = useCallback(() => {
-    startedAt.current = Date.now();
-    timer.current = window.setTimeout(onClose, left.current);
-  }, [onClose]);
-  const pause = () => {
-    if (timer.current == null) return;
-    window.clearTimeout(timer.current);
-    timer.current = null;
-    left.current = Math.max(1500, left.current - (Date.now() - startedAt.current));
-  };
-  useEffect(() => {
-    start();
-    return () => {
-      if (timer.current != null) window.clearTimeout(timer.current);
-    };
-  }, [start]);
-  return (
-    <div
-      className={`toast ${t.err ? "err" : ""} ${onOpen ? "link" : ""}`}
-      onMouseEnter={pause}
-      onMouseLeave={start}
-      onClick={onOpen}
-      role="status"
-    >
-      <span>{t.text}</span>
-      <button
-        className="x"
-        aria-label="Dismiss"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-      >
-        ✕
-      </button>
-    </div>
-  );
-}
 
 /** Joins a node id and a project directory into one filter value. */
 const PROJ_SEP = "\u0001";
@@ -83,19 +32,13 @@ export default function App() {
   /** Column a new task must land in, when the dialog came from a column foot. */
   const [addColumn, setAddColumn] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [toasts, setToasts] = useState<Toast[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [planHidden, setPlanHidden] = useState<Set<string>>(() => new Set());
   /** The tray or Cmd+Q asked to quit while a form holds unsaved input. */
   const [quitAsk, setQuitAsk] = useState(false);
   const [refreshingQuota, setRefreshingQuota] = useState(false);
 
-  const dropToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
-
-  const toast = useCallback((text: string, err = false, card: Picked | null = null, ttl?: number) => {
-    const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text, err, card, ttl: ttl ?? (err ? 9000 : card ? 10000 : 4000) }]);
-  }, []);
+  const { toasts, toast, drop: dropToast, clear: clearToasts } = useToasts();
 
   const load = useCallback(async () => {
     try {
@@ -112,7 +55,7 @@ export default function App() {
     api.settings().then(setSettings).catch(() => {});
     const un1 = onBoardChanged(load);
     const un2 = onNotice((n) =>
-      toast(`${n.title} — ${n.body}`, false, n.card_id ? { node: n.node_id, id: n.card_id } : null, 20000),
+      toast(`${n.title} — ${n.body}`, { card: n.card_id ? { node: n.node_id, id: n.card_id } : null, ttl: 20000 }),
     );
     const un3 = onConfirmQuit(() => setQuitAsk(true));
     const t = window.setInterval(load, 30000);
@@ -133,18 +76,26 @@ export default function App() {
     };
   }, [load, toast]);
 
+  /** Run one action, report it, and offer its undo when it has one. `undo`
+   *  can read the result, for example the card a new task became. */
   const run = useCallback(
-    async (fn: () => Promise<unknown>, ok?: string) => {
+    async <T,>(fn: () => Promise<T>, ok?: string, undo?: Undo | ((r: T) => Undo | null)) => {
       try {
         const r = await fn();
-        if (ok) toast(typeof r === "string" && r ? r : ok);
+        if (ok) {
+          const u = typeof undo === "function" ? undo(r) : undo;
+          toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined });
+        }
         await load();
       } catch (e) {
-        toast(String(e), true);
+        toast(String(e), { err: true });
       }
     },
     [load, toast],
   );
+
+  /** The user pressed Undo. The reversal is an action like any other. */
+  const undo = useCallback((u: Undo) => void run(u.run, u.done), [run]);
 
   const nodes = useMemo(() => board?.nodes ?? [], [board]);
   const manyNodes = nodes.length > 1;
@@ -227,6 +178,40 @@ export default function App() {
     if (cwd) setLastProject(`${nodeId}${PROJ_SEP}${cwd}`);
   };
 
+  /** The undo of a column save: put the columns that were there back. */
+  const undoColumns = (was: Column[]): Undo | undefined =>
+    was.length ? { done: "Columns put back", run: () => api.setColumns(was) } : undefined;
+
+  /** The undo of a settings save. The screen holds the old settings too. */
+  const undoSettings = (was: Settings | null): Undo | undefined =>
+    was
+      ? {
+          done: "Settings put back",
+          run: () => api.setSettings(was).then(() => setSettings(was)),
+        }
+      : undefined;
+
+  /** A card dropped in another column. Say where it went, and offer the way back. */
+  const moveCard = (nodeId: string, id: string, columnId: string) => {
+    const was = board?.cards.find((c) => c.node_id === nodeId && c.card.id === id)?.column_id;
+    const name = (board?.columns ?? []).find((k) => k.id === columnId)?.name ?? "another column";
+    run(() => api.moveCard(nodeId, id, columnId), `Moved to ${name}`, () =>
+      was && was !== columnId ? { done: "Card moved back", run: () => api.moveCard(nodeId, id, was) } : null,
+    );
+  };
+
+  /** The automation switch. An empty node id means every node that answers, so
+   *  the undo holds only when the nodes agreed on one mode before. */
+  const setMode = (nodeId: string, mode: AutomationMode) => {
+    const scope = nodeId ? nodes.filter((n) => n.id === nodeId) : nodes.filter((n) => n.enabled && n.online);
+    const modes = new Set(scope.map((n) => n.automation_mode || "ask"));
+    const was = modes.size === 1 ? ([...modes][0] as AutomationMode) : null;
+    const label = (m: AutomationMode) => AUTOMATION_MODES.find((x) => x.value === m)?.label ?? m;
+    run(() => api.setAutomationMode(nodeId, mode), `Automation: ${label(mode)}`, () =>
+      was && was !== mode ? { done: `Automation back to ${label(was)}`, run: () => api.setAutomationMode(nodeId, was) } : null,
+    );
+  };
+
   /** A one-line task from the foot of a column. */
   const addInline = async (columnId: string, title: string) => {
     await run(
@@ -256,7 +241,7 @@ export default function App() {
         <AutomationSwitch
           nodes={nodes}
           filter={node}
-          onChange={(nodeId, mode: AutomationMode) => run(() => api.setAutomationMode(nodeId, mode))}
+          onChange={(nodeId, mode: AutomationMode) => setMode(nodeId, mode)}
         />
         {hiddenPlans > 0 && (
           <button className="pill plan" onClick={() => setPlanHidden(new Set())} title="Show the plan panel again">
@@ -359,7 +344,7 @@ export default function App() {
             nodes={nodes}
             selected={selected}
             onSelect={(nodeId, id) => setSelected({ node: nodeId, id })}
-            onMove={(nodeId, id, columnId) => run(() => api.moveCard(nodeId, id, columnId))}
+            onMove={(nodeId, id, columnId) => moveCard(nodeId, id, columnId)}
             onReorder={(r: Reorder) => run(() => api.reorderCards(r.node, r.ranked, r.unranked))}
             onJump={(nodeId, id) => run(() => api.jumpIn(nodeId, id), "Opened")}
             onFilterNode={(nodeId) => setNodeFilter(node === nodeId ? "" : nodeId)}
@@ -412,7 +397,10 @@ export default function App() {
           projectsByNode={projectsByNode}
           onClose={() => setModal(null)}
           onSubmit={(nodeId, t) =>
-            run(() => api.addTask(nodeId, t), "Task added").then(() => {
+            run(() => api.addTask(nodeId, t), "Task added", (c) => ({
+              done: "Task taken off the board",
+              run: () => api.deleteCard(nodeId, c.id),
+            })).then(() => {
               rememberProject(nodeId, t.project_cwd);
               setModal(null);
             })
@@ -423,8 +411,10 @@ export default function App() {
         <ColumnsModal
           columns={board.columns}
           onClose={() => setModal(null)}
-          onSave={(cols) => run(() => api.setColumns(cols), "Columns saved").then(() => setModal(null))}
-          onReset={() => run(() => api.resetColumns(), "Default columns restored").then(() => setModal(null))}
+          onSave={(cols) => run(() => api.setColumns(cols), "Columns saved", undoColumns(board.columns)).then(() => setModal(null))}
+          onReset={() =>
+            run(() => api.resetColumns(), "Default columns restored", undoColumns(board.columns)).then(() => setModal(null))
+          }
         />
       )}
       {modal === "settings" && settings && (
@@ -435,15 +425,20 @@ export default function App() {
           nodes={nodes}
           primary={board?.primary ?? true}
           onNodesChanged={load}
-          onHooks={(install) => run(() => (install ? api.installHooks() : api.uninstallHooks()), install ? "Hooks installed" : "Hooks removed")}
+          onHooks={(install) =>
+            run<string | void>(() => (install ? api.installHooks() : api.uninstallHooks()), install ? "Hooks installed" : "Hooks removed", {
+              done: install ? "Hooks removed again" : "Hooks installed again",
+              run: () => (install ? api.uninstallHooks() : api.installHooks()),
+            })
+          }
           onClose={() => setModal(null)}
           onSave={(s) =>
-            run(() => api.setSettings(s), "Settings saved").then(() => {
+            run(() => api.setSettings(s), "Settings saved", undoSettings(settings)).then(() => {
               setSettings(s);
               setModal(null);
             })
           }
-          onSaveNow={(s) => run(() => api.setSettings(s), "Settings saved").then(() => setSettings(s))}
+          onSaveNow={(s) => run(() => api.setSettings(s), "Settings saved", undoSettings(settings)).then(() => setSettings(s))}
           onStopAll={() => run(() => api.stopAll(), "Stopped kari jobs")}
         />
       )}
@@ -469,23 +464,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="toasts">
-        {toasts.map((t) => (
-          <ToastItem
-            key={t.id}
-            t={t}
-            onClose={() => dropToast(t.id)}
-            onOpen={
-              t.card
-                ? () => {
-                    setSelected(t.card!);
-                    dropToast(t.id);
-                  }
-                : undefined
-            }
-          />
-        ))}
-      </div>
+      <Toasts toasts={toasts} onDrop={dropToast} onClear={clearToasts} onOpen={setSelected} onUndo={undo} />
     </div>
   );
 }

@@ -244,14 +244,36 @@ a { color: var(--accent); }
 .drawer .unsaved { margin: 0; }
 pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px solid var(--line-soft); border-radius: 5px; padding: 10px; overflow: auto; margin: 0; white-space: pre-wrap; }
 
-/* toasts */
-.toasts { position: fixed; left: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 40; }
-.toast {
-  background: var(--ink); color: var(--ground); padding: 9px 12px; border-radius: 6px; font-size: 12.5px;
-  box-shadow: var(--shadow); max-width: 420px; display: flex; gap: 10px; align-items: flex-start; user-select: text;
+/* toasts. One width for the stack, so the close button sits at the same edge
+   on every toast. The container takes no clicks; the toasts in it do. */
+.toasts {
+  position: fixed; left: 14px; bottom: 14px; z-index: 40; pointer-events: none;
+  width: min(400px, calc(100vw - 28px)); display: flex; flex-direction: column; gap: 8px;
 }
-.toast .x { background: none; border: none; color: inherit; opacity: 0.6; padding: 0 2px; font-size: 11px; line-height: 1.5; flex: none; }
+.toasts .dismiss-all {
+  pointer-events: auto; align-self: flex-start; background: var(--ink); color: var(--ground);
+  border: none; border-radius: 5px; padding: 3px 9px; font: inherit; font-size: 11px;
+  box-shadow: var(--shadow); opacity: 0.7; cursor: pointer;
+}
+.toasts .dismiss-all:hover { opacity: 1; }
+.toast {
+  pointer-events: auto; position: relative; overflow: hidden; box-sizing: border-box; width: 100%;
+  background: var(--ink); color: var(--ground); padding: 9px 10px 11px 12px; border-radius: 6px; font-size: 12.5px;
+  box-shadow: var(--shadow); display: flex; gap: 8px; align-items: flex-start; user-select: text;
+}
+.toast .msg { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.toast .undo {
+  background: none; border: 1px solid color-mix(in srgb, currentColor 40%, transparent); color: inherit;
+  border-radius: 4px; padding: 1px 7px; font: inherit; font-size: 11.5px; flex: none; cursor: pointer;
+}
+.toast .undo:hover { background: color-mix(in srgb, currentColor 16%, transparent); }
+.toast .x { background: none; border: none; color: inherit; opacity: 0.6; padding: 0 2px; font-size: 11px; line-height: 1.5; flex: none; margin-left: auto; }
 .toast .x:hover { opacity: 1; }
+/* The clock of the toast. The script drives it, so it holds with the stack. */
+.toast .life {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: currentColor; opacity: 0.16; transform-origin: left center;
+}
 .toast.err { background: var(--rust); color: #fff; }
 .empty { padding: 30px; text-align: center; color: var(--ink-3); font-size: 12.5px; }
 

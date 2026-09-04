@@ -128,6 +128,12 @@ async fn delete_card(state: State<'_, AppState>, node_id: String, card_id: Strin
     off_thread(&state.hub, move |h| h.delete_card(&node_id, &card_id)).await
 }
 
+/// Put a deleted card back. The undo of `delete_card`.
+#[tauri::command]
+async fn restore_card(state: State<'_, AppState>, node_id: String, card: Card) -> R<Card> {
+    off_thread(&state.hub, move |h| h.restore_card(&node_id, card)).await
+}
+
 /// The frontend reports whether any form holds unsaved input.
 #[tauri::command]
 fn set_dirty(state: State<'_, AppState>, dirty: bool) {
@@ -716,6 +722,7 @@ macro_rules! handlers {
             add_task,
             patch_card,
             delete_card,
+            restore_card,
             set_dirty,
             quit_now,
             reorder_cards,

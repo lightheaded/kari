@@ -1174,6 +1174,41 @@ mod tests {
         assert_eq!(serde_json::from_value::<Project>(j).unwrap(), p);
     }
 
+    /// The undo of a delete sends the whole card back over the node API, so
+    /// every field must survive a JSON round trip. A field that only
+    /// serializes would come back as a card with a hole in it.
+    #[test]
+    fn a_card_survives_a_round_trip() {
+        let now = Utc::now();
+        let c = Card {
+            id: "card-1".into(),
+            kind: CardKind::Task,
+            title: Some("Fix the flaky auth test".into()),
+            session_id: Some("sess-1".into()),
+            project_cwd: Some("/srv/repo".into()),
+            priority: 3,
+            auto_run: true,
+            run_prompt: Some("go".into()),
+            permission_mode: Some("plan".into()),
+            model: Some("fable".into()),
+            estimate_weighted_tokens: Some(12.5),
+            manual_column: Some("doing".into()),
+            manual_lock_priority: Some(2),
+            tags: vec!["ops".into()],
+            notes: Some("one run in five".into()),
+            archived: false,
+            bg_job_id: Some("job-1".into()),
+            last_job_state: Some("working".into()),
+            last_job_at: Some(now),
+            created_at: now,
+            updated_at: now,
+            done_at: None,
+        };
+        let out = serde_json::to_value(&c).unwrap();
+        let back = serde_json::from_value::<Card>(out.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&back).unwrap(), out);
+    }
+
     /// kari 0.5.2 and earlier sent a pair. Read it whichever way round it came.
     #[test]
     fn project_reads_the_old_pair() {

@@ -109,6 +109,8 @@ export const api = {
   addTask: (nodeId: string, task: NewTask) => invoke<Card>("add_task", { nodeId, task }),
   patchCard: (nodeId: string, cardId: string, patch: CardPatch) => invoke<Card>("patch_card", { nodeId, cardId, patch }),
   deleteCard: (nodeId: string, cardId: string) => invoke<void>("delete_card", { nodeId, cardId }),
+  /** Put a deleted card back, exactly as it was. The undo of `deleteCard`. */
+  restoreCard: (nodeId: string, card: Card) => invoke<Card>("restore_card", { nodeId, card }),
   /** Tell the app whether a form holds unsaved input, so a quit can ask first. */
   setDirty: (dirty: boolean) => (inTauri ? invoke<void>("set_dirty", { dirty }) : Promise.resolve()),
   quitNow: () => invoke<void>("quit_now"),

@@ -237,6 +237,11 @@ async fn delete_card(State(st): State<ApiState>, Path(id): Path<String>) -> R<()
     blocking(move || e.delete_card(&id)).await
 }
 
+async fn restore_card(State(st): State<ApiState>, Json(card): Json<Card>) -> R<Card> {
+    let e = st.engine;
+    blocking(move || e.restore_card(card)).await
+}
+
 async fn reorder_cards(State(st): State<ApiState>, Json(b): Json<ReorderBody>) -> R<()> {
     let e = st.engine;
     blocking(move || e.reorder_cards(&b.ranked, &b.unranked)).await
@@ -426,6 +431,7 @@ pub fn router(engine: Arc<Engine>, token: String) -> Router {
         .route("/refresh", post(refresh))
         .route("/cards", post(add_task))
         .route("/cards/reorder", post(reorder_cards))
+        .route("/cards/restore", post(restore_card))
         .route(
             "/cards/{id}",
             axum::routing::patch(patch_card).delete(delete_card),

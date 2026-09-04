@@ -148,6 +148,8 @@
 .mapp .backdrop { align-items: stretch; }
 .mapp .modal { width: 100vw; max-width: 100vw; max-height: none; height: 100%; border-radius: 0; border: 0; }
 .mapp .modal .body { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
-.mapp .toasts { left: 10px; right: 10px; bottom: calc(60px + env(safe-area-inset-bottom)); }
-.mapp .toast { max-width: none; }
+.mapp .toasts { left: 10px; right: 10px; width: auto; bottom: calc(60px + env(safe-area-inset-bottom)); }
+/* A finger needs more than a pointer does. */
+.mapp .toast .undo { padding: 4px 11px; font-size: 12.5px; }
+.mapp .toast .x { padding: 2px 6px; font-size: 13px; }
 .mapp .empty { padding: 30px 14px; }
