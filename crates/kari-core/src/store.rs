@@ -186,8 +186,38 @@ impl Store {
         let store = Store { conn };
         if store.load_columns()?.is_empty() {
             store.save_columns(&Column::defaults())?;
+        } else {
+            store.merge_legacy_columns()?;
         }
         Ok(store)
+    }
+
+    /// Replace the nine columns kari shipped up to version 0.4.1 with the six
+    /// the board uses now. A layout the user changed is left alone.
+    ///
+    /// Manual locks follow their column: the three columns that waited for the
+    /// user become "Needs me", and the two review columns become "Review". The
+    /// key `notice.columns_merged` tells the app to say so once.
+    fn merge_legacy_columns(&self) -> anyhow::Result<()> {
+        let stored = self.load_columns()?;
+        if !Column::same_layout(&stored, &Column::legacy_defaults()) {
+            return Ok(());
+        }
+        self.save_columns(&Column::defaults())?;
+        let mut moved = 0usize;
+        for mut c in self.list_cards()? {
+            let Some(old) = c.manual_column.as_deref() else {
+                continue;
+            };
+            let Some(new) = Column::migrated_column_id(old) else {
+                continue;
+            };
+            c.manual_column = Some(new.into());
+            self.upsert_card(&c)?;
+            moved += 1;
+        }
+        self.kv_set("notice.columns_merged", &moved.to_string())?;
+        Ok(())
     }
 
     // ---- columns ----

@@ -48,6 +48,55 @@ export const STATE_LABEL: Record<DerivedState, string> = {
   unknown: "Unknown",
 };
 
+/** One sentence per state: what the signal means and what the user does about it. */
+export const STATE_HELP: Record<DerivedState, string> = {
+  backlog: "A task without a session. Nothing runs. Mark it \"May run unattended\" to make it eligible for a plan.",
+  ready: "A task that may run unattended. The planner picks from here when quota is left over.",
+  working: "Claude is busy on this session right now, in a terminal or as a background job.",
+  my_turn: "The session is alive and idle. Claude answered, and the next prompt is yours.",
+  needs_decision: "Claude asked a question with options and waits for your answer.",
+  needs_approval: "Claude waits for a permission, a plan approval, or a dialog. Nothing moves until you approve.",
+  waiting_on_others: "Someone else must act: a review, a reply, a deploy.",
+  validate: "The work looks finished but is not verified: a PR is open, or a background job finished.",
+  done: "Finished. The PR merged, you marked it done, or the session went quiet.",
+  stale: "No process and no activity for a long time, not judged done.",
+  unknown: "kari could not derive a state from the signals it has.",
+};
+
+/** How much automatic behaviour a node allows. */
+export type AutomationMode = "off" | "ask" | "auto";
+
+export const AUTOMATION_MODES: { value: AutomationMode; label: string; help: string }[] = [
+  { value: "off", label: "Off", help: "No plans and no starts. The quota is yours." },
+  { value: "ask", label: "Ask", help: "kari offers a plan. You press Start." },
+  { value: "auto", label: "Auto", help: "A weekly-reset plan starts by itself." },
+];
+
+export interface QueueStep {
+  card_id: string;
+  title: string;
+  project_name: string | null;
+  model: string | null;
+  estimate: Estimate;
+  /** Percent of the 5-hour window in use after this step. */
+  window_after_pct: number;
+  fits: boolean;
+  starts_at: string | null;
+  reason: string;
+}
+export interface QueuePlan {
+  steps: QueueStep[];
+  budget_pct: number;
+  used_pct: number;
+  next_check_at: string;
+  next_trigger_at: string | null;
+  next_trigger: ProposalTrigger | null;
+  mode: AutomationMode;
+  /** Why nothing would run at all. Null means the queue can run. */
+  blocked: string | null;
+  open_proposal: boolean;
+}
+
 export interface Column {
   id: string;
   name: string;
@@ -285,6 +334,8 @@ export interface BoardView {
   hooks_port: number;
   calibration: Calibration;
   proposal: Proposal | null;
+  queue?: QueuePlan | null;
+  automation_mode?: AutomationMode;
 }
 export interface Settings {
   node_name: string;
@@ -326,6 +377,8 @@ export interface NewTask {
   priority: number;
   notes: string | null;
   model: string | null;
+  /** Column the card must land in. A column that no new task derives gets a manual lock. */
+  column_id?: string | null;
 }
 export interface CardPatch {
   title?: string | null;
@@ -370,6 +423,8 @@ export interface NodeStatus {
   away_mode: boolean;
   /** Addresses the node answers on, best first. A pairing code carries them. */
   addresses: string[];
+  /** How much automatic behaviour the node allows. Empty from an older node. */
+  automation_mode: AutomationMode | "";
 }
 export interface HubCard extends CardView {
   node_id: string;
@@ -380,6 +435,11 @@ export interface NodeQuota {
   node_name: string;
   quota: QuotaSample | null;
   calibration: Calibration;
+}
+export interface NodeQueue {
+  node_id: string;
+  node_name: string;
+  queue: QueuePlan;
 }
 export interface NodeProposal {
   node_id: string;
@@ -396,6 +456,7 @@ export interface HubBoard {
   nodes: NodeStatus[];
   cards: HubCard[];
   quotas: NodeQuota[];
+  queues: NodeQueue[];
   proposals: NodeProposal[];
   generated_at: string;
   scanning: boolean;

@@ -58,7 +58,18 @@ body {
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 a { color: var(--accent); }
-.app { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100%; }
+.app { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); height: 100%; }
+/* The board, and the plan panels docked in a rail at its right. A fixed panel
+   covered the last two columns, so it shares the row instead. */
+.main { display: flex; min-height: 0; min-width: 0; height: 100%; }
+.main > .board { flex: 1; min-width: 0; }
+.planrail {
+  display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto;
+  margin: 12px 14px 14px 0; min-height: 0; overflow-y: auto;
+}
+/* A docked panel takes width from the board. The columns give up more of
+   theirs, so every column stays on screen while the panel is open. */
+.main:has(.planrail) .col { min-width: 160px; flex-basis: 168px; }
 
 /* top bar */
 .topbar {
@@ -109,10 +120,20 @@ a { color: var(--accent); }
 .filterbar .meta { font: 11px/1.3 var(--mono); color: var(--ink-3); }
 
 /* board */
-.board { display: flex; gap: 10px; padding: 12px 14px 14px; overflow-x: auto; overflow-y: hidden; height: 100%; }
+.board {
+  display: flex; gap: 10px; padding: 12px 14px 14px; overflow-x: auto; overflow-y: hidden; height: 100%;
+  scrollbar-width: thin;
+}
+/* macOS hides an overlay scrollbar. A board that scrolls must show one. */
+.board::-webkit-scrollbar { height: 10px; }
+.board::-webkit-scrollbar-track { background: transparent; }
+.board::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; border: 2px solid var(--ground); }
+.board::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+.board.panning { cursor: grabbing; user-select: none; }
+/* Six columns share the width. They shrink to 200px before the board scrolls. */
 .col {
-  display: flex; flex-direction: column; width: 272px; flex: 0 0 272px; min-height: 0; border-radius: 8px;
-  background: var(--surface); border: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; flex: 1 1 232px; min-width: 190px; max-width: 340px;
+  min-height: 0; border-radius: 8px; background: var(--surface); border: 1px solid var(--line-soft);
 }
 .col.over { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .col h4 {
@@ -120,7 +141,19 @@ a { color: var(--accent); }
   font: 600 11.5px/1.2 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2);
   border-bottom: 2px solid var(--line-soft);
 }
-.col h4 .count { margin-left: auto; color: var(--ink-3); font-weight: 500; }
+.col h4 .count { color: var(--ink-3); font-weight: 500; }
+.col h4 .swatch + * { margin-right: auto; }
+/* Shown only while the column holds a card the user placed by hand. */
+/* The card mark is the standing sign that a column is ordered by hand. This
+   button is the way back, and it appears when the pointer is on the column. */
+.unrank {
+  border: 1px solid transparent; background: none; padding: 1px 5px; border-radius: 3px;
+  font: 500 9.5px/1.4 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
+  opacity: 0; transition: opacity 0.12s ease;
+}
+.col:hover .unrank, .unrank:focus-visible { opacity: 1; }
+.unrank:hover { border-color: var(--line); background: var(--surface-2); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .unrank { transition: none; } }
 .col h4 .count.over { color: var(--rust); }
 .col h4 .swatch { width: 8px; height: 8px; border-radius: 2px; background: var(--ink-3); }
 .swatch.green, .tone-green { --tone: var(--accent); --tone-soft: var(--accent-soft); }
@@ -200,11 +233,25 @@ a { color: var(--accent); }
 .toggle { display: inline-flex; align-items: center; gap: 4px; font: 11px/1 var(--mono); padding: 4px 7px; border-radius: 3px; border: 1px solid var(--line); background: var(--ground); cursor: pointer; }
 .toggle.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .hint { font-size: 12px; color: var(--ink-3); }
+.modal.narrow { width: 420px; }
+.modal.narrow .body p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+/* The bar a first Escape shows on a form that holds unsaved input. */
+.unsaved {
+  display: flex; align-items: center; gap: 8px; padding: 8px 18px;
+  background: var(--amber-soft); border-bottom: 1px solid var(--line-soft);
+  font-size: 12px; color: var(--ink);
+}
+.drawer .unsaved { margin: 0; }
 pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px solid var(--line-soft); border-radius: 5px; padding: 10px; overflow: auto; margin: 0; white-space: pre-wrap; }
 
 /* toasts */
 .toasts { position: fixed; left: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 40; }
-.toast { background: var(--ink); color: var(--ground); padding: 9px 12px; border-radius: 6px; font-size: 12.5px; box-shadow: var(--shadow); max-width: 380px; }
+.toast {
+  background: var(--ink); color: var(--ground); padding: 9px 12px; border-radius: 6px; font-size: 12.5px;
+  box-shadow: var(--shadow); max-width: 420px; display: flex; gap: 10px; align-items: flex-start; user-select: text;
+}
+.toast .x { background: none; border: none; color: inherit; opacity: 0.6; padding: 0 2px; font-size: 11px; line-height: 1.5; flex: none; }
+.toast .x:hover { opacity: 1; }
 .toast.err { background: var(--rust); color: #fff; }
 .empty { padding: 30px; text-align: center; color: var(--ink-3); font-size: 12.5px; }
 
@@ -217,48 +264,49 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
 .toast.link { cursor: pointer; }
 .toast.link:hover { filter: brightness(1.2); }
 
-.quota .stale {
+.srow .stale, .quota .stale {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--amber);
   border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
   border-radius: 4px;
-  padding: 1px 4px;
+  padding: 1px 5px;
   align-self: center;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--mono);
 }
+.stale:hover:not(:disabled) { background: var(--amber-soft); }
+.stale:disabled { cursor: default; opacity: 0.75; }
 
-/* proposals */
-.proposals {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  z-index: 35;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: calc(100vh - 28px);
-  overflow-y: auto;
-}
+/* proposals: one panel per node in the rail at the right of the board */
 .proposal {
-  width: 420px;
-  max-width: calc(100vw - 28px);
+  flex: 0 1 auto;
+  width: 360px;
+  max-width: 40vw;
+  min-height: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
   border-radius: 8px;
-  box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px 10px;
+  overflow: hidden;
+  user-select: text;
 }
+.proposal .items { flex: 1 1 auto; min-height: 0; }
+.proposal footer { margin-top: auto; }
+.pill.plan { border: 1px solid var(--accent); color: var(--accent); background: var(--accent-soft); cursor: pointer; }
+.pill.plan .dot { background: var(--accent); }
 .proposal header { display: flex; align-items: center; gap: 8px; }
 .proposal header h3 { margin: 0; font: 600 13px/1.3 var(--display); }
 .proposal .why { font-size: 12.5px; color: var(--ink-2); }
 .proposal .numbers { display: flex; flex-wrap: wrap; gap: 10px; font: 11px/1.4 var(--mono); color: var(--ink-3); }
 .proposal .numbers b { color: var(--ink); font-weight: 500; }
-.proposal .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow-y: auto; }
+.proposal .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
 .proposal .items li { display: flex; gap: 8px; align-items: flex-start; }
 .proposal .items input[type="checkbox"] { margin-top: 3px; accent-color: var(--accent); }
 .proposal .items .t { min-width: 0; }
@@ -319,3 +367,144 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
 .nodeadd .btn { margin-top: 18px; }
 .drawer .offline-note { color: var(--amber); }
 .proposal header h3 .on-node { font-weight: 400; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- stats strip
+
+One row per node under the top bar: both windows, both reset times, and Fill.
+The top bar itself never grows with the node count. */
+.stats {
+  display: flex; flex-direction: column; gap: 2px; padding: 6px 14px;
+  background: var(--surface); border-bottom: 1px solid var(--line-soft);
+  max-height: 132px; overflow-y: auto;
+}
+.stats.wide { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 20px; }
+.srow { display: flex; align-items: center; gap: 10px; min-width: 0; border-radius: 4px; padding: 1px 4px; }
+.srow.sel { background: var(--accent-soft); }
+.sname {
+  display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; min-width: 74px;
+  border: none; background: none; padding: 1px 3px; border-radius: 3px;
+  font: 500 11.5px/1.4 var(--mono); color: var(--ink);
+}
+.sname:hover { background: var(--surface-2); }
+.srow.sel .sname { color: var(--accent); }
+.smeters { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.m { display: inline-flex; align-items: center; gap: 6px; font: 11px/1.4 var(--mono); color: var(--ink-3); }
+.m .mk { color: var(--ink-3); flex: 0 0 auto; }
+.m .bar { width: 78px; height: 6px; flex: 0 0 auto; }
+.m b { color: var(--ink); font-weight: 500; min-width: 30px; text-align: right; }
+.m .mr { color: var(--ink-3); min-width: 46px; }
+.mnone { font: 11px/1.4 var(--mono); color: var(--ink-3); }
+.snone { border: none; background: none; padding: 0; font: 11px/1.4 var(--mono); color: var(--ink-3); text-align: left; }
+.snone:hover { color: var(--amber); }
+.srow .sfill { flex: 0 0 auto; }
+/* The row stops at its content, so Fill sits beside the meters. */
+.stats:not(.wide) .srow { align-self: flex-start; }
+
+/* --------------------------------------------------------- automation switch */
+.autoswitch { display: inline-flex; align-items: center; gap: 0; }
+.autoswitch .swlabel {
+  font: 500 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-3); margin-right: 7px;
+}
+.swopt {
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+  font: 500 11.5px/1 var(--mono); padding: 5px 10px; margin-left: -1px;
+}
+.swopt:first-of-type { border-radius: 5px 0 0 5px; margin-left: 0; }
+.swopt:last-of-type { border-radius: 0 5px 5px 0; }
+.swopt:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+.swopt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 1; }
+.swopt.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); z-index: 1; }
+.swopt.on.off { background: var(--ink-3); border-color: var(--ink-3); }
+.swopt.on.auto { background: var(--amber); border-color: var(--amber); }
+.swopt:disabled { opacity: 0.45; cursor: default; }
+.swmixed { font: 10px/1 var(--mono); color: var(--amber); margin-left: 7px; text-transform: uppercase; letter-spacing: 0.06em; }
+.modeset { display: flex; gap: 4px; }
+
+/* ------------------------------------------------------------- queue strip
+
+What the planner would run next, in order. It starts nothing. */
+.queuestrip { background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+.qhead {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 14px;
+  border: none; background: none; text-align: left; color: var(--ink-2); font: 12px/1.4 var(--body);
+}
+.qhead:hover { background: var(--surface-2); }
+.qhead .caret { color: var(--ink-3); width: 9px; font-size: 11px; }
+.qhead b { font-weight: 600; color: var(--ink); }
+.qhead .qsum { font: 11px/1.4 var(--mono); color: var(--ink-3); }
+.qbody { padding: 2px 14px 8px 31px; max-height: 30vh; overflow-y: auto; }
+/* The steps stay a readable column, so the cost and the time hug the title. */
+.qnode { max-width: 780px; }
+.qnode + .qnode { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line-soft); }
+.qnodehead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font: 11.5px/1.5 var(--mono); color: var(--ink-2); }
+.qnodehead .who { font-weight: 500; color: var(--ink); }
+.qopen { font: 11px/1.5 var(--mono); color: var(--accent); }
+.qnodehead .hint { font: 11px/1.5 var(--mono); }
+.qblocked { font: 11.5px/1.5 var(--mono); color: var(--amber); }
+.qsteps { list-style: none; margin: 2px 0 0; padding: 0; }
+.qsteps li { display: flex; align-items: baseline; gap: 8px; font: 11.5px/1.7 var(--mono); }
+.qsteps li.no { opacity: 0.5; }
+.qsteps li .n { color: var(--ink-3); min-width: 14px; }
+.qsteps li .linkish { font: 12px/1.6 var(--body); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qsteps li .cost { color: var(--ink-2); margin-left: auto; flex: 0 0 auto; }
+.qsteps li .at { color: var(--ink-3); flex: 0 0 auto; min-width: 108px; text-align: right; }
+
+/* ---------------------------------------------- groups inside a merged column */
+.grp { display: flex; flex-direction: column; }
+.grp + .grp { margin-top: 4px; }
+.grphead {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 2px 3px 0;
+  border: none; background: none; text-align: left;
+  font: 600 10px/1.4 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--tone, var(--ink-3));
+}
+.grphead:hover { color: var(--ink); }
+.grphead .caret { color: var(--ink-3); width: 8px; }
+.grphead .n { margin-left: auto; color: var(--ink-3); font-weight: 500; }
+.grpcards { display: flex; flex-direction: column; gap: 8px; }
+
+/* -------------------------------------------------------- add a card in place */
+.coladd {
+  border: none; border-top: 1px solid var(--line-soft); background: none; color: var(--ink-3);
+  padding: 8px 12px; text-align: left; font: 12px/1 var(--body); border-radius: 0 0 8px 8px;
+}
+.coladd:hover { background: var(--surface-2); color: var(--ink); }
+.coldraft { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-top: 1px solid var(--line-soft); }
+.coldraft textarea {
+  width: 100%; resize: none; padding: 7px 8px; border-radius: 5px; border: 1px solid var(--accent);
+  background: var(--ground); color: var(--ink); font: 12.5px/1.4 var(--body);
+}
+.coldraft textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.draftbar { display: flex; align-items: center; gap: 6px; }
+.draftbar .hint { font-size: 11px; }
+
+/* ------------------------------------------------------- fuzzy project picker */
+.picker { position: relative; min-width: 180px; }
+.pickerbtn {
+  width: 100%; padding: 6px 9px; border-radius: 5px; border: 1px solid var(--line);
+  background: var(--ground); color: var(--ink); font-size: 12.5px; text-overflow: ellipsis;
+}
+.pickerbtn:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.pickerbtn::placeholder { color: var(--ink); opacity: 1; }
+.picker.open .pickerbtn::placeholder { color: var(--ink-3); }
+.pickerlist {
+  position: absolute; top: calc(100% + 3px); left: 0; min-width: 100%; max-width: 420px; max-height: 320px;
+  overflow-y: auto; z-index: 25; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 6px; box-shadow: var(--shadow); padding: 3px;
+}
+.pickeropt {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
+  border: none; background: none; border-radius: 4px; padding: 5px 8px; color: var(--ink);
+}
+.pickeropt .l { font-size: 12.5px; }
+.pickeropt .h { font: 10.5px/1.3 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pickeropt.at { background: var(--surface-2); }
+.pickeropt.sel .l { color: var(--accent); font-weight: 500; }
+.pickernone { padding: 6px 8px; font: 11.5px var(--mono); color: var(--ink-3); }
+.filterbar .picker { max-width: 240px; }
+
+/* a card the user placed by hand */
+.card .rank { position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--ink-3); }
+.chip.node.act { border: 1px solid var(--line-soft); cursor: pointer; }
+.chip.node.act:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.field textarea { min-height: 68px; resize: vertical; overflow-y: auto; }

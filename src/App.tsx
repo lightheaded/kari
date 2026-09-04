@@ -1,48 +1,100 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, onBoardChanged, onNotice } from "./api";
-import type { Column, HubBoard, HubCard, Settings } from "./types";
-import { Board, type Picked } from "./components/Board";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
+import type { AutomationMode, Column, HubBoard, HubCard, Settings } from "./types";
+import { Board, type Picked, type Reorder } from "./components/Board";
 import { Drawer } from "./components/Drawer";
-import { QuotaBar } from "./components/QuotaBar";
+import { StatsStrip } from "./components/StatsStrip";
+import { AutomationSwitch } from "./components/AutomationSwitch";
+import { QueueStrip } from "./components/QueueStrip";
+import { ProjectPicker, type PickerItem } from "./components/ProjectPicker";
 import { AddTaskModal, ColumnsModal, SettingsModal } from "./components/Modals";
 import { ProposalPanel } from "./components/Proposals";
-import { nodeDot } from "./util";
+import { useSticky } from "./hooks";
+import { anyDirty } from "./dirty";
+import { noAutoFill } from "./util";
 
 interface Toast {
   id: number;
   text: string;
   err?: boolean;
   card?: Picked | null;
+  /** Milliseconds on screen. A notice from the engine holds long enough to read. */
+  ttl: number;
 }
 
-const NODE_FILTER_KEY = "kari.nodeFilter";
+/** One toast. The countdown stops while the pointer is on it, so a long notice
+ *  can be read to the end, and the close button drops it at once. */
+function ToastItem({ t, onClose, onOpen }: { t: Toast; onClose: () => void; onOpen?: () => void }) {
+  const left = useRef(t.ttl);
+  const timer = useRef<number | null>(null);
+  const startedAt = useRef(0);
+  const start = useCallback(() => {
+    startedAt.current = Date.now();
+    timer.current = window.setTimeout(onClose, left.current);
+  }, [onClose]);
+  const pause = () => {
+    if (timer.current == null) return;
+    window.clearTimeout(timer.current);
+    timer.current = null;
+    left.current = Math.max(1500, left.current - (Date.now() - startedAt.current));
+  };
+  useEffect(() => {
+    start();
+    return () => {
+      if (timer.current != null) window.clearTimeout(timer.current);
+    };
+  }, [start]);
+  return (
+    <div
+      className={`toast ${t.err ? "err" : ""} ${onOpen ? "link" : ""}`}
+      onMouseEnter={pause}
+      onMouseLeave={start}
+      onClick={onOpen}
+      role="status"
+    >
+      <span>{t.text}</span>
+      <button
+        className="x"
+        aria-label="Dismiss"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 /** Joins a node id and a project directory into one filter value. */
 const PROJ_SEP = "\u0001";
-
-function readNodeFilter(): string {
-  try {
-    return window.localStorage.getItem(NODE_FILTER_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
 
 export default function App() {
   const [board, setBoard] = useState<HubBoard | null>(null);
   const [selected, setSelected] = useState<Picked | null>(null);
   const [query, setQuery] = useState("");
   const [project, setProject] = useState("");
-  const [nodeFilter, setNodeFilter] = useState<string>(readNodeFilter);
+  const [nodeFilter, setNodeFilter] = useSticky<string>("kari.nodeFilter", "");
+  /** The project the last task went to. Used when no filter names one. */
+  const [lastProject, setLastProject] = useSticky<string>("kari.lastProject", "");
+  const [queueOpen, setQueueOpen] = useSticky<boolean>("kari.queueOpen", false);
   const [modal, setModal] = useState<"add" | "columns" | "settings" | null>(null);
+  /** Column a new task must land in, when the dialog came from a column foot. */
+  const [addColumn, setAddColumn] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [planHidden, setPlanHidden] = useState<Set<string>>(() => new Set());
+  /** The tray or Cmd+Q asked to quit while a form holds unsaved input. */
+  const [quitAsk, setQuitAsk] = useState(false);
+  const [refreshingQuota, setRefreshingQuota] = useState(false);
 
-  const toast = useCallback((text: string, err = false, card: Picked | null = null) => {
+  const dropToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+
+  const toast = useCallback((text: string, err = false, card: Picked | null = null, ttl?: number) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text, err, card }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), err ? 7000 : card ? 8000 : 3500);
+    setToasts((t) => [...t, { id, text, err, card, ttl: ttl ?? (err ? 9000 : card ? 10000 : 4000) }]);
   }, []);
 
   const load = useCallback(async () => {
@@ -59,22 +111,27 @@ export default function App() {
     load();
     api.settings().then(setSettings).catch(() => {});
     const un1 = onBoardChanged(load);
-    const un2 = onNotice((n) => toast(`${n.title} — ${n.body}`, false, n.card_id ? { node: n.node_id, id: n.card_id } : null));
+    const un2 = onNotice((n) =>
+      toast(`${n.title} — ${n.body}`, false, n.card_id ? { node: n.node_id, id: n.card_id } : null, 20000),
+    );
+    const un3 = onConfirmQuit(() => setQuitAsk(true));
     const t = window.setInterval(load, 30000);
+    // A reload from the dev server, or a navigation: warn while a form holds input.
+    const onUnload = (e: BeforeUnloadEvent) => {
+      if (anyDirty()) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onUnload);
     return () => {
       un1();
       un2();
+      un3();
       window.clearInterval(t);
+      window.removeEventListener("beforeunload", onUnload);
     };
   }, [load, toast]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(NODE_FILTER_KEY, nodeFilter);
-    } catch {
-      // a browser without storage keeps the filter for this run only
-    }
-  }, [nodeFilter]);
 
   const run = useCallback(
     async (fn: () => Promise<unknown>, ok?: string) => {
@@ -108,12 +165,32 @@ export default function App() {
     return [...m.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name));
   }, [board]);
 
+  const projectItems: PickerItem[] = useMemo(
+    () =>
+      projects.map(([key, p]) => ({
+        value: key,
+        label: p.name,
+        hint: manyNodes ? `${nodeById.get(p.node)?.name ?? p.node} · ${p.cwd}` : p.cwd,
+      })),
+    [projects, manyNodes, nodeById],
+  );
+
   /** Project directories per node. The task dialog uses them until the node answers. */
   const projectsByNode = useMemo(() => {
     const out: Record<string, [string, string][]> = {};
     for (const [, p] of projects) (out[p.node] ??= []).push([p.cwd, p.name]);
     return out;
   }, [projects]);
+
+  /** The project a new task starts in: the filter first, then the last one used. */
+  const addNode = node || localNodeId;
+  const addProject = useMemo(() => {
+    const pick = (key: string) => {
+      const p = projects.find(([k]) => k === key);
+      return p && (!node || p[1].node === node) ? p[1] : null;
+    };
+    return (pick(project) ?? pick(lastProject))?.cwd ?? null;
+  }, [project, lastProject, projects, node]);
 
   const filtered: HubCard[] = useMemo(() => {
     if (!board) return [];
@@ -136,11 +213,38 @@ export default function App() {
   const visibleColumns: Column[] = (board?.columns ?? []).filter((c) => !c.hidden).sort((a, b) => a.order - b.order);
   const needsMe = filtered.filter((c) => c.state === "needs_decision" || c.state === "needs_approval").length;
   const working = filtered.filter((c) => c.state === "working").length;
-  const withQuota = (board?.quotas ?? []).filter((q) => q.quota);
+  const queues = (board?.queues ?? []).filter((q) => !node || q.node_id === node);
+  const plans = (board?.proposals ?? []).filter((p) => !node || p.node_id === node);
+  const openPlans = plans.filter((p) => !planHidden.has(`${p.node_id}:${p.proposal.id}`));
+  const hiddenPlans = plans.length - openPlans.length;
 
   /** Show the plan again when the user asks for a new one on that node. */
   const unhidePlans = (nodeId: string) =>
     setPlanHidden((h) => new Set([...h].filter((k) => !k.startsWith(`${nodeId}:`))));
+
+  /** Remember the project of a task the user just added. */
+  const rememberProject = (nodeId: string, cwd: string | null) => {
+    if (cwd) setLastProject(`${nodeId}${PROJ_SEP}${cwd}`);
+  };
+
+  /** A one-line task from the foot of a column. */
+  const addInline = async (columnId: string, title: string) => {
+    await run(
+      () =>
+        api.addTask(addNode, {
+          title,
+          project_cwd: addProject,
+          run_prompt: null,
+          auto_run: false,
+          priority: 0,
+          notes: null,
+          model: null,
+          column_id: columnId,
+        }),
+      "Task added",
+    );
+    rememberProject(addNode, addProject);
+  };
 
   return (
     <div className="app">
@@ -148,26 +252,18 @@ export default function App() {
         <div className="wordmark" data-tauri-drag-region>
           kari
         </div>
-        <div className={`quotas ${withQuota.length > 1 ? "multi" : ""}`}>
-          {withQuota.length === 0 ? (
-            <QuotaBar quota={null} calibration={null} onHelp={() => setModal("settings")} />
-          ) : (
-            withQuota.map((q) => (
-              <QuotaBar
-                key={q.node_id}
-                quota={q.quota}
-                calibration={q.calibration}
-                label={manyNodes ? q.node_name : undefined}
-                onHelp={() => setModal("settings")}
-                onFill={() => {
-                  unhidePlans(q.node_id);
-                  run(() => api.proposeNow(q.node_id), "Plan ready");
-                }}
-              />
-            ))
-          )}
-        </div>
         <div className="spacer" data-tauri-drag-region />
+        <AutomationSwitch
+          nodes={nodes}
+          filter={node}
+          onChange={(nodeId, mode: AutomationMode) => run(() => api.setAutomationMode(nodeId, mode))}
+        />
+        {hiddenPlans > 0 && (
+          <button className="pill plan" onClick={() => setPlanHidden(new Set())} title="Show the plan panel again">
+            <span className="dot" />
+            plan · {hiddenPlans}
+          </button>
+        )}
         <span className={`pill ${board?.herdr_connected ? "on" : ""}`} title="herdr socket">
           <span className="dot" />
           herdr
@@ -184,22 +280,44 @@ export default function App() {
         <button className="btn ghost" onClick={() => setModal("settings")}>
           Settings
         </button>
-        <button className="btn primary" onClick={() => setModal("add")}>
+        <button
+          className="btn primary"
+          onClick={() => {
+            setAddColumn(null);
+            setModal("add");
+          }}
+        >
           + Task
         </button>
       </div>
 
+      <StatsStrip
+        quotas={board?.quotas ?? []}
+        nodes={nodes}
+        filter={node}
+        onFilter={setNodeFilter}
+        onFill={(nodeId) => {
+          unhidePlans(nodeId);
+          run(() => api.proposeNow(nodeId), "Plan ready");
+        }}
+        onHelp={() => setModal("settings")}
+        refreshing={refreshingQuota}
+        onRefresh={async () => {
+          setRefreshingQuota(true);
+          await run(() => api.fetchUsageNow(), "Quota read from the usage endpoint");
+          setRefreshingQuota(false);
+        }}
+      />
+
       <div className="filterbar">
-        <input placeholder="Search title, prompt, project…" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <select value={project} onChange={(e) => setProject(e.target.value)}>
-          <option value="">All projects</option>
-          {projects.map(([key, p]) => (
-            <option key={key} value={key}>
-              {p.name}
-              {manyNodes ? ` · ${nodeById.get(p.node)?.name ?? p.node}` : ""}
-            </option>
-          ))}
-        </select>
+        <input {...noAutoFill} placeholder="Search title, prompt, project…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <ProjectPicker
+          items={projectItems}
+          value={project}
+          allLabel="All projects"
+          ariaLabel="Filter by project"
+          onChange={setProject}
+        />
         {manyNodes && (
           <div className="nodechips">
             <button className={`nodechip ${node === "" ? "sel" : ""}`} onClick={() => setNodeFilter("")}>
@@ -210,9 +328,9 @@ export default function App() {
                 key={n.id}
                 className={`nodechip ${node === n.id ? "sel" : ""}`}
                 title={n.error ?? (n.enabled ? (n.online ? "online" : "offline") : "disabled")}
-                onClick={() => setNodeFilter(n.id)}
+                onClick={() => setNodeFilter(node === n.id ? "" : n.id)}
               >
-                <span className={nodeDot(n)} />
+                <span className={n.enabled ? (n.online ? "dot online" : "dot offline") : "dot disabled"} />
                 {n.name}
               </button>
             ))}
@@ -225,34 +343,51 @@ export default function App() {
         {error && <span className="meta" style={{ color: "var(--rust)" }}>{error}</span>}
       </div>
 
-      {board ? (
-        <Board
-          columns={visibleColumns}
-          cards={filtered}
-          nodes={nodes}
-          selected={selected}
-          onSelect={(nodeId, id) => setSelected({ node: nodeId, id })}
-          onMove={(nodeId, id, columnId) => run(() => api.moveCard(nodeId, id, columnId))}
-          onJump={(nodeId, id) => run(() => api.jumpIn(nodeId, id), "Opened")}
-        />
-      ) : (
-        <div className="empty">Loading the herd…</div>
-      )}
+      <QueueStrip
+        queues={queues}
+        showNode={manyNodes}
+        open={queueOpen}
+        onToggle={() => setQueueOpen(!queueOpen)}
+        onSelectCard={(n, id) => setSelected({ node: n, id })}
+      />
 
-      <div className="proposals">
-        {(board?.proposals ?? [])
-          .filter((p) => !planHidden.has(`${p.node_id}:${p.proposal.id}`))
-          .map((p) => (
-            <ProposalPanel
-              key={`${p.node_id}:${p.proposal.id}`}
-              proposal={p.proposal}
-              nodeId={p.node_id}
-              nodeName={manyNodes ? p.node_name : undefined}
-              onClose={() => setPlanHidden((h) => new Set(h).add(`${p.node_id}:${p.proposal.id}`))}
-              onAction={run}
-              onSelectCard={(id) => setSelected({ node: p.node_id, id })}
-            />
-          ))}
+      <div className="main">
+        {board ? (
+          <Board
+            columns={visibleColumns}
+            cards={filtered}
+            nodes={nodes}
+            selected={selected}
+            onSelect={(nodeId, id) => setSelected({ node: nodeId, id })}
+            onMove={(nodeId, id, columnId) => run(() => api.moveCard(nodeId, id, columnId))}
+            onReorder={(r: Reorder) => run(() => api.reorderCards(r.node, r.ranked, r.unranked))}
+            onJump={(nodeId, id) => run(() => api.jumpIn(nodeId, id), "Opened")}
+            onFilterNode={(nodeId) => setNodeFilter(node === nodeId ? "" : nodeId)}
+            onAdd={addInline}
+            onAddFull={(columnId) => {
+              setAddColumn(columnId);
+              setModal("add");
+            }}
+          />
+        ) : (
+          <div className="empty">Loading the herd…</div>
+        )}
+
+        {openPlans.length > 0 && (
+          <div className="planrail">
+            {openPlans.map((p) => (
+              <ProposalPanel
+                key={`${p.node_id}:${p.proposal.id}`}
+                proposal={p.proposal}
+                nodeId={p.node_id}
+                nodeName={manyNodes ? p.node_name : undefined}
+                onClose={() => setPlanHidden((h) => new Set(h).add(`${p.node_id}:${p.proposal.id}`))}
+                onAction={run}
+                onSelectCard={(id) => setSelected({ node: p.node_id, id })}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {selectedCard && (
@@ -270,10 +405,18 @@ export default function App() {
       {modal === "add" && (
         <AddTaskModal
           nodes={nodes}
-          defaultNode={node || localNodeId}
+          defaultNode={addNode}
+          defaultProject={addProject}
+          columnId={addColumn}
+          columns={board?.columns ?? []}
           projectsByNode={projectsByNode}
           onClose={() => setModal(null)}
-          onSubmit={(nodeId, t) => run(() => api.addTask(nodeId, t), "Task added").then(() => setModal(null))}
+          onSubmit={(nodeId, t) =>
+            run(() => api.addTask(nodeId, t), "Task added").then(() => {
+              rememberProject(nodeId, t.project_cwd);
+              setModal(null);
+            })
+          }
         />
       )}
       {modal === "columns" && board && (
@@ -305,20 +448,42 @@ export default function App() {
         />
       )}
 
+      {quitAsk && (
+        <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && setQuitAsk(false)}>
+          <div className="modal narrow" role="alertdialog" aria-label="Quit kari?">
+            <header>
+              <h3>Quit kari?</h3>
+            </header>
+            <div className="body">
+              <p>A form holds unsaved input. Quitting now throws those edits away.</p>
+            </div>
+            <footer>
+              <button className="btn" onClick={() => setQuitAsk(false)} autoFocus>
+                Keep working
+              </button>
+              <button className="btn danger" onClick={() => api.quitNow()}>
+                Quit anyway
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
       <div className="toasts">
         {toasts.map((t) => (
-          <div
+          <ToastItem
             key={t.id}
-            className={`toast ${t.err ? "err" : ""} ${t.card ? "link" : ""}`}
-            onClick={() => {
-              if (t.card) {
-                setSelected(t.card);
-                setToasts((all) => all.filter((x) => x.id !== t.id));
-              }
-            }}
-          >
-            {t.text}
-          </div>
+            t={t}
+            onClose={() => dropToast(t.id)}
+            onOpen={
+              t.card
+                ? () => {
+                    setSelected(t.card!);
+                    dropToast(t.id);
+                  }
+                : undefined
+            }
+          />
         ))}
       </div>
     </div>

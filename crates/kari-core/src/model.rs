@@ -92,6 +92,38 @@ impl Column {
             mk("backlog", "Backlog", 0, &[Backlog], "neutral"),
             mk("ready", "Ready", 1, &[Ready], "green"),
             mk("working", "Working", 2, &[Working], "green"),
+            // Three states that all wait for the user share one column. The
+            // board groups them inside it, most urgent first.
+            mk(
+                "needs_me",
+                "Needs me",
+                3,
+                &[NeedsApproval, NeedsDecision, MyTurn, Unknown],
+                "amber",
+            ),
+            mk("review", "Review", 4, &[Validate, WaitingOnOthers], "slate"),
+            mk("done", "Done", 5, &[Done], "neutral"),
+        ]
+    }
+
+    /// The nine columns kari shipped up to version 0.4.1. A stored layout that
+    /// still matches this list is replaced by `defaults` once, because the
+    /// board no longer fits nine columns in one window.
+    pub fn legacy_defaults() -> Vec<Column> {
+        use DerivedState::*;
+        let mk = |id: &str, name: &str, order: i32, accepts: &[DerivedState], color: &str| Column {
+            id: id.into(),
+            name: name.into(),
+            order,
+            accepts: accepts.to_vec(),
+            wip_limit: None,
+            color: Some(color.into()),
+            hidden: false,
+        };
+        vec![
+            mk("backlog", "Backlog", 0, &[Backlog], "neutral"),
+            mk("ready", "Ready", 1, &[Ready], "green"),
+            mk("working", "Working", 2, &[Working], "green"),
             mk("my_turn", "My turn", 3, &[MyTurn, Unknown], "slate"),
             mk("decision", "Decision needed", 4, &[NeedsDecision], "amber"),
             mk("approval", "Approval needed", 5, &[NeedsApproval], "rust"),
@@ -105,6 +137,40 @@ impl Column {
             mk("validate", "Validate", 7, &[Validate], "green"),
             mk("done", "Done", 8, &[Done], "neutral"),
         ]
+    }
+
+    /// True when two layouts hold the same columns, in the same order, with the
+    /// same names, states, limits and visibility. Ignores nothing.
+    pub fn same_layout(a: &[Column], b: &[Column]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        let key = |c: &Column| {
+            let mut states: Vec<String> = c.accepts.iter().map(|s| format!("{s:?}")).collect();
+            states.sort();
+            (
+                c.id.clone(),
+                c.name.clone(),
+                c.wip_limit,
+                c.hidden,
+                states.join(","),
+            )
+        };
+        let mut ka: Vec<_> = a.iter().map(key).collect();
+        let mut kb: Vec<_> = b.iter().map(key).collect();
+        ka.sort();
+        kb.sort();
+        ka == kb
+    }
+
+    /// Where a manual lock on a dropped column goes. The nine-column layout had
+    /// five columns the six-column layout does not.
+    pub fn migrated_column_id(old: &str) -> Option<&'static str> {
+        match old {
+            "my_turn" | "decision" | "approval" => Some("needs_me"),
+            "waiting" | "validate" => Some("review"),
+            _ => None,
+        }
     }
 }
 
@@ -469,6 +535,103 @@ pub struct BoardView {
     /// True when this node holds permission prompts for a remote answer.
     #[serde(default)]
     pub away_mode: bool,
+    /// What the planner would do next on this node, and when. Read only.
+    #[serde(default)]
+    pub queue: Option<QueuePlan>,
+    /// `off`, `ask` or `auto`. The board shows it on the automation switch.
+    #[serde(default)]
+    pub automation_mode: String,
+}
+
+/// How much of the automatic behaviour is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationMode {
+    /// No plans, no starts. The quota belongs to the user.
+    Off,
+    /// kari offers a plan. The user presses Start.
+    Ask,
+    /// A weekly-reset plan starts without a click.
+    Auto,
+}
+
+impl AutomationMode {
+    pub fn key(self) -> &'static str {
+        match self {
+            AutomationMode::Off => "off",
+            AutomationMode::Ask => "ask",
+            AutomationMode::Auto => "auto",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<AutomationMode> {
+        match s {
+            "off" => Some(AutomationMode::Off),
+            "ask" => Some(AutomationMode::Ask),
+            "auto" => Some(AutomationMode::Auto),
+            _ => None,
+        }
+    }
+}
+
+/// One step the planner would take: which card, what it costs, and when.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueStep {
+    pub card_id: String,
+    pub title: String,
+    pub project_name: Option<String>,
+    pub model: Option<String>,
+    pub estimate: Estimate,
+    /// Percent of the 5-hour window in use after this step, this step included.
+    pub window_after_pct: f64,
+    /// True when the step is inside the budget the planner may spend.
+    pub fits: bool,
+    /// When the step starts, as far as the windows allow a guess. None means
+    /// that nothing schedules it: read `reason`.
+    pub starts_at: Option<DateTime<Utc>>,
+    /// One phrase for the user: `now`, `does not fit the budget`, and so on.
+    pub reason: String,
+}
+
+/// The dry run of the planner. Built on demand, never stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueuePlan {
+    pub steps: Vec<QueueStep>,
+    /// Percent of the 5-hour window the planner may spend right now.
+    pub budget_pct: f64,
+    /// Percent of the 5-hour window already in use.
+    pub used_pct: f64,
+    /// When the planner looks at the triggers again.
+    pub next_check_at: DateTime<Utc>,
+    /// When a trigger fires next, as far as the reset times allow a guess.
+    pub next_trigger_at: Option<DateTime<Utc>>,
+    pub next_trigger: Option<ProposalTrigger>,
+    pub mode: AutomationMode,
+    /// Why nothing would run at all. None means that the queue can run.
+    pub blocked: Option<String>,
+    /// Cards that hold a plan open right now.
+    pub open_proposal: bool,
+}
+
+/// The prompt a run receives. A task card joins its title and its body with a
+/// blank line, so the title never has to be repeated in the body. A session
+/// card sends the body alone, because its title comes from the transcript.
+pub fn compose_prompt(kind: CardKind, title: Option<&str>, body: Option<&str>) -> Option<String> {
+    fn clean(v: Option<&str>) -> Option<&str> {
+        v.map(str::trim).filter(|v| !v.is_empty())
+    }
+    let body = clean(body);
+    if kind == CardKind::Session {
+        return body
+            .map(str::to_string)
+            .or_else(|| clean(title).map(str::to_string));
+    }
+    match (clean(title), body) {
+        (Some(t), Some(b)) => Some(format!("{t}\n\n{b}")),
+        (Some(t), None) => Some(t.to_string()),
+        (None, Some(b)) => Some(b.to_string()),
+        (None, None) => None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -537,6 +700,44 @@ pub struct Settings {
     pub listen_private: bool,
 }
 
+impl Settings {
+    /// The three-state automation mode, read from the two flags that hold it.
+    ///
+    /// The mode is derived, never stored. A stored field cannot work here: the
+    /// whole struct carries `#[serde(default)]`, so a record written before the
+    /// field existed comes back holding the struct default, and that is
+    /// indistinguishable from a mode the user chose. Deriving it means an older
+    /// record keeps saying exactly what it always said.
+    pub fn automation(&self) -> AutomationMode {
+        if !self.proposals_enabled {
+            AutomationMode::Off
+        } else if self.autopilot {
+            AutomationMode::Auto
+        } else {
+            AutomationMode::Ask
+        }
+    }
+
+    /// Set the mode through the two flags.
+    ///
+    /// `Off` leaves `autopilot` alone, so the flag still says what the user
+    /// asked for the last time plans were on. Only `proposals_enabled` gates
+    /// the planner, so nothing runs while the mode is `Off` either way.
+    pub fn set_automation(&mut self, m: AutomationMode) {
+        match m {
+            AutomationMode::Off => self.proposals_enabled = false,
+            AutomationMode::Ask => {
+                self.proposals_enabled = true;
+                self.autopilot = false;
+            }
+            AutomationMode::Auto => {
+                self.proposals_enabled = true;
+                self.autopilot = true;
+            }
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -584,6 +785,11 @@ pub struct NewTask {
     pub notes: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    /// Column the card must land in. Set when the user adds the task from the
+    /// foot of a column that no derived state sends a new task to. It becomes a
+    /// manual lock, which the first stronger signal breaks.
+    #[serde(default)]
+    pub column_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -781,6 +987,9 @@ pub struct NodeStatus {
     /// pairing code carries them to the phone.
     #[serde(default)]
     pub addresses: Vec<String>,
+    /// How much automatic behaviour the node allows: `off`, `ask` or `auto`.
+    #[serde(default)]
+    pub automation_mode: String,
 }
 
 /// Who may push columns to a node. One row per node, kept in its `kv` table.
@@ -830,6 +1039,14 @@ pub struct NodeQuota {
     pub calibration: Calibration,
 }
 
+/// The dry run of one node's planner, as the queue strip shows it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeQueue {
+    pub node_id: String,
+    pub node_name: String,
+    pub queue: QueuePlan,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeProposal {
     pub node_id: String,
@@ -853,6 +1070,9 @@ pub struct HubBoard {
     pub nodes: Vec<NodeStatus>,
     pub cards: Vec<HubCard>,
     pub quotas: Vec<NodeQuota>,
+    /// One per node that answered. A node running an older kari sends none.
+    #[serde(default)]
+    pub queues: Vec<NodeQueue>,
     pub proposals: Vec<NodeProposal>,
     pub generated_at: DateTime<Utc>,
     pub scanning: bool,
@@ -874,4 +1094,120 @@ pub struct JumpPlan {
     pub herdr_pane: Option<String>,
     /// One line for the user.
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_task_prompt_joins_the_title_and_the_body() {
+        let p = compose_prompt(
+            CardKind::Task,
+            Some("Fix the flaky auth test"),
+            Some("It fails one run in five."),
+        );
+        assert_eq!(
+            p.as_deref(),
+            Some("Fix the flaky auth test\n\nIt fails one run in five.")
+        );
+    }
+
+    #[test]
+    fn a_task_prompt_falls_back_to_one_part() {
+        assert_eq!(
+            compose_prompt(CardKind::Task, Some("Only a title"), None).as_deref(),
+            Some("Only a title")
+        );
+        assert_eq!(
+            compose_prompt(CardKind::Task, None, Some("Only a body")).as_deref(),
+            Some("Only a body")
+        );
+        assert_eq!(
+            compose_prompt(CardKind::Task, Some("  "), Some("   ")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_session_prompt_never_carries_the_title() {
+        // The title of a session card comes from the transcript, so it is not
+        // an instruction and must stay out of a continue prompt.
+        let p = compose_prompt(
+            CardKind::Session,
+            Some("Refactor of the store layer"),
+            Some("Continue with the next step."),
+        );
+        assert_eq!(p.as_deref(), Some("Continue with the next step."));
+    }
+
+    #[test]
+    fn the_six_columns_accept_every_state_but_stale() {
+        let cols = Column::defaults();
+        assert_eq!(cols.len(), 6);
+        for s in DerivedState::all() {
+            if *s == DerivedState::Stale {
+                continue;
+            }
+            assert!(
+                cols.iter().any(|c| c.accepts.contains(s)),
+                "no column accepts {s:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_layout_check_sees_a_changed_name_or_state() {
+        let nine = Column::legacy_defaults();
+        assert!(Column::same_layout(&nine, &Column::legacy_defaults()));
+        assert!(!Column::same_layout(&nine, &Column::defaults()));
+        let mut renamed = Column::legacy_defaults();
+        renamed[0].name = "Later".into();
+        assert!(!Column::same_layout(&renamed, &Column::legacy_defaults()));
+        let mut limited = Column::legacy_defaults();
+        limited[2].wip_limit = Some(3);
+        assert!(!Column::same_layout(&limited, &Column::legacy_defaults()));
+    }
+
+    #[test]
+    fn the_automation_mode_reads_and_writes_the_two_flags() {
+        let mut s = Settings::default();
+        assert_eq!(s.automation(), AutomationMode::Ask);
+        s.set_automation(AutomationMode::Auto);
+        assert!(s.proposals_enabled && s.autopilot);
+        assert_eq!(s.automation(), AutomationMode::Auto);
+        s.set_automation(AutomationMode::Ask);
+        assert_eq!(s.automation(), AutomationMode::Ask);
+    }
+
+    #[test]
+    fn turning_the_mode_off_keeps_what_autopilot_said() {
+        // The user had autopilot on. Off must not throw that away, because the
+        // mode is derived and there is nowhere else to remember it.
+        let mut s = Settings::default();
+        s.set_automation(AutomationMode::Auto);
+        s.set_automation(AutomationMode::Off);
+        assert_eq!(s.automation(), AutomationMode::Off);
+        assert!(s.autopilot, "autopilot must survive an Off");
+        s.set_automation(AutomationMode::Auto);
+        assert_eq!(s.automation(), AutomationMode::Auto);
+    }
+
+    #[test]
+    fn a_record_from_an_older_kari_keeps_its_meaning() {
+        // A settings record written before the mode existed carries the two
+        // flags only. Autopilot on has always meant Auto, and must keep doing so.
+        let stored = Settings {
+            proposals_enabled: true,
+            autopilot: true,
+            ..Default::default()
+        };
+        assert_eq!(stored.automation(), AutomationMode::Auto);
+        let quiet = Settings {
+            proposals_enabled: false,
+            autopilot: false,
+            ..Default::default()
+        };
+        assert_eq!(quiet.automation(), AutomationMode::Off);
+    }
 }

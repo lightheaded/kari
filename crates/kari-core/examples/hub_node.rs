@@ -143,6 +143,7 @@ fn main() -> anyhow::Result<()> {
             priority: 0,
             notes: None,
             model: None,
+            column_id: None,
         },
     )?;
     let after = hub.board();

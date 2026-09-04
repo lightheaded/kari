@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AutomationMode,
   BoardView,
   Calibration,
   Card,
@@ -63,6 +64,7 @@ function localNode(): NodeStatus {
     primary: true,
     away_mode: false,
     addresses: [],
+    automation_mode: "ask",
   };
 }
 
@@ -79,6 +81,7 @@ function toHubBoard(json: BoardView | HubBoard): HubBoard {
     nodes: [node],
     cards: json.cards.map((c) => ({ ...c, ...tag })),
     quotas: [{ ...tag, quota: json.quota, calibration: json.calibration }],
+    queues: json.queue ? [{ ...tag, queue: json.queue }] : [],
     proposals: json.proposal ? [{ ...tag, proposal: json.proposal }] : [],
     generated_at: json.generated_at,
     scanning: json.scanning,
@@ -104,6 +107,15 @@ export const api = {
   addTask: (nodeId: string, task: NewTask) => invoke<Card>("add_task", { nodeId, task }),
   patchCard: (nodeId: string, cardId: string, patch: CardPatch) => invoke<Card>("patch_card", { nodeId, cardId, patch }),
   deleteCard: (nodeId: string, cardId: string) => invoke<void>("delete_card", { nodeId, cardId }),
+  /** Tell the app whether a form holds unsaved input, so a quit can ask first. */
+  setDirty: (dirty: boolean) => (inTauri ? invoke<void>("set_dirty", { dirty }) : Promise.resolve()),
+  quitNow: () => invoke<void>("quit_now"),
+  /** Store a manual order for one column. `ranked` is top first; `unranked` goes back to automatic. */
+  reorderCards: (nodeId: string, ranked: string[], unranked: string[]) =>
+    invoke<void>("reorder_cards", { nodeId, ranked, unranked }),
+  /** An empty node id sets every node that answers. */
+  setAutomationMode: (nodeId: string, mode: AutomationMode) =>
+    invoke<string>("set_automation_mode", { nodeId, mode }),
   columns: () => invoke<Column[]>("get_columns"),
   setColumns: (columns: Column[]) => invoke<void>("set_columns", { columns }),
   resetColumns: () => invoke<void>("reset_columns"),
@@ -175,6 +187,15 @@ export interface Notice {
 export function onNotice(cb: (n: Notice) => void) {
   if (!inTauri) return () => {};
   const p = listen<Notice>("notice", (e) => cb(e.payload));
+  return () => {
+    p.then((un) => un());
+  };
+}
+
+/** The tray or Cmd+Q asked to quit while a form holds unsaved input. */
+export function onConfirmQuit(cb: () => void) {
+  if (!inTauri) return () => {};
+  const p = listen("confirm_quit", () => cb());
   return () => {
     p.then((un) => un());
   };

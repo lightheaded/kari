@@ -15,6 +15,10 @@ use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::{broadcast, oneshot};
 use tracing::{info, warn};
 
+/// Seconds between two looks at the planner triggers. The poller runs every
+/// 15 seconds and calls `proposal_tick` on every fourth round.
+const PROPOSAL_TICK_SECS: i64 = 60;
+
 /// The first eight characters of an id, for log lines. Never slices bytes.
 fn short(s: &str) -> String {
     s.chars().take(8).collect()
@@ -56,6 +60,9 @@ struct Snapshot {
     /// Permission prompts held for a remote answer, by id. The sender wakes
     /// the hook handler that waits on it.
     permissions: HashMap<String, (PendingPermission, Option<oneshot::Sender<String>>)>,
+    /// When the planner last looked at the triggers. The queue shows the next
+    /// check, which is one poller round after this.
+    proposal_checked_at: Option<DateTime<Utc>>,
 }
 
 pub struct Engine {
@@ -78,6 +85,11 @@ impl Engine {
     pub fn open() -> anyhow::Result<Arc<Engine>> {
         let store = Store::open(&paths::kari_db())?;
         let settings = store.load_settings()?;
+        let merged = store
+            .kv_get("notice.columns_merged")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<usize>().ok());
         let facts = store.load_facts()?;
         let summaries = store.load_summaries().unwrap_or_default();
         let (tx, _) = broadcast::channel(64);
@@ -96,13 +108,28 @@ impl Engine {
                 snap.job_states.insert(job, state);
             }
         }
-        Ok(Arc::new(Engine {
+        let engine = Arc::new(Engine {
             store: Mutex::new(store),
             snap: RwLock::new(snap),
             settings: RwLock::new(settings),
             tx,
             scanning: AtomicBool::new(false),
-        }))
+        });
+        if let Some(moved) = merged {
+            let _ = engine
+                .store
+                .lock()
+                .unwrap()
+                .kv_delete("notice.columns_merged");
+            let _ = engine.tx.send(Event::Notice {
+                title: "The board now has six columns".into(),
+                body: format!(
+                    "Needs me holds the three states that wait for you. Review holds Validate and Waiting on others. {moved} manual placement(s) moved with them. Columns, then Reset to defaults, restores the six at any time."
+                ),
+                card_id: None,
+            });
+        }
+        Ok(engine)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
@@ -1109,6 +1136,7 @@ impl Engine {
         let herdr_connected = snap.herdr_ok;
         let hooks_installed = snap.hooks_installed;
         let proposal = snap.proposal.clone();
+        let checked_at = snap.proposal_checked_at;
         drop(snap);
         if !lock_breaks.is_empty() {
             let store = self.store.lock().unwrap();
@@ -1116,7 +1144,7 @@ impl Engine {
                 let _ = store.upsert_card(&c);
             }
         }
-        BoardView {
+        let mut view = BoardView {
             columns,
             cards: out,
             quota,
@@ -1128,7 +1156,35 @@ impl Engine {
             calibration,
             proposal,
             away_mode: settings.away_mode,
-        }
+            queue: None,
+            automation_mode: settings.automation().key().into(),
+        };
+        // The queue reads the finished view, so it comes last.
+        view.queue = Some(self.queue_of(&view, &settings, now, checked_at));
+        view
+    }
+
+    /// The dry run of the planner for the queue strip. It starts nothing and
+    /// stores nothing: every call answers from the board it is given.
+    fn queue_of(
+        &self,
+        view: &BoardView,
+        settings: &Settings,
+        now: DateTime<Utc>,
+        checked_at: Option<DateTime<Utc>>,
+    ) -> QueuePlan {
+        let ctx = Self::planner_context(view, now);
+        let open = view.proposal.as_ref().is_some_and(|p| p.state == "open");
+        planner::queue(
+            Self::candidates(view),
+            &ctx,
+            settings,
+            settings.automation(),
+            open,
+            checked_at
+                .map(|t| t + Duration::seconds(PROPOSAL_TICK_SECS))
+                .unwrap_or(now + Duration::seconds(PROPOSAL_TICK_SECS)),
+        )
     }
 
     /// Turn Away mode on or off: hold permission prompts for a remote answer.
@@ -1174,11 +1230,10 @@ impl Engine {
             card.last_job_at = None;
         }
         // Dropping a task on Ready enables auto-run when a prompt exists.
+        // A task on Ready may run unattended. Its title alone is prompt enough,
+        // so nothing is copied into the body.
         if col.accepts.contains(&DerivedState::Ready) && card.kind == CardKind::Task {
             card.auto_run = true;
-            if card.run_prompt.is_none() {
-                card.run_prompt = card.title.clone();
-            }
             card.manual_column = None;
             card.manual_lock_priority = None;
         }
@@ -1195,6 +1250,19 @@ impl Engine {
 
     pub fn add_task(&self, t: NewTask) -> anyhow::Result<Card> {
         let now = Utc::now();
+        let columns = self.columns();
+        let target = t
+            .column_id
+            .as_deref()
+            .and_then(|id| columns.iter().find(|c| c.id == id));
+        // A task added at the foot of a column must appear there. Backlog and
+        // Ready need no lock, because a task derives one of those two states on
+        // its own. Every other column gets a manual lock instead.
+        let auto_run =
+            t.auto_run || target.is_some_and(|c| c.accepts.contains(&DerivedState::Ready));
+        let lock = target.filter(|c| {
+            !c.accepts.contains(&DerivedState::Ready) && !c.accepts.contains(&DerivedState::Backlog)
+        });
         let card = Card {
             id: uuid::Uuid::new_v4().to_string(),
             kind: CardKind::Task,
@@ -1202,13 +1270,13 @@ impl Engine {
             session_id: None,
             project_cwd: t.project_cwd,
             priority: t.priority,
-            auto_run: t.auto_run,
+            auto_run,
             run_prompt: t.run_prompt,
             permission_mode: None,
             model: t.model.filter(|m| !m.trim().is_empty()),
             estimate_weighted_tokens: None,
-            manual_column: None,
-            manual_lock_priority: None,
+            manual_column: lock.map(|c| c.id.clone()),
+            manual_lock_priority: lock.map(|_| 0),
             tags: vec![],
             notes: t.notes,
             archived: false,
@@ -1270,6 +1338,71 @@ impl Engine {
         self.store.lock().unwrap().delete_card(id)?;
         self.emit_changed();
         Ok(())
+    }
+
+    /// Store a manual order for one column. `ranked` holds the cards the user
+    /// placed, top first; they get descending positive priorities. `unranked`
+    /// holds the rest of that column, which go back to priority 0 and so sort
+    /// automatically, below every ranked card.
+    ///
+    /// Priority is what the planner sorts by as well, so the top of a ranked
+    /// backlog is also the first card a plan takes.
+    pub fn reorder_cards(&self, ranked: &[String], unranked: &[String]) -> anyhow::Result<()> {
+        let now = Utc::now();
+        {
+            let store = self.store.lock().unwrap();
+            let n = ranked.len() as i32;
+            let want = |i: usize| n - i as i32;
+            for (i, id) in ranked.iter().enumerate() {
+                let Some(mut c) = store.get_card(id)? else {
+                    continue;
+                };
+                if c.priority == want(i) {
+                    continue;
+                }
+                c.priority = want(i);
+                c.updated_at = now;
+                store.upsert_card(&c)?;
+            }
+            for id in unranked {
+                let Some(mut c) = store.get_card(id)? else {
+                    continue;
+                };
+                if c.priority == 0 {
+                    continue;
+                }
+                c.priority = 0;
+                c.updated_at = now;
+                store.upsert_card(&c)?;
+            }
+        }
+        self.emit_changed();
+        Ok(())
+    }
+
+    /// The user clicked the stale mark: ask the usage endpoint now, outside the
+    /// rate limit, keep the sample, and refresh the board.
+    pub fn fetch_usage_now(self: &Arc<Self>) -> anyhow::Result<QuotaSample> {
+        let s = quota::fetch_usage_with(true)?;
+        let _ = self.store.lock().unwrap().insert_quota_sample(&s);
+        {
+            let mut snap = self.snap.write().unwrap();
+            if snap.quota.as_ref().is_none_or(|q| s.at >= q.at) {
+                snap.quota = Some(s.clone());
+            }
+        }
+        self.emit_changed();
+        Ok(s)
+    }
+
+    /// Write the automation mode and keep the two older settings in step.
+    pub fn set_automation_mode(&self, mode: AutomationMode) -> anyhow::Result<()> {
+        let mut s = self.settings();
+        if s.automation() == mode {
+            return Ok(());
+        }
+        s.set_automation(mode);
+        self.set_settings(s)
     }
 
     pub fn columns(&self) -> Vec<Column> {
@@ -1594,10 +1727,13 @@ impl Engine {
             .clone()
             .or_else(|| cv.session.as_ref().and_then(|s| s.cwd.clone()))
             .ok_or_else(|| anyhow::anyhow!("card has no project directory"))?;
-        let prompt = prompt_override
-            .or_else(|| card.run_prompt.clone())
-            .or_else(|| card.title.clone())
-            .ok_or_else(|| anyhow::anyhow!("card has no prompt"))?;
+        // A task card joins its title and its body, so the title never has to be
+        // repeated in the body. A one-off prompt replaces both.
+        let prompt = match prompt_override {
+            Some(p) if !p.trim().is_empty() => Some(p),
+            _ => compose_prompt(card.kind, card.title.as_deref(), card.run_prompt.as_deref()),
+        }
+        .ok_or_else(|| anyhow::anyhow!("card has no prompt"))?;
         let mode = card
             .permission_mode
             .clone()
@@ -1712,7 +1848,11 @@ impl Engine {
                 card_id: cv.card.id.clone(),
                 title: cv.title.clone(),
                 project_name: cv.project_name.clone(),
-                prompt: cv.card.run_prompt.clone().or_else(|| cv.card.title.clone()),
+                prompt: compose_prompt(
+                    cv.card.kind,
+                    cv.card.title.as_deref(),
+                    cv.card.run_prompt.as_deref(),
+                ),
                 model: cv.card.model.clone(),
                 priority: cv.card.priority,
                 created_at: cv.card.created_at,
@@ -1799,7 +1939,8 @@ impl Engine {
     /// Check the triggers and offer a plan. Runs on a timer.
     pub fn proposal_tick(self: &Arc<Self>) {
         let settings = self.settings();
-        if !settings.proposals_enabled {
+        self.snap.write().unwrap().proposal_checked_at = Some(Utc::now());
+        if settings.automation() == AutomationMode::Off {
             return;
         }
         self.expire_proposal();
@@ -1856,7 +1997,8 @@ impl Engine {
         let _ = self.store.lock().unwrap().save_proposal(&p);
         self.snap.write().unwrap().proposal = Some(p.clone());
         // Autopilot answers the weekly-reset trigger by itself.
-        let auto = settings.autopilot && p.trigger == ProposalTrigger::WeeklyReset;
+        let auto = settings.automation() == AutomationMode::Auto
+            && p.trigger == ProposalTrigger::WeeklyReset;
         if auto {
             let me = Arc::clone(self);
             let id = p.id.clone();

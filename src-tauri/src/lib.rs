@@ -1,7 +1,7 @@
 use kari_core::hub::{Hub, HubEvent};
 use kari_core::{
-    Calibration, Card, CardPatch, Column, Engine, HubBoard, NewNode, NewTask, NodePatch,
-    NodeStatus, Proposal, QuotaSample, Settings, Summary,
+    AutomationMode, Calibration, Card, CardPatch, Column, Engine, HubBoard, NewNode, NewTask,
+    NodePatch, NodeStatus, Proposal, QuotaSample, Settings, Summary,
 };
 use std::sync::Arc;
 #[cfg(desktop)]
@@ -13,6 +13,9 @@ use tauri_plugin_notification::NotificationExt;
 
 struct AppState {
     hub: Arc<Hub>,
+    /// The window holds unsaved input: a task draft, an edited card. A quit
+    /// from the tray or from Cmd+Q asks before it throws that away.
+    dirty: std::sync::atomic::AtomicBool,
 }
 
 /// The tray keeps its own small state: the stop item, and the arm time that
@@ -123,6 +126,61 @@ async fn patch_card(
 #[tauri::command]
 async fn delete_card(state: State<'_, AppState>, node_id: String, card_id: String) -> R<()> {
     off_thread(&state.hub, move |h| h.delete_card(&node_id, &card_id)).await
+}
+
+/// The frontend reports whether any form holds unsaved input.
+#[tauri::command]
+fn set_dirty(state: State<'_, AppState>, dirty: bool) {
+    state
+        .dirty
+        .store(dirty, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The user confirmed the quit in the window.
+#[tauri::command]
+fn quit_now(app: AppHandle) {
+    app.exit(0);
+}
+
+/// Store a manual order for one column on one node.
+#[tauri::command]
+async fn reorder_cards(
+    state: State<'_, AppState>,
+    node_id: String,
+    ranked: Vec<String>,
+    unranked: Vec<String>,
+) -> R<()> {
+    off_thread(&state.hub, move |h| {
+        h.reorder_cards(&node_id, ranked, unranked)
+    })
+    .await
+}
+
+/// Set how much automatic behaviour is allowed. An empty node id sets every
+/// node that answers, and names the ones that did not.
+#[tauri::command]
+async fn set_automation_mode(
+    state: State<'_, AppState>,
+    node_id: String,
+    mode: String,
+) -> R<String> {
+    let m = match AutomationMode::parse(&mode) {
+        Some(m) => m,
+        None => return Err(format!("unknown automation mode {mode}")),
+    };
+    off_thread(&state.hub, move |h| {
+        if node_id.is_empty() {
+            let failed = h.set_automation_mode_all(m);
+            return Ok(if failed.is_empty() {
+                format!("Automation set to {mode}")
+            } else {
+                format!("Automation set to {mode}, except on {}", failed.join(", "))
+            });
+        }
+        h.set_automation_mode(&node_id, m)?;
+        Ok(format!("Automation set to {mode}"))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -309,8 +367,9 @@ fn get_calibration(state: State<'_, AppState>) -> Calibration {
 
 /// Ask the OAuth usage endpoint once, outside the stale check. For a manual test.
 #[tauri::command]
-async fn fetch_usage_now() -> R<QuotaSample> {
-    tauri::async_runtime::spawn_blocking(|| kari_core::quota::fetch_usage().map_err(err))
+async fn fetch_usage_now(state: State<'_, AppState>) -> R<QuotaSample> {
+    let e = state.hub.engine().clone();
+    tauri::async_runtime::spawn_blocking(move || e.fetch_usage_now().map_err(err))
         .await
         .map_err(err)?
 }
@@ -392,6 +451,115 @@ async fn pairing_code(state: State<'_, AppState>) -> R<String> {
     off_thread(&state.hub, |h| h.pairing_code()).await
 }
 
+// ------------------------------------------------------- window geometry
+
+/// The size and the place of the main window, in logical pixels.
+///
+/// `tauri-plugin-window-state` does this too, but it hides the window before it
+/// restores and shows it again only with its `VISIBLE` flag. kari lives in the
+/// tray, so whether the window was open at exit must not decide whether it
+/// opens at the next start. Two fields of our own cost less than that trade.
+#[cfg(desktop)]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Geometry {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+#[cfg(desktop)]
+fn geometry_file() -> std::path::PathBuf {
+    kari_core::paths::kari_dir().join("window.json")
+}
+
+/// Read the last geometry and put the window back. A rectangle that no display
+/// covers any more keeps its size and lets the system place it, so a window
+/// never opens off screen after a monitor goes away.
+#[cfg(desktop)]
+fn restore_geometry(window: &tauri::Window) {
+    let Ok(text) = std::fs::read_to_string(geometry_file()) else {
+        return;
+    };
+    let Ok(g) = serde_json::from_str::<Geometry>(&text) else {
+        return;
+    };
+    if g.w >= 480.0 && g.h >= 320.0 {
+        let _ = window.set_size(tauri::LogicalSize::new(g.w, g.h));
+    }
+    let on_screen = window.available_monitors().is_ok_and(|ms| {
+        ms.iter().any(|m| {
+            let s = m.scale_factor();
+            let p = m.position();
+            let sz = m.size();
+            let (mx, my) = (p.x as f64 / s, p.y as f64 / s);
+            let (mw, mh) = (sz.width as f64 / s, sz.height as f64 / s);
+            // The title bar must be reachable, so ask for the top-left corner
+            // plus a little of the width to fall inside this display.
+            g.x + 120.0 > mx && g.x < mx + mw && g.y + 24.0 > my && g.y < my + mh
+        })
+    });
+    if on_screen {
+        let _ = window.set_position(tauri::LogicalPosition::new(g.x, g.y));
+    } else {
+        tracing::info!("saved window position is off screen; letting the system place it");
+    }
+}
+
+/// How many geometry events arrived. A pending write compares its own number
+/// with this one and gives way to a newer event.
+#[cfg(desktop)]
+static GEOMETRY_EVENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Write the geometry once the window is quiet.
+///
+/// A drag sends an event per frame. Writing on each one is wasteful, and
+/// writing only the first one loses the size the user settled on, so the write
+/// waits for the last event of the run and then happens once.
+#[cfg(desktop)]
+fn save_geometry(window: &tauri::Window) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let mine = GEOMETRY_EVENTS.fetch_add(1, SeqCst) + 1;
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        if GEOMETRY_EVENTS.load(SeqCst) != mine {
+            return; // a newer move or resize owns the write
+        }
+        write_geometry(&window);
+    });
+}
+
+/// Write the geometry now. The close path uses it, because the window is about
+/// to hide and a hidden window reports nothing worth keeping.
+#[cfg(desktop)]
+fn write_geometry(window: &tauri::Window) {
+    // A minimized or hidden window reports a place worth nothing.
+    if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let (Ok(pos), Ok(size), Ok(scale)) = (
+        window.outer_position(),
+        window.inner_size(),
+        window.scale_factor(),
+    ) else {
+        return;
+    };
+    let g = Geometry {
+        x: pos.x as f64 / scale,
+        y: pos.y as f64 / scale,
+        w: size.width as f64 / scale,
+        h: size.height as f64 / scale,
+    };
+    if let Ok(text) = serde_json::to_string(&g) {
+        let path = geometry_file();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, text);
+    }
+}
+
 // ---------------------------------------------------------------- shell
 
 #[cfg(desktop)]
@@ -401,6 +569,24 @@ fn show_main(app: &AppHandle) {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
+}
+
+/// Quit, unless the window holds unsaved input. Then show the window and let
+/// the frontend ask. It calls `quit_now` when the user confirms.
+///
+/// Returns true when the app is on its way out.
+#[cfg(desktop)]
+fn request_quit(app: &AppHandle) -> bool {
+    let dirty = app
+        .try_state::<AppState>()
+        .is_some_and(|s| s.dirty.load(std::sync::atomic::Ordering::Relaxed));
+    if dirty {
+        show_main(app);
+        let _ = app.emit("confirm_quit", ());
+        return false;
+    }
+    app.exit(0);
+    true
 }
 
 /// Show the counts that matter on the tray icon.
@@ -523,6 +709,10 @@ macro_rules! handlers {
             add_task,
             patch_card,
             delete_card,
+            set_dirty,
+            quit_now,
+            reorder_cards,
+            set_automation_mode,
             get_columns,
             set_columns,
             reset_columns,
@@ -586,6 +776,7 @@ pub fn run() {
             let hub = Hub::without_local(engine);
             app.manage(AppState {
                 hub: Arc::clone(&hub),
+                dirty: std::sync::atomic::AtomicBool::new(false),
             });
             forward_events(app.handle().clone(), hub);
             // Android 13 and later ask the user once before the first
@@ -614,7 +805,9 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("kari_core=info".parse().unwrap()),
+                .add_directive("kari_core=info".parse().unwrap())
+                // Without this the app crate's own lines never reach the log.
+                .add_directive("kari=info".parse().unwrap()),
         )
         .init();
 
@@ -628,8 +821,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             hub: Arc::clone(&hub),
+            dirty: std::sync::atomic::AtomicBool::new(false),
         })
         .setup(move |app| {
+            // Put the window back where it was, before it is on screen.
+            if let Some(w) = app.get_webview_window("main") {
+                restore_geometry(&w.as_ref().window());
+            }
             // The API serves the hook relay on this Mac and, over an SSH
             // forward, any other kari that treats this Mac as a node.
             let port = engine.settings().hooks_port;
@@ -700,23 +898,47 @@ pub fn run() {
                                 .set_text(format!("Click again to stop {n} job(s)"));
                         }
                     }
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        request_quit(app);
+                    }
                     _ => {}
                 })
                 .build(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window hides it. The tray keeps kari alive.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+            match event {
+                // Closing the window hides it. The tray keeps kari alive, so
+                // the geometry is written now, while the window still has one.
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    write_geometry(window);
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                    save_geometry(window)
+                }
+                _ => {}
             }
         })
         .invoke_handler(handlers!())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            // Cmd+Q and the app menu ask for an exit with no code. With unsaved
+            // input kari keeps running and asks in the window. `quit_now` exits
+            // with a code, and that passes.
+            #[cfg(desktop)]
+            if let tauri::RunEvent::ExitRequested {
+                ref api,
+                code: None,
+                ..
+            } = event
+            {
+                if !request_quit(app) {
+                    api.prevent_exit();
+                }
+            }
             // Closing the window only hides it, so the dock icon must bring it
             // back. macOS sends Reopen for a dock click, and for "Open" again.
             #[cfg(target_os = "macos")]

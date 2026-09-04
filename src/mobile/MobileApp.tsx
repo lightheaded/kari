@@ -42,6 +42,7 @@ const EMPTY_BOARD: HubBoard = {
   nodes: [],
   cards: [],
   quotas: [],
+  queues: [],
   proposals: [],
   generated_at: "",
   scanning: false,
@@ -167,6 +168,9 @@ export default function MobileApp() {
           <AddTaskModal
             nodes={nodes}
             defaultNode={nodes.find((n) => n.online)?.id ?? nodes[0]?.id ?? ""}
+            defaultProject={null}
+            columnId={null}
+            columns={board.columns}
             projectsByNode={projectsByNode}
             onClose={() => setTab("inbox")}
             onSubmit={(nodeId, t) =>

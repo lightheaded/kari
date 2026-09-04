@@ -1,10 +1,46 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Column, DerivedState, NewTask, NodeStatus, Settings } from "../types";
-import { ALL_STATES, RUN_MODELS, STATE_LABEL } from "../types";
-import { nodeDot, relTime } from "../util";
+import type { AutomationMode, Column, DerivedState, NewTask, NodeStatus, Settings } from "../types";
+import { ALL_STATES, AUTOMATION_MODES, RUN_MODELS, STATE_LABEL } from "../types";
+import { nodeDot, noAutoFill, proseField, relTime } from "../util";
+import { useAutoGrow } from "../hooks";
+import type { CloseGuard } from "../dirty";
+import { useCloseGuard } from "../dirty";
+import { ProjectPicker, type PickerItem } from "./ProjectPicker";
 
-function Modal({ title, children, footer, onClose }: { title: string; children: React.ReactNode; footer?: React.ReactNode; onClose: () => void }) {
+/** The bar a first Escape shows on a form that holds unsaved input. */
+export function UnsavedBar({ guard, text }: { guard: CloseGuard; text: string }) {
+  if (!guard.asking) return null;
+  return (
+    <div className="unsaved" role="alert">
+      <span>{text} Press Escape again to discard.</span>
+      <div className="spacer" />
+      <button className="btn sm" onClick={guard.keep} autoFocus>
+        Keep editing
+      </button>
+      <button className="btn danger sm" onClick={guard.discard}>
+        Discard
+      </button>
+    </div>
+  );
+}
+
+function Modal({
+  title,
+  children,
+  footer,
+  onClose,
+  guard,
+  unsavedText,
+}: {
+  title: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  onClose: () => void;
+  /** When given, Escape and the backdrop ask before they throw input away. */
+  guard?: CloseGuard;
+  unsavedText?: string;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -22,7 +58,10 @@ function Modal({ title, children, footer, onClose }: { title: string; children: 
             ✕
           </button>
         </header>
-        <div className="body">{children}</div>
+        {guard && <UnsavedBar guard={guard} text={unsavedText ?? "This form holds unsaved input."} />}
+        <div className="body" onInput={guard?.asking ? guard.keep : undefined}>
+          {children}
+        </div>
         {footer && <footer>{footer}</footer>}
       </div>
     </div>
@@ -33,27 +72,51 @@ interface AddTaskProps {
   nodes: NodeStatus[];
   /** Node the picker starts on. The node filter chooses it, else the local node. */
   defaultNode: string;
+  /** Project the picker starts on: the filter first, else the last one used. */
+  defaultProject: string | null;
+  /** Column the card must land in, when the dialog came from a column foot. */
+  columnId: string | null;
+  columns: Column[];
   /** Projects taken from the cards of each node. Used until the node answers. */
   projectsByNode: Record<string, [string, string][]>;
   onClose: () => void;
   onSubmit: (nodeId: string, t: NewTask) => void;
 }
 
-export function AddTaskModal({ nodes, defaultNode, projectsByNode, onClose, onSubmit }: AddTaskProps) {
+export function AddTaskModal({
+  nodes,
+  defaultNode,
+  defaultProject,
+  columnId,
+  columns,
+  projectsByNode,
+  onClose,
+  onSubmit,
+}: AddTaskProps) {
   const [node, setNode] = useState(defaultNode);
   const [loaded, setLoaded] = useState<Record<string, [string, string][]>>({});
   const [title, setTitle] = useState("");
-  const [cwd, setCwd] = useState("");
+  const [cwd, setCwd] = useState(defaultProject ?? "");
   const [custom, setCustom] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [autoRun, setAutoRun] = useState(false);
+  const target = columns.find((c) => c.id === columnId);
+  const [autoRun, setAutoRun] = useState(target?.accepts.includes("ready") ?? false);
   const [priority, setPriority] = useState(0);
   const [notes, setNotes] = useState("");
   const [model, setModel] = useState("");
+  const promptGrow = useAutoGrow("add.prompt", prompt);
+  const notesGrow = useAutoGrow("add.notes", notes);
   // The node answers with its projects. Until then the cards of that node name them.
   const projects = loaded[node] ?? projectsByNode[node] ?? [];
   const chosen = cwd === "__custom" || projects.some(([c]) => c === cwd) ? cwd : projects[0]?.[0] ?? "";
   const dir = chosen === "__custom" ? custom : chosen;
+  const projectItems: PickerItem[] = [
+    ...projects.map(([c, n]) => ({ value: c, label: n, hint: c })),
+    { value: "__custom", label: "Other path…" },
+  ];
+  // A typed draft is worth more than a stray Escape. The first close asks.
+  const dirty = [title, prompt, notes, custom].some((v) => v.trim() !== "");
+  const guard = useCloseGuard(dirty, onClose);
 
   useEffect(() => {
     let live = true;
@@ -71,10 +134,12 @@ export function AddTaskModal({ nodes, defaultNode, projectsByNode, onClose, onSu
   return (
     <Modal
       title="New task"
-      onClose={onClose}
+      onClose={guard.requestClose}
+      guard={guard}
+      unsavedText="This task is not saved."
       footer={
         <>
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={guard.requestClose}>
             Cancel
           </button>
           <button
@@ -89,6 +154,7 @@ export function AddTaskModal({ nodes, defaultNode, projectsByNode, onClose, onSu
                 priority,
                 notes: notes.trim() || null,
                 model: model || null,
+                column_id: columnId,
               })
             }
           >
@@ -97,9 +163,14 @@ export function AddTaskModal({ nodes, defaultNode, projectsByNode, onClose, onSu
         </>
       }
     >
+      {target && (
+        <div className="hint">
+          The card lands in <b>{target.name}</b>.
+        </div>
+      )}
       <div className="field">
         <label>Title</label>
-        <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs to happen" />
+        <input {...noAutoFill} autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs to happen" />
       </div>
       {nodes.length > 1 && (
         <div className="field">
@@ -116,24 +187,31 @@ export function AddTaskModal({ nodes, defaultNode, projectsByNode, onClose, onSu
       )}
       <div className="field">
         <label>Project directory</label>
-        <select value={chosen} onChange={(e) => setCwd(e.target.value)}>
-          {projects.map(([c, n]) => (
-            <option key={c} value={c}>
-              {n} — {c}
-            </option>
-          ))}
-          <option value="__custom">Other path…</option>
-        </select>
-        {chosen === "__custom" && <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="/absolute/path" />}
+        <ProjectPicker items={projectItems} value={chosen} ariaLabel="Project directory" onChange={setCwd} />
+        {chosen === "__custom" && (
+          <input {...noAutoFill} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="/absolute/path" />
+        )}
       </div>
       <div className="field">
-        <label>Run prompt (what Claude gets when the task starts)</label>
-        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Leave empty to use the title" />
+        <label>Body (added under the title when the task runs)</label>
+        <textarea
+          {...proseField}
+          {...promptGrow}
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Detail, links, where to start. The title is always the first line, so it needs no repeating."
+        />
       </div>
       <div className="grid2">
         <div className="field">
           <label>Priority</label>
-          <input type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
+          <input
+            {...noAutoFill}
+            type="number"
+            value={priority}
+            onChange={(e) => setPriority(Number(e.target.value))}
+            title="0 means automatic order. A card you drag on the board gets a priority of its own."
+          />
         </div>
         <div className="field">
           <label>Model (optional)</label>
@@ -152,7 +230,7 @@ export function AddTaskModal({ nodes, defaultNode, projectsByNode, onClose, onSu
       </label>
       <div className="field">
         <label>Notes</label>
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <textarea {...proseField} {...notesGrow} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
     </Modal>
   );
@@ -174,17 +252,21 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
   const toggleState = (i: number, s: DerivedState) =>
     update(i, { accepts: cols[i].accepts.includes(s) ? cols[i].accepts.filter((x) => x !== s) : [...cols[i].accepts, s] });
   const unassigned = ALL_STATES.filter((s) => s !== "stale" && !cols.some((c) => !c.hidden && c.accepts.includes(s)));
+  const dirty = JSON.stringify(cols) !== JSON.stringify([...columns].sort((a, b) => a.order - b.order));
+  const guard = useCloseGuard(dirty, onClose);
   return (
     <Modal
       title="Columns"
-      onClose={onClose}
+      onClose={guard.requestClose}
+      guard={guard}
+      unsavedText="The column changes are not saved."
       footer={
         <>
           <button className="btn ghost" onClick={onReset}>
             Reset to defaults
           </button>
           <div className="spacer" />
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={guard.requestClose}>
             Cancel
           </button>
           <button className="btn primary" onClick={() => onSave(cols.map((c, k) => ({ ...c, order: k })))}>
@@ -208,8 +290,8 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
               ↓
             </button>
           </div>
-          <input type="text" value={c.name} onChange={(e) => update(i, { name: e.target.value })} />
-          <input type="number" placeholder="WIP" value={c.wip_limit ?? ""} onChange={(e) => update(i, { wip_limit: e.target.value === "" ? null : Number(e.target.value) })} title="WIP limit" />
+          <input {...noAutoFill} type="text" value={c.name} onChange={(e) => update(i, { name: e.target.value })} />
+          <input {...noAutoFill} type="number" placeholder="WIP" value={c.wip_limit ?? ""} onChange={(e) => update(i, { wip_limit: e.target.value === "" ? null : Number(e.target.value) })} title="WIP limit" />
           <select value={c.color ?? "neutral"} onChange={(e) => update(i, { color: e.target.value })}>
             {COLORS.map((k) => (
               <option key={k} value={k}>
@@ -281,6 +363,7 @@ function NodeRow({
       </span>
       {local ? (
         <input
+          {...noAutoFill}
           className="nodename"
           value={localName}
           placeholder="the host name"
@@ -289,6 +372,7 @@ function NodeRow({
         />
       ) : (
         <input
+          {...noAutoFill}
           className="nodename"
           defaultValue={node.name}
           aria-label={`Name of ${node.name}`}
@@ -480,28 +564,28 @@ function NodesSection({
       <div className="nodeadd">
         <div className="field">
           <label>SSH host</label>
-          <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="ssh-host" />
+          <input {...noAutoFill} value={host} onChange={(e) => setHost(e.target.value)} placeholder="ssh-host" />
           <div className="hint">an alias from ~/.ssh/config</div>
         </div>
         <div className="field">
           <label>Name</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={host || "same as the SSH host"} />
+          <input {...noAutoFill} value={name} onChange={(e) => setName(e.target.value)} placeholder={host || "same as the SSH host"} />
         </div>
         <div className="field">
           <label>Port</label>
-          <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+          <input {...noAutoFill} type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
         </div>
         <button className="btn sm" disabled={busy || !(host.trim() || address.trim())} onClick={add}>
           Add node
         </button>
         <div className="field">
           <label>Address (no SSH)</label>
-          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="ip:47311" />
+          <input {...noAutoFill} value={address} onChange={(e) => setAddress(e.target.value)} placeholder="ip:47311" />
           <div className="hint">on a private network, when there is no SSH forward</div>
         </div>
         <div className="field">
           <label>Token</label>
-          <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="the node's hook-token" type="password" />
+          <input {...noAutoFill} value={token} onChange={(e) => setToken(e.target.value)} placeholder="the node's hook-token" type="password" />
           <div className="hint">needed with an address; read from the node's config directory</div>
         </div>
       </div>
@@ -542,17 +626,23 @@ export function SettingsModal({
     api.paths().then(setPaths).catch(() => {});
   }, []);
   const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => setS({ ...s, [k]: Number(e.target.value) });
+  // The mode is derived from the two flags, never stored on its own.
+  const mode: AutomationMode = !s.proposals_enabled ? "off" : s.autopilot ? "auto" : "ask";
+  const dirty = JSON.stringify(s) !== JSON.stringify(settings);
+  const guard = useCloseGuard(dirty, onClose);
   return (
     <Modal
       title="Settings"
-      onClose={onClose}
+      onClose={guard.requestClose}
+      guard={guard}
+      unsavedText="The settings are not saved."
       footer={
         <>
           <button className="btn danger" onClick={onStopAll} title="Stop every background job kari started">
             Stop all kari jobs
           </button>
           <div className="spacer" />
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={guard.requestClose}>
             Cancel
           </button>
           <button className="btn primary" onClick={() => onSave(s)}>
@@ -564,19 +654,19 @@ export function SettingsModal({
       <div className="grid2">
         <div className="field">
           <label>History window (days)</label>
-          <input type="number" value={s.history_days} onChange={num("history_days")} />
+          <input {...noAutoFill} type="number" value={s.history_days} onChange={num("history_days")} />
         </div>
         <div className="field">
           <label>Done after inactivity (days)</label>
-          <input type="number" value={s.done_after_days} onChange={num("done_after_days")} />
+          <input {...noAutoFill} type="number" value={s.done_after_days} onChange={num("done_after_days")} />
         </div>
         <div className="field">
           <label>Stale after inactivity (days)</label>
-          <input type="number" value={s.stale_after_days} onChange={num("stale_after_days")} />
+          <input {...noAutoFill} type="number" value={s.stale_after_days} onChange={num("stale_after_days")} />
         </div>
         <div className="field">
           <label>Max parallel background jobs</label>
-          <input type="number" value={s.max_parallel_bg} onChange={num("max_parallel_bg")} />
+          <input {...noAutoFill} type="number" value={s.max_parallel_bg} onChange={num("max_parallel_bg")} />
         </div>
         <div className="field">
           <label>Terminal for Jump in</label>
@@ -653,15 +743,15 @@ export function SettingsModal({
           </label>
           <div className="field">
             <label>Model</label>
-            <input value={s.summary_model} onChange={(e) => setS({ ...s, summary_model: e.target.value })} />
+            <input {...noAutoFill} value={s.summary_model} onChange={(e) => setS({ ...s, summary_model: e.target.value })} />
           </div>
           <div className="field">
             <label>Max calls per hour</label>
-            <input type="number" value={s.summaries_per_hour} onChange={num("summaries_per_hour")} />
+            <input {...noAutoFill} type="number" value={s.summaries_per_hour} onChange={num("summaries_per_hour")} />
           </div>
           <div className="field">
             <label>Only sessions active in the last (hours)</label>
-            <input type="number" value={s.summary_recent_hours} onChange={num("summary_recent_hours")} />
+            <input {...noAutoFill} type="number" value={s.summary_recent_hours} onChange={num("summary_recent_hours")} />
           </div>
         </div>
       </div>
@@ -671,59 +761,78 @@ export function SettingsModal({
           kari offers a plan when quota would expire unused. It never starts a card that is not marked "May run unattended". The planner keeps a reserve free during
           working hours and never fills a window past the ceiling.
         </div>
-        <label className="field inline" style={{ marginTop: 8 }}>
-          <input type="checkbox" checked={s.proposals_enabled} onChange={(e) => setS({ ...s, proposals_enabled: e.target.checked })} />
-          <span>Offer plans</span>
-        </label>
+        <div className="field" style={{ marginTop: 8 }}>
+          <label>Automatic behaviour on this machine</label>
+          <div className="modeset" role="radiogroup" aria-label="Automatic behaviour">
+            {AUTOMATION_MODES.map((m) => (
+              <button
+                key={m.value}
+                role="radio"
+                aria-checked={mode === m.value}
+                className={`toggle ${mode === m.value ? "on" : ""}`}
+                // Off leaves autopilot alone, so the flag still says what the
+                // user asked for the last time plans were on.
+                onClick={() =>
+                  setS({
+                    ...s,
+                    proposals_enabled: m.value !== "off",
+                    autopilot: m.value === "auto" ? true : m.value === "ask" ? false : s.autopilot,
+                  })
+                }
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="hint">
+            {AUTOMATION_MODES.find((m) => m.value === mode)?.help ?? ""} The same control sits in the top bar and sets every node at once.
+          </div>
+        </div>
         <div className="grid2" style={{ marginTop: 8 }}>
           <div className="field">
             <label>Weekly window unused above (percent)</label>
-            <input type="number" value={s.weekly_unused_pct} onChange={num("weekly_unused_pct")} />
+            <input {...noAutoFill} type="number" value={s.weekly_unused_pct} onChange={num("weekly_unused_pct")} />
           </div>
           <div className="field">
             <label>and resets within (hours)</label>
-            <input type="number" value={s.weekly_hours_before_reset} onChange={num("weekly_hours_before_reset")} />
+            <input {...noAutoFill} type="number" value={s.weekly_hours_before_reset} onChange={num("weekly_hours_before_reset")} />
           </div>
           <div className="field">
             <label>5-hour window below (percent)</label>
-            <input type="number" value={s.five_hour_idle_pct} onChange={num("five_hour_idle_pct")} />
+            <input {...noAutoFill} type="number" value={s.five_hour_idle_pct} onChange={num("five_hour_idle_pct")} />
           </div>
           <div className="field">
             <label>and nobody worked for (minutes)</label>
-            <input type="number" value={s.idle_minutes} onChange={num("idle_minutes")} />
+            <input {...noAutoFill} type="number" value={s.idle_minutes} onChange={num("idle_minutes")} />
           </div>
           <div className="field">
             <label>Working hours start</label>
-            <input type="number" min={0} max={23} value={s.working_hours_start} onChange={num("working_hours_start")} />
+            <input {...noAutoFill} type="number" min={0} max={23} value={s.working_hours_start} onChange={num("working_hours_start")} />
           </div>
           <div className="field">
             <label>Working hours end</label>
-            <input type="number" min={0} max={23} value={s.working_hours_end} onChange={num("working_hours_end")} />
+            <input {...noAutoFill} type="number" min={0} max={23} value={s.working_hours_end} onChange={num("working_hours_end")} />
           </div>
           <div className="field">
             <label>Keep free in working hours (percent)</label>
-            <input type="number" value={s.working_hours_reserve_pct} onChange={num("working_hours_reserve_pct")} />
+            <input {...noAutoFill} type="number" value={s.working_hours_reserve_pct} onChange={num("working_hours_reserve_pct")} />
           </div>
           <div className="field">
             <label>Never fill past (percent)</label>
-            <input type="number" value={s.fill_ceiling_pct} onChange={num("fill_ceiling_pct")} />
+            <input {...noAutoFill} type="number" value={s.fill_ceiling_pct} onChange={num("fill_ceiling_pct")} />
           </div>
         </div>
       </div>
       <div className="section">
         <h5>Autopilot</h5>
         <div className="hint">
-          With autopilot on, a weekly-reset plan starts by itself. kari still sends a notice and the plan panel keeps a Stop button. Only cards marked "May run
+          Mode <b>Auto</b> starts a weekly-reset plan by itself. kari still sends a notice and the plan panel keeps a Stop button. Only cards marked "May run
           unattended" are eligible, and the parallel cap holds.
         </div>
         <div className="grid2" style={{ marginTop: 8 }}>
-          <label className="field inline">
-            <input type="checkbox" checked={s.autopilot} onChange={(e) => setS({ ...s, autopilot: e.target.checked })} />
-            <span>Start weekly-reset plans without asking</span>
-          </label>
           <div className="field">
             <label>Jobs autopilot may start at once</label>
-            <input type="number" min={1} value={s.autopilot_max_jobs} onChange={num("autopilot_max_jobs")} />
+            <input {...noAutoFill} type="number" min={1} value={s.autopilot_max_jobs} onChange={num("autopilot_max_jobs")} />
           </div>
           <label className="field inline">
             <input type="checkbox" checked={s.prefer_herdr} onChange={(e) => setS({ ...s, prefer_herdr: e.target.checked })} />
@@ -731,7 +840,7 @@ export function SettingsModal({
           </label>
           <div className="field">
             <label>Warn when weekly unused is above (percent)</label>
-            <input type="number" value={s.weekly_warn_unused_pct} onChange={num("weekly_warn_unused_pct")} />
+            <input {...noAutoFill} type="number" value={s.weekly_warn_unused_pct} onChange={num("weekly_warn_unused_pct")} />
           </div>
         </div>
       </div>

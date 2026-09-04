@@ -97,12 +97,12 @@ pub fn derive(i: &Inputs<'_>) -> (DerivedState, String) {
 
     // Task cards without a session.
     if card.kind == CardKind::Task && card.session_id.is_none() {
-        return if card.auto_run
-            && card
-                .run_prompt
-                .as_deref()
-                .is_some_and(|p| !p.trim().is_empty())
-        {
+        // A run joins the title and the body, so a title alone is prompt enough.
+        let has_prompt = [card.run_prompt.as_deref(), card.title.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|p| !p.trim().is_empty());
+        return if card.auto_run && has_prompt {
             (Ready, "auto-run enabled".into())
         } else {
             (Backlog, "task".into())

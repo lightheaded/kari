@@ -49,6 +49,11 @@ const NODES = [
     remote_node_id: null,
     last_seen: min(0),
     error: null,
+    lease: null,
+    primary: true,
+    away_mode: false,
+    addresses: [],
+    automation_mode: "ask",
   },
   {
     id: "lab",
@@ -64,20 +69,42 @@ const NODES = [
     remote_node_id: "node_lab",
     last_seen: min(1),
     error: null,
+    lease: null,
+    primary: true,
+    away_mode: false,
+    addresses: ["lab:47311"],
+    automation_mode: "ask",
   },
 ];
 
+// The six default columns. Needs me and Review each merge several states, and
+// the board groups those states inside the column.
 const columns = [
   ["backlog", "Backlog", ["backlog"], null, "neutral"],
   ["ready", "Ready", ["ready"], null, "green"],
   ["working", "Working", ["working"], 3, "green"],
-  ["my_turn", "My turn", ["my_turn", "unknown"], null, "slate"],
-  ["decision", "Decision needed", ["needs_decision"], null, "amber"],
-  ["approval", "Approval needed", ["needs_approval"], null, "rust"],
-  ["waiting", "Waiting on others", ["waiting_on_others"], null, "slate"],
-  ["validate", "Validate", ["validate"], null, "green"],
+  ["needs_me", "Needs me", ["needs_approval", "needs_decision", "my_turn", "unknown"], null, "amber"],
+  ["review", "Review", ["validate", "waiting_on_others"], null, "slate"],
   ["done", "Done", ["done"], null, "neutral"],
 ].map(([id, name, accepts, wip, color], order) => ({ id, name, order, accepts, wip_limit: wip, color, hidden: false }));
+
+/** The column a state lands in, so a card's column_id matches the new set. */
+const COLUMN_OF = Object.fromEntries(columns.flatMap((c) => c.accepts.map((s) => [s, c.id])));
+
+/** Where a column id from the old nine-column set goes now. */
+const MERGED = {
+  my_turn: "needs_me",
+  decision: "needs_me",
+  approval: "needs_me",
+  waiting: "review",
+  validate: "review",
+};
+
+/** A card sits in the column its state derives, unless a manual lock holds it. */
+function columnOf(o) {
+  if (o.locked) return MERGED[o.column_id] ?? o.column_id;
+  return COLUMN_OF[o.state] ?? o.column_id;
+}
 
 const PCT_PER_MTOK = 1.9;
 const calibration = { pct_per_mtok: PCT_PER_MTOK, low: 1.4, high: 2.6, samples: 7, source: "learned", updated_at: hours(3) };
@@ -173,7 +200,7 @@ function view(o) {
     card: o.card,
     title: o.title,
     state: o.state,
-    column_id: o.column_id,
+    column_id: columnOf(o),
     locked: o.locked ?? false,
     project_name: o.project?.name ?? null,
     session: o.session ?? null,
@@ -254,7 +281,7 @@ const localCards = [
   view({
     card: card("task_deps", "task", projects.store, {
       title: "Upgrade dependencies and fix the breaking changes",
-      priority: 3,
+      priority: 0,
       auto_run: true,
       model: "sonnet",
       run_prompt: "Upgrade every dependency to the latest minor version. Fix the breaking changes. Run the tests. Stop when they pass.",
@@ -270,7 +297,7 @@ const localCards = [
   view({
     card: card("task_payment_review", "task", projects.atlas, {
       title: "Review the payment module for race conditions",
-      priority: 2,
+      priority: 0,
       auto_run: true,
       model: "fable",
       run_prompt: "Review src/payments for race conditions and double charges. Write findings to REVIEW.md with file and line references. Do not change code.",
@@ -286,7 +313,7 @@ const localCards = [
   view({
     card: card("task_checkout_tests", "task", projects.store, {
       title: "Add screenshot tests for the checkout flow",
-      priority: 1,
+      priority: 0,
       auto_run: true,
       run_prompt: "Add Playwright screenshot tests for the three checkout pages. Reuse the existing test helpers.",
     }),
@@ -345,7 +372,7 @@ const localCards = [
   view({
     card: card("task_flaky", "task", projects.infra, {
       title: "Nightly: fix the flaky integration tests",
-      priority: 1,
+      priority: 0,
       auto_run: true,
       model: "haiku",
       run_prompt: "Run the integration suite three times. Find the tests that fail at least once. Fix the cause, not the assertion.",
@@ -483,7 +510,7 @@ const localCards = [
     card: card("task_crash", "task", projects.mobile, {
       title: "Fix the crash on empty transcript files",
       session_id: S.crash,
-      priority: 2,
+      priority: 0,
       auto_run: true,
       run_prompt: "Fix the crash when a transcript file is empty. Add a regression test. Open a PR.",
       bg_job_id: "job_2b9e41",
@@ -562,7 +589,7 @@ const labCards = [
   view({
     card: card("task_scheduler", "task", projects.batch, {
       title: "Move the nightly job to the new scheduler",
-      priority: 1,
+      priority: 0,
       created_at: days(4),
     }),
     title: "Move the nightly job to the new scheduler",
@@ -576,7 +603,7 @@ const labCards = [
   view({
     card: card("task_retrain", "task", projects.ranker, {
       title: "Retrain the ranking model on the new dataset",
-      priority: 2,
+      priority: 0,
       auto_run: true,
       model: "sonnet",
       run_prompt: "Retrain the ranking model on the September dataset. Report the offline metrics in RESULTS.md.",
@@ -618,7 +645,7 @@ const labCards = [
     card: card("task_smoke", "task", projects.batch, {
       title: "Add a smoke test for the deploy script",
       session_id: S.smoke,
-      priority: 1,
+      priority: 0,
       auto_run: true,
       run_prompt: "Add a smoke test that runs the deploy script against the staging config. It must fail on a missing secret.",
       bg_job_id: "job_5c1d80",
@@ -695,6 +722,40 @@ const proposal = {
   accepted_at: null,
 };
 
+/** The dry run of a node's planner: what it would run next, in order, and when.
+ *  `studio` has a plan open, so its steps wait for a click. `lab` waits for the
+ *  weekly trigger, and its last card does not fit the budget. */
+function queueOf(nodeCards, usedPct, budgetPct, trigger, openProposal) {
+  const ready = nodeCards.filter((c) => c.state === "ready" || c.state === "backlog").slice(0, 4);
+  let total = 0;
+  return {
+    steps: ready.map((c) => {
+      const cost = c.estimate?.pct_five_hour ?? 4;
+      const fits = total + cost <= budgetPct;
+      if (fits) total += cost;
+      return {
+        card_id: c.card.id,
+        title: c.title,
+        project_name: c.project_name,
+        model: c.card.model,
+        estimate: c.estimate ?? estimate(2_000_000, "project", 2),
+        window_after_pct: usedPct + total,
+        fits,
+        starts_at: fits ? (openProposal ? min(0) : trigger) : null,
+        reason: fits ? "now" : "does not fit the budget",
+      };
+    }),
+    budget_pct: budgetPct,
+    used_pct: usedPct,
+    next_check_at: ahead(1),
+    next_trigger_at: trigger,
+    next_trigger: "weekly_reset",
+    mode: "ask",
+    blocked: null,
+    open_proposal: openProposal,
+  };
+}
+
 const board = {
   columns,
   nodes: NODES,
@@ -722,6 +783,10 @@ const board = {
       },
       calibration,
     },
+  ],
+  queues: [
+    { node_id: "local", node_name: "studio", queue: queueOf(localCards, 38, 17, min(0), true) },
+    { node_id: "lab", node_name: "lab", queue: queueOf(labCards, 14, 41, ahead(14 * 60), false) },
   ],
   proposals: [{ node_id: "local", node_name: "studio", proposal }],
   generated_at: min(0),

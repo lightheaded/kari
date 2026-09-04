@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Column, HubCard, JobLogEntry, Settings } from "../types";
 import { RUN_MODELS, STATE_LABEL } from "../types";
-import { clock, fmtM, fmtPct, relTime, shortId, weighted } from "../util";
+import { clock, fmtM, fmtPct, noAutoFill, proseField, relTime, shortId, weighted } from "../util";
+import { useAutoGrow } from "../hooks";
+import { useCloseGuard } from "../dirty";
+import { UnsavedBar } from "./Modals";
 
 interface Props {
   view: HubCard;
@@ -33,6 +36,9 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
   const [model, setModel] = useState(c.model ?? "");
   const [startPrompt, setStartPrompt] = useState("");
   const [log, setLog] = useState<JobLogEntry[]>([]);
+  const promptGrow = useAutoGrow("drawer.prompt", prompt, 90, 520);
+  const notesGrow = useAutoGrow("drawer.notes", notes, 68, 400);
+  const startGrow = useAutoGrow("drawer.startPrompt", startPrompt);
 
   useEffect(() => {
     setTitle(c.title ?? "");
@@ -55,14 +61,6 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
     };
   }, [node, c.id, c.updated_at]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const dirty =
     title !== (c.title ?? "") ||
     prompt !== (c.run_prompt ?? "") ||
@@ -70,7 +68,19 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
     priority !== c.priority ||
     autoRun !== c.auto_run ||
     mode !== (c.permission_mode ?? "") ||
-    model !== (c.model ?? "");
+    model !== (c.model ?? "") ||
+    startPrompt.trim() !== "";
+
+  // An edit in the drawer is worth more than a stray Escape. The first one asks.
+  const guard = useCloseGuard(dirty, onClose);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") guard.requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [guard]);
 
   const save = () =>
     onAction(
@@ -92,10 +102,11 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
   const q = s?.pending_tools.filter((t) => t.name === "AskUserQuestion") ?? [];
 
   return (
-    <aside className="drawer">
-      <button className="btn ghost sm close" onClick={onClose} aria-label="Close">
+    <aside className="drawer" onInput={guard.asking ? guard.keep : undefined}>
+      <button className="btn ghost sm close" onClick={guard.requestClose} aria-label="Close">
         ✕
       </button>
+      <UnsavedBar guard={guard} text="This card has unsaved edits." />
       <header>
         <h2>{view.title}</h2>
         <div className="hint">
@@ -363,17 +374,40 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
           <h5>Card</h5>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div className="field">
-              <label>Title override</label>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={view.title} />
+              <label>{c.kind === "task" ? "Title" : "Title override"}</label>
+              <input {...noAutoFill} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={view.title} />
             </div>
             <div className="field">
-              <label>{c.session_id ? "Continue prompt (used by Start in bg and the scheduler)" : "Run prompt"}</label>
-              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={c.session_id ? "Continue with the next step. Stop when done." : "What Claude must do"} />
+              <label>
+                {c.session_id ? "Continue prompt (used by Start in bg and the scheduler)" : "Body (added under the title when the task runs)"}
+              </label>
+              <textarea
+                {...proseField}
+                {...promptGrow}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder={
+                  c.session_id
+                    ? "Continue with the next step. Stop when done."
+                    : "Detail, links, where to start. The title is always the first line, so it needs no repeating."
+                }
+              />
+              {c.kind === "task" && (
+                <div className="hint">
+                  A run receives the title, a blank line, then this body.
+                </div>
+              )}
             </div>
             <div className="grid2">
               <div className="field">
                 <label>Priority</label>
-                <input type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
+                <input
+                  {...noAutoFill}
+                  type="number"
+                  value={priority}
+                  onChange={(e) => setPriority(Number(e.target.value))}
+                  title="0 means automatic order. Dragging the card on the board writes this number."
+                />
               </div>
               <div className="field">
                 <label>Model for runs</label>
@@ -402,7 +436,7 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
             </label>
             <div className="field">
               <label>Notes</label>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <textarea {...proseField} {...notesGrow} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn primary sm" disabled={!dirty || offline} onClick={save}>
@@ -416,7 +450,13 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
           <div className="section">
             <h5>One-off background prompt</h5>
             <div className="field">
-              <textarea value={startPrompt} onChange={(e) => setStartPrompt(e.target.value)} placeholder="Optional prompt for the next Start / Continue in bg. Empty uses the card prompt." />
+              <textarea
+                {...proseField}
+                {...startGrow}
+                value={startPrompt}
+                onChange={(e) => setStartPrompt(e.target.value)}
+                placeholder="Optional prompt for the next Start / Continue in bg. Empty uses the title and the body."
+              />
             </div>
           </div>
         )}

@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "demo": "node scripts/demo-fixtures.mjs && KARI_FIXTURES=docs/demo vite",
     "screenshots": "node scripts/screenshots.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "bun test"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
+    "@types/bun": "^1.4.0",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
