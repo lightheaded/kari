@@ -1,7 +1,7 @@
 use kari_core::hub::{Hub, HubEvent};
 use kari_core::{
     AutomationMode, Calibration, Card, CardPatch, Column, Engine, HubBoard, NewNode, NewTask,
-    NodePatch, NodeStatus, Proposal, QuotaSample, Settings, Summary,
+    NodePatch, NodeStatus, Project, Proposal, QuotaSample, Settings, Summary,
 };
 use std::sync::Arc;
 #[cfg(desktop)]
@@ -252,7 +252,7 @@ async fn quota_history(
 }
 
 #[tauri::command]
-async fn list_projects(state: State<'_, AppState>, node_id: String) -> R<Vec<(String, String)>> {
+async fn list_projects(state: State<'_, AppState>, node_id: String) -> R<Vec<Project>> {
     off_thread(&state.hub, move |h| Ok(h.projects(&node_id))).await
 }
 

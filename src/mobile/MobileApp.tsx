@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, onBoardChanged, onNotice } from "../api";
-import type { HubBoard, HubCard, Settings } from "../types";
+import type { HubBoard, HubCard, Project, Settings } from "../types";
 import type { Picked } from "../components/Board";
 import { Drawer } from "../components/Drawer";
 import { AddTaskModal } from "../components/Modals";
@@ -143,13 +143,13 @@ export default function MobileApp() {
 
   /** Project directories per node, from the cards. The task form uses them until the node answers. */
   const projectsByNode = useMemo(() => {
-    const out: Record<string, [string, string][]> = {};
+    const out: Record<string, Project[]> = {};
     const seen = new Set<string>();
     for (const c of cards) {
       const cwd = c.card.project_cwd ?? c.session?.cwd;
       if (!cwd || !c.project_name || seen.has(`${c.node_id}|${cwd}`)) continue;
       seen.add(`${c.node_id}|${cwd}`);
-      (out[c.node_id] ??= []).push([cwd, c.project_name]);
+      (out[c.node_id] ??= []).push({ cwd, name: c.project_name });
     }
     return out;
   }, [cards]);

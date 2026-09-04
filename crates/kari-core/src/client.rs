@@ -404,7 +404,7 @@ impl ApiClient {
         self.get(&format!("/kari/v1/quota?limit={limit}"))
     }
 
-    pub fn projects(&self) -> anyhow::Result<Vec<(String, String)>> {
+    pub fn projects(&self) -> anyhow::Result<Vec<Project>> {
         self.get("/kari/v1/projects")
     }
 

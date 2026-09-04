@@ -369,6 +369,12 @@ export interface Settings {
   away_hold_secs: number;
   listen_on: string;
 }
+/** A project directory a node knows, with the name the board shows for it. */
+export interface Project {
+  cwd: string;
+  name: string;
+}
+
 export interface NewTask {
   title: string;
   project_cwd: string | null;

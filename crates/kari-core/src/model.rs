@@ -1108,6 +1108,39 @@ pub struct HubBoard {
     pub hooks_port: u16,
 }
 
+/// A project directory a node knows, with the name the board shows for it.
+/// A struct, not a tuple: the two fields are both strings, and a swapped pair
+/// once wrote a display name into every new card as its working directory.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Project {
+    /// Absolute path of the project directory.
+    pub cwd: String,
+    /// Last path segment, for the board and the pickers.
+    pub name: String,
+}
+
+/// Accepts the object this version sends, and the pair that kari 0.5.2 and
+/// earlier sent. The path is the element that starts with a slash, so the
+/// order of the old pair does not matter. Remove when every node is newer.
+impl<'de> Deserialize<'de> for Project {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Named { cwd: String, name: String },
+            Pair(String, String),
+        }
+        Ok(match Wire::deserialize(d)? {
+            Wire::Named { cwd, name } => Project { cwd, name },
+            Wire::Pair(a, b) => {
+                let cwd = if b.starts_with('/') { b } else { a };
+                let name = crate::paths::project_display_name(&cwd);
+                Project { cwd, name }
+            }
+        })
+    }
+}
+
 /// What "Jump in" must do. The node computes it, the caller runs it where the
 /// user sits: in a local terminal, or over SSH for a remote node.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1126,6 +1159,33 @@ pub struct JumpPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The project list crosses the node API. Named fields keep the path and
+    /// the display name apart; a tuple once let them swap places.
+    #[test]
+    fn project_keeps_its_field_names() {
+        let p = Project {
+            cwd: "/srv/repo".into(),
+            name: "repo".into(),
+        };
+        let j = serde_json::to_value(&p).unwrap();
+        assert_eq!(j["cwd"], "/srv/repo");
+        assert_eq!(j["name"], "repo");
+        assert_eq!(serde_json::from_value::<Project>(j).unwrap(), p);
+    }
+
+    /// kari 0.5.2 and earlier sent a pair. Read it whichever way round it came.
+    #[test]
+    fn project_reads_the_old_pair() {
+        let want = Project {
+            cwd: "/srv/repo".into(),
+            name: "repo".into(),
+        };
+        let old = serde_json::json!(["repo", "/srv/repo"]);
+        assert_eq!(serde_json::from_value::<Project>(old).unwrap(), want);
+        let swapped = serde_json::json!(["/srv/repo", "repo"]);
+        assert_eq!(serde_json::from_value::<Project>(swapped).unwrap(), want);
+    }
 
     #[test]
     fn a_task_prompt_joins_the_title_and_the_body() {
