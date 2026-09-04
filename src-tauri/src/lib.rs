@@ -220,6 +220,18 @@ fn set_settings(state: State<'_, AppState>, settings: Settings) -> R<()> {
     state.hub.engine().set_settings(settings).map_err(err)
 }
 
+/// Name an account, or clear the name with an empty string. `key` is the one
+/// on the header row, which is the account id, or `node:<id>` for a node whose
+/// account kari could not read.
+#[tauri::command]
+fn set_account_alias(state: State<'_, AppState>, key: String, alias: String) -> R<()> {
+    state
+        .hub
+        .engine()
+        .set_account_alias(&key, &alias)
+        .map_err(err)
+}
+
 #[tauri::command]
 async fn jump_in(state: State<'_, AppState>, node_id: String, card_id: String) -> R<String> {
     off_thread(&state.hub, move |h| h.jump_in(&node_id, &card_id)).await
@@ -732,6 +744,7 @@ macro_rules! handlers {
             reset_columns,
             get_settings,
             set_settings,
+            set_account_alias,
             jump_in,
             start_card,
             stop_card,

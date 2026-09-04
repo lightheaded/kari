@@ -75,6 +75,28 @@ const NODES = [
     addresses: ["lab:47311"],
     automation_mode: "ask",
   },
+  // Signed in to the same account as `studio`, so the two share one row of
+  // quota meters. Idle here, which is why it carries no cards.
+  {
+    id: "desk",
+    name: "desk",
+    kind: "remote",
+    online: true,
+    enabled: true,
+    paired: true,
+    ssh_host: "desk",
+    remote_port: 47311,
+    version: "0.1.0",
+    api_version: 1,
+    remote_node_id: "node_desk",
+    last_seen: min(2),
+    error: null,
+    lease: null,
+    primary: false,
+    away_mode: false,
+    addresses: ["desk:47311"],
+    automation_mode: "ask",
+  },
 ];
 
 // The six default columns. Needs me and Review each merge several states, and
@@ -775,6 +797,52 @@ const board = {
     {
       node_id: "lab",
       node_name: "lab",
+      quota: {
+        at: min(2),
+        five_hour: { used_percentage: 14, resets_at: ahead(96) },
+        seven_day: { used_percentage: 27, resets_at: ahead(4 * 24 * 60) },
+        source: "statusline",
+      },
+      calibration,
+    },
+  ],
+  // What the header shows: one row per Claude Code account. `studio` and
+  // `desk` are one login and share a budget; `lab` is a second login. The
+  // first row carries a name the user typed, the second falls back to the
+  // name on the account.
+  accounts: [
+    {
+      key: "acct_you",
+      label: "you",
+      alias: "you",
+      account: {
+        id: "acct_you",
+        email: "you@example.com",
+        display_name: "You",
+        organization_id: "org_you",
+      },
+      node_ids: ["local", "desk"],
+      node_names: ["studio", "desk"],
+      quota: {
+        at: min(1),
+        five_hour: { used_percentage: 38, resets_at: ahead(130) },
+        seven_day: { used_percentage: 52, resets_at: ahead(3 * 24 * 60 + 15) },
+        source: "statusline",
+      },
+      calibration,
+    },
+    {
+      key: "acct_lab",
+      label: "Lab",
+      alias: null,
+      account: {
+        id: "acct_lab",
+        email: "lab@example.com",
+        display_name: "Lab",
+        organization_id: "org_lab",
+      },
+      node_ids: ["lab"],
+      node_names: ["lab"],
       quota: {
         at: min(2),
         five_hour: { used_percentage: 14, resets_at: ahead(96) },

@@ -848,6 +848,9 @@ impl Hub {
         let mut nodes = vec![];
         let mut cards: Vec<HubCard> = vec![];
         let mut quotas = vec![];
+        // The same numbers as `quotas`, plus the account each node spends
+        // against, so they can be folded into one row per budget below.
+        let mut samples: Vec<crate::account::NodeSample> = vec![];
         let mut queues: Vec<NodeQueue> = vec![];
         let mut proposals: Vec<NodeProposal> = vec![];
         // The local board is the whole engine scan; a hub without a local node skips it.
@@ -868,6 +871,13 @@ impl Hub {
                 node_name: local_name.clone(),
                 quota: lb.quota.clone(),
                 calibration: lb.calibration.clone(),
+            });
+            samples.push(crate::account::NodeSample {
+                node_id: LOCAL.into(),
+                node_name: local_name.clone(),
+                account: crate::account::read(),
+                quota: lb.quota.clone(),
+                calibration: Some(lb.calibration.clone()),
             });
             queues.extend(lb.queue.clone().map(|q| NodeQueue {
                 node_id: LOCAL.into(),
@@ -900,6 +910,16 @@ impl Hub {
                         quota: b.quota.clone(),
                         calibration: b.calibration.clone(),
                     });
+                    samples.push(crate::account::NodeSample {
+                        node_id: r.rec.id.clone(),
+                        node_name: status.name.clone(),
+                        // From /kari/health, which the hub reads on connect.
+                        // A node on an older kari reports none and keeps a
+                        // row to itself.
+                        account: st.identity.as_ref().and_then(|i| i.account.clone()),
+                        quota: b.quota.clone(),
+                        calibration: Some(b.calibration.clone()),
+                    });
                     if let Some(q) = &b.queue {
                         queues.push(NodeQueue {
                             node_id: r.rec.id.clone(),
@@ -926,6 +946,7 @@ impl Hub {
             primary: self.is_primary(),
             nodes,
             cards,
+            accounts: crate::account::group(&samples, &self.engine.account_aliases()),
             quotas,
             queues,
             proposals,
@@ -1533,6 +1554,7 @@ mod tests {
             node_name: "x".into(),
             platform: "linux".into(),
             addresses: vec!["b:2".into(), "c:3".into()],
+            account: None,
         };
         // The one in use first, then the known ones, then what the node says.
         // No address twice, so a probe never dials the same address again.
