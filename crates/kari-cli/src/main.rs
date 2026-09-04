@@ -58,12 +58,12 @@ enum Cmd {
     /// Manage the Claude Code hooks that report session events to this node.
     Hooks {
         #[command(subcommand)]
-        action: Action,
+        action: HookAction,
     },
     /// Manage the status line wrapper that records rate limits.
     Statusline {
         #[command(subcommand)]
-        action: Action,
+        action: StatuslineAction,
     },
     /// Print the board of the node that runs on this host, as JSON.
     Board {
@@ -76,9 +76,29 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
-enum Action {
+enum HookAction {
     Install,
     Uninstall,
+    /// Post one hook event to the node on this host. Claude Code runs this on
+    /// every event and hands it the payload on stdin. It is what Windows
+    /// registers in settings.json in place of the `sh` relay script, and it
+    /// always exits 0, so a stopped node never disturbs a session.
+    Relay {
+        /// Port of the running node. Default: the hooks port from settings.
+        #[arg(long)]
+        port: Option<u16>,
+    },
+}
+
+#[derive(Subcommand)]
+enum StatuslineAction {
+    Install,
+    Uninstall,
+    /// Record the rate limits from one status line refresh, then run the
+    /// command kari wrapped and print what it prints. Claude Code runs this and
+    /// hands it the payload on stdin. The Windows counterpart of the `bash`
+    /// wrapper script.
+    Capture,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -111,24 +131,42 @@ fn main() -> anyhow::Result<()> {
             install_hooks,
             install_statusline,
         }),
-        Cmd::Hooks { action } => {
-            let engine = Engine::open()?;
-            match action {
-                Action::Install => println!("{}", engine.install_hooks()?),
-                Action::Uninstall => {
-                    engine.uninstall_hooks()?;
-                    println!("hooks removed");
-                }
+        Cmd::Hooks { action } => match action {
+            // The relay runs on every hook event, so it touches the database
+            // only when the registered command carries no port.
+            HookAction::Relay { port } => {
+                let payload = read_stdin()?;
+                let port = match port {
+                    Some(p) => p,
+                    None => Engine::open()?.settings().hooks_port,
+                };
+                print!("{}", hooks::relay(&payload, port));
+                Ok(())
             }
-            Ok(())
-        }
-        Cmd::Statusline { action } => {
-            match action {
-                Action::Install => println!("{}", statusline::install()?),
-                Action::Uninstall => println!("{}", statusline::uninstall()?),
+            HookAction::Install => {
+                println!("{}", Engine::open()?.install_hooks()?);
+                Ok(())
             }
-            Ok(())
-        }
+            HookAction::Uninstall => {
+                Engine::open()?.uninstall_hooks()?;
+                println!("hooks removed");
+                Ok(())
+            }
+        },
+        Cmd::Statusline { action } => match action {
+            StatuslineAction::Capture => {
+                print!("{}", statusline::capture(&read_stdin()?));
+                Ok(())
+            }
+            StatuslineAction::Install => {
+                println!("{}", statusline::install()?);
+                Ok(())
+            }
+            StatuslineAction::Uninstall => {
+                println!("{}", statusline::uninstall()?);
+                Ok(())
+            }
+        },
         Cmd::Board { port } => {
             let port = match port {
                 Some(p) => p,
@@ -147,6 +185,15 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+/// Everything Claude Code wrote to this process. Both the relay and the status
+/// line capture are handed one JSON payload that way.
+fn read_stdin() -> anyhow::Result<String> {
+    use std::io::Read;
+    let mut s = String::new();
+    std::io::stdin().read_to_string(&mut s)?;
+    Ok(s)
 }
 
 /// What `serve` was asked to do. A struct, because a service unit sets most of it.

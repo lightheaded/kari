@@ -59,7 +59,9 @@ pub fn internal_cwd_prefix() -> String {
 /// True for a session that kari itself started for internal work.
 pub fn is_internal_cwd(cwd: &str) -> bool {
     let prefix = internal_cwd_prefix();
-    cwd == prefix || cwd.starts_with(&format!("{prefix}/"))
+    // Compare as paths, not as strings: Windows separates with a backslash, so
+    // a string prefix test would miss every internal session there.
+    std::path::Path::new(cwd).starts_with(&prefix)
 }
 
 pub fn kari_db() -> PathBuf {
@@ -82,38 +84,66 @@ pub fn herdr_socket() -> PathBuf {
     home().join(".config/herdr/herdr.sock")
 }
 
-/// PATH for child processes. GUI apps inherit a short PATH from launchd.
+/// The character that separates entries in PATH: ';' on Windows, ':' elsewhere.
+pub const PATH_SEP: char = if cfg!(windows) { ';' } else { ':' };
+
+/// PATH for child processes. GUI apps inherit a short PATH from launchd, and a
+/// Windows service inherits the machine PATH rather than the user's, so the
+/// directories the Claude Code installer uses are named here in both cases.
 pub fn child_path() -> String {
-    let mut parts: Vec<String> = vec![
-        home().join(".local/bin").to_string_lossy().into_owned(),
-        home().join(".cargo/bin").to_string_lossy().into_owned(),
-        "/opt/homebrew/bin".into(),
-        "/usr/local/bin".into(),
-        "/usr/bin".into(),
-        "/bin".into(),
-        "/usr/sbin".into(),
-        "/sbin".into(),
-    ];
+    let mut parts: Vec<String> = if cfg!(windows) {
+        let mut v = vec![
+            home().join(".local/bin").to_string_lossy().into_owned(),
+            home().join(".cargo/bin").to_string_lossy().into_owned(),
+        ];
+        // npm puts `claude.cmd` here when Claude Code came from npm rather
+        // than from the native installer.
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            v.push(
+                std::path::Path::new(&appdata)
+                    .join("npm")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+        v
+    } else {
+        vec![
+            home().join(".local/bin").to_string_lossy().into_owned(),
+            home().join(".cargo/bin").to_string_lossy().into_owned(),
+            "/opt/homebrew/bin".into(),
+            "/usr/local/bin".into(),
+            "/usr/bin".into(),
+            "/bin".into(),
+            "/usr/sbin".into(),
+            "/sbin".into(),
+        ]
+    };
     if let Ok(p) = std::env::var("PATH") {
-        for seg in p.split(':') {
+        for seg in p.split(PATH_SEP) {
             if !parts.iter().any(|x| x == seg) {
                 parts.push(seg.to_string());
             }
         }
     }
-    parts.join(":")
+    parts.join(&PATH_SEP.to_string())
 }
 
 /// The machine's host name, without a domain. Falls back to "kari".
 pub fn hostname() -> String {
-    let from_cmd = std::process::Command::new("hostname")
+    // Windows has no `hostname -s` and no /etc/hostname, but every session
+    // carries the name in the environment.
+    #[cfg(windows)]
+    let first = std::env::var("COMPUTERNAME").ok();
+    #[cfg(not(windows))]
+    let first = std::process::Command::new("hostname")
         .arg("-s")
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty());
-    from_cmd
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    first
+        .filter(|s: &String| !s.trim().is_empty())
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
         .map(|s| s.trim().split('.').next().unwrap_or("").to_string())
         .filter(|s| !s.is_empty())
@@ -126,11 +156,20 @@ pub fn hostname() -> String {
         })
 }
 
+/// Extensions to try after the bare name. Windows stores the executable bit in
+/// the suffix, so `which("claude")` there must find `claude.exe` or `claude.cmd`.
+#[cfg(windows)]
+const EXE_SUFFIXES: &[&str] = &["", ".exe", ".cmd", ".bat", ".com"];
+#[cfg(not(windows))]
+const EXE_SUFFIXES: &[&str] = &[""];
+
 pub fn which(bin: &str) -> Option<PathBuf> {
-    for dir in child_path().split(':') {
-        let p = PathBuf::from(dir).join(bin);
-        if p.is_file() {
-            return Some(p);
+    for dir in child_path().split(PATH_SEP) {
+        for suffix in EXE_SUFFIXES {
+            let p = PathBuf::from(dir).join(format!("{bin}{suffix}"));
+            if p.is_file() {
+                return Some(p);
+            }
         }
     }
     None
@@ -165,10 +204,24 @@ mod tests {
     fn a_display_name_is_not_a_working_directory() {
         // Only paths this test controls. A build sandbox sets HOME to a
         // directory that does not exist, so home() is not safe to assert on.
-        assert!(is_usable_cwd("/"));
+        // "/" is not absolute on Windows, where a root needs a drive letter.
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        assert!(is_usable_cwd(root));
         // The bug this guards: a project name reached a card as its directory.
         assert!(!is_usable_cwd("kari"));
         assert!(!is_usable_cwd(""));
         assert!(!is_usable_cwd("/no/such/path/for/kari/tests"));
+    }
+
+    #[test]
+    fn an_internal_cwd_is_recognised_on_every_platform() {
+        // The prefix test used to be a string compare, which no separator but
+        // "/" could satisfy. A summary session must be spotted as kari's own.
+        let inside = kari_dir().join("summaries").join("one");
+        assert!(is_internal_cwd(&inside.to_string_lossy()));
+        assert!(is_internal_cwd(&internal_cwd_prefix()));
+        // A sibling directory whose name merely starts the same is not inside.
+        let sibling = kari_dir().join("summaries-elsewhere");
+        assert!(!is_internal_cwd(&sibling.to_string_lossy()));
     }
 }

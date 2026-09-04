@@ -174,7 +174,18 @@ What this needs on the other host: an SSH login and a Claude Code that is logged
 
 What you see: every card carries a node badge, and a chip row filters the board to one node. Each node keeps its own quota windows, backlog and plans, because each has its own Claude Code login. Jump in on a remote card opens your terminal and runs `ssh -t <host> ... claude --resume <session>`. The tray kill switch stops jobs on every node.
 
-Deployment of the node is managed outside this repository. `flake.nix` builds it for a NixOS host, and each release carries a Linux tarball.
+Deployment of the node is managed outside this repository. `flake.nix` builds it for a NixOS host, and each release carries a Linux tarball and a Windows zip.
+
+### A node on Windows
+
+The node runs on Windows as well. Unpack `kari-node-<tag>-x86_64-pc-windows-msvc.zip` and run the same three commands. Two things differ, and both are handled for you:
+
+- There is no `sh` and no `jq`, so `hooks install` and `statusline install` register `kari-node.exe` itself rather than a script. Keep the binary where it is: the path goes into `settings.json`, and moving it breaks the hooks until you install them again. Run the installers again after you move or upgrade it.
+- herdr is a Unix program, so pane mapping and "Jump in" are not available. Cards, state, quota meters and background jobs all work; "Jump in" is offered from the desktop app over SSH.
+
+To keep the node running without a console window, wrap it in a Windows service (`WinSW` and `NSSM` both do this) or start it from Task Scheduler at logon. Run it as the user whose Claude Code login it should read: the node reads `%USERPROFILE%\.claude`, and a service running as `LocalSystem` sees a different one.
+
+For the app to reach it, Windows needs an SSH server (Settings, Optional features, "OpenSSH Server") or a private network address and `--private`.
 
 ### A node over a private network
 
