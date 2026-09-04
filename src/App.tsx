@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
-import type { AutomationMode, Column, HubBoard, HubCard, Settings } from "./types";
+import type { AutomationMode, Column, HubBoard, HubCard, Project, Settings } from "./types";
 import { Board, type Picked, type Reorder } from "./components/Board";
 import { Drawer } from "./components/Drawer";
 import { StatsStrip } from "./components/StatsStrip";
@@ -177,8 +177,8 @@ export default function App() {
 
   /** Project directories per node. The task dialog uses them until the node answers. */
   const projectsByNode = useMemo(() => {
-    const out: Record<string, [string, string][]> = {};
-    for (const [, p] of projects) (out[p.node] ??= []).push([p.cwd, p.name]);
+    const out: Record<string, Project[]> = {};
+    for (const [, p] of projects) (out[p.node] ??= []).push({ cwd: p.cwd, name: p.name });
     return out;
   }, [projects]);
 

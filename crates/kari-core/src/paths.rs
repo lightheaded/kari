@@ -143,9 +143,31 @@ pub fn project_slug(cwd: &str) -> String {
         .collect()
 }
 
+/// True for a path that a child process can start in: absolute, and a
+/// directory that exists now. A display name such as "kari" fails this test.
+pub fn is_usable_cwd(cwd: &str) -> bool {
+    let p = std::path::Path::new(cwd);
+    p.is_absolute() && p.is_dir()
+}
+
 pub fn project_display_name(cwd: &str) -> String {
     std::path::Path::new(cwd)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| cwd.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_display_name_is_not_a_working_directory() {
+        assert!(is_usable_cwd("/"));
+        assert!(is_usable_cwd(&home().to_string_lossy()));
+        // The bug this guards: a project name reached a card as its directory.
+        assert!(!is_usable_cwd("kari"));
+        assert!(!is_usable_cwd(""));
+        assert!(!is_usable_cwd("/no/such/path/for/kari/tests"));
+    }
 }

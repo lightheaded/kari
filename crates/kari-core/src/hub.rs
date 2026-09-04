@@ -1114,7 +1114,7 @@ impl Hub {
             .unwrap_or_default()
     }
 
-    pub fn projects(&self, node: &str) -> Vec<(String, String)> {
+    pub fn projects(&self, node: &str) -> Vec<Project> {
         if node == LOCAL && self.with_local {
             return self.engine.projects();
         }
@@ -1149,9 +1149,13 @@ impl Hub {
         };
         let settings = self.engine.settings();
         let home = paths::home().to_string_lossy().into_owned();
-        let cmd = if plan.command.is_empty() {
-            // The node focused a herdr pane. Land the user in a shell there.
-            format!("ssh -t {}", launcher::sh_quote(host))
+        let cmd = if plan.herdr_pane.is_some() {
+            // The node focused a herdr pane. herdr attaches to its own server
+            // over SSH, so the pane the node focused is the one on screen.
+            launcher::herdr_remote_command(host)?
+        } else if plan.command.is_empty() {
+            // Nothing to run and no pane: at least land in the project.
+            launcher::ssh_shell_command(host, &plan.cwd)
         } else {
             launcher::ssh_command(host, &plan.cwd, &plan.command)
         };

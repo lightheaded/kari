@@ -106,6 +106,32 @@ pub fn ssh_command(ssh_host: &str, cwd: &str, command: &str) -> String {
     )
 }
 
+/// Attach to a remote herdr server over SSH. The node already focused the
+/// pane, so the attached client opens on it.
+pub fn herdr_remote_command(ssh_host: &str) -> anyhow::Result<String> {
+    let herdr = paths::which("herdr").ok_or_else(|| {
+        anyhow::anyhow!(
+            "herdr is not on PATH here, so kari cannot attach to the pane on {ssh_host}"
+        )
+    })?;
+    Ok(format!(
+        "{} --remote {}",
+        sh_quote(&herdr.to_string_lossy()),
+        sh_quote(ssh_host)
+    ))
+}
+
+/// A login shell on a remote node, in `cwd`. The last resort when a node
+/// returns no command and no pane.
+pub fn ssh_shell_command(ssh_host: &str, cwd: &str) -> String {
+    let remote = format!("cd {} && exec \"$SHELL\" -l", sh_quote(cwd));
+    format!(
+        "ssh -t {} -- sh -lc {}",
+        sh_quote(ssh_host),
+        sh_quote(&remote)
+    )
+}
+
 pub struct BgStart {
     pub job_id: String,
     pub raw: String,
@@ -273,6 +299,23 @@ mod tests {
         assert!(c.starts_with("ssh -t 'box' -- sh -lc '"));
         assert!(c.contains("cd '\\''/srv/repo'\\'' && claude"));
         assert!(c.ends_with("'"));
+    }
+
+    #[test]
+    fn ssh_shell_command_lands_in_the_project() {
+        let c = ssh_shell_command("box", "/srv/repo");
+        assert!(c.starts_with("ssh -t 'box' -- sh -lc '"));
+        assert!(c.contains(r"cd '\''/srv/repo'\'' && exec"));
+    }
+
+    #[test]
+    fn herdr_remote_command_names_the_host() {
+        // The helper needs herdr on PATH. Skip where it is absent.
+        if paths::which("herdr").is_none() {
+            return;
+        }
+        let c = herdr_remote_command("box").unwrap();
+        assert!(c.ends_with("--remote 'box'"));
     }
 
     #[test]

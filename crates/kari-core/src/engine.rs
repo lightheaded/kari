@@ -1438,7 +1438,8 @@ impl Engine {
             .unwrap_or_default()
     }
 
-    pub fn projects(&self) -> Vec<(String, String)> {
+    /// Every project directory this node knows, for the pickers.
+    pub fn projects(&self) -> Vec<Project> {
         let snap = self.snap.read().unwrap();
         let mut set: HashSet<String> = HashSet::new();
         for f in snap.facts.values() {
@@ -1449,12 +1450,63 @@ impl Engine {
         for l in snap.live.values() {
             set.insert(l.cwd.clone());
         }
-        let mut v: Vec<(String, String)> = set
+        let mut v: Vec<Project> = set
             .into_iter()
-            .map(|c| (paths::project_display_name(&c), c))
+            .map(|cwd| Project {
+                name: paths::project_display_name(&cwd),
+                cwd,
+            })
             .collect();
-        v.sort();
+        v.sort_by(|a, b| (&a.name, &a.cwd).cmp(&(&b.name, &b.cwd)));
         v
+    }
+
+    /// Repair cards whose project directory holds a display name, not a path.
+    /// A swapped pair in the project list wrote values such as "kari" into new
+    /// cards, and such a card can neither run nor open a terminal.
+    pub fn repair_project_cwds(&self) {
+        let cards = match self.store.lock().unwrap().list_cards() {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("repair_project_cwds: {e}");
+                return;
+            }
+        };
+        let broken: Vec<Card> = cards
+            .into_iter()
+            .filter(|c| {
+                c.project_cwd
+                    .as_deref()
+                    .is_some_and(|p| !paths::is_usable_cwd(p))
+            })
+            .collect();
+        if broken.is_empty() {
+            return;
+        }
+        let known = self.projects();
+        let mut fixed = 0usize;
+        let mut cleared = 0usize;
+        for mut card in broken {
+            let bad = card.project_cwd.clone().unwrap_or_default();
+            // One project with that display name is a safe answer. Two are not.
+            let mut hits = known.iter().filter(|p| p.name == bad);
+            match (hits.next(), hits.next()) {
+                (Some(p), None) => {
+                    card.project_cwd = Some(p.cwd.clone());
+                    fixed += 1;
+                }
+                _ => {
+                    card.project_cwd = None;
+                    cleared += 1;
+                }
+            }
+            card.updated_at = Utc::now();
+            if let Err(e) = self.store.lock().unwrap().upsert_card(&card) {
+                warn!("repair_project_cwds {}: {e}", card.id);
+            }
+        }
+        info!("repaired {fixed} project directories, cleared {cleared}");
+        self.emit_changed();
     }
 
     /// The model a run of this card must use. None means the Claude Code default.
@@ -1475,13 +1527,17 @@ impl Engine {
         let Some(cv) = board.cards.iter().find(|c| c.card.id == card_id) else {
             anyhow::bail!("card not found")
         };
-        let cwd = cv
-            .card
-            .project_cwd
-            .clone()
-            .or_else(|| cv.session.as_ref().and_then(|s| s.cwd.clone()))
-            .or_else(|| cv.live.as_ref().map(|l| l.cwd.clone()))
-            .unwrap_or_else(|| paths::home().to_string_lossy().into_owned());
+        // Only a directory that exists can hold a terminal or an agent. A bad
+        // value falls through to the next source, and home is the last resort.
+        let cwd = [
+            cv.card.project_cwd.clone(),
+            cv.session.as_ref().and_then(|s| s.cwd.clone()),
+            cv.live.as_ref().map(|l| l.cwd.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|c| paths::is_usable_cwd(c))
+        .unwrap_or_else(|| paths::home().to_string_lossy().into_owned());
         if let Some(h) = &cv.herdr {
             herdr::focus(h)?;
             return Ok(JumpPlan {
@@ -1726,11 +1782,19 @@ impl Engine {
             anyhow::bail!("card not found")
         };
         let card = &cv.card;
-        let cwd = card
-            .project_cwd
-            .clone()
-            .or_else(|| cv.session.as_ref().and_then(|s| s.cwd.clone()))
-            .ok_or_else(|| anyhow::anyhow!("card has no project directory"))?;
+        let cwd = [
+            card.project_cwd.clone(),
+            cv.session.as_ref().and_then(|s| s.cwd.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|c| paths::is_usable_cwd(c))
+        .ok_or_else(|| match card.project_cwd.as_deref() {
+            Some(bad) => anyhow::anyhow!(
+                "the project directory of this card is not a directory on this node: {bad}. Set it in the card."
+            ),
+            None => anyhow::anyhow!("card has no project directory"),
+        })?;
         // A task card joins its title and its body, so the title never has to be
         // repeated in the body. A one-off prompt replaces both.
         let prompt = match prompt_override {
@@ -2254,7 +2318,10 @@ impl Engine {
         let me = Arc::clone(self);
         std::thread::Builder::new()
             .name("kari-initial-scan".into())
-            .spawn(move || me.refresh_all())
+            .spawn(move || {
+                me.refresh_all();
+                me.repair_project_cwds();
+            })
             .expect("spawn");
 
         // File watcher: registry, transcripts, jobs, rate limits.

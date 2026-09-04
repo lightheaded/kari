@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AutomationMode, Column, DerivedState, LocalAddress, NewTask, NodeStatus, Settings } from "../types";
+import type { AutomationMode, Column, DerivedState, LocalAddress, NewTask, NodeStatus, Project, Settings } from "../types";
 import { ALL_STATES, AUTOMATION_MODES, RUN_MODELS, STATE_LABEL } from "../types";
 import { nodeDot, noAutoFill, proseField, relTime } from "../util";
 import { useAutoGrow } from "../hooks";
@@ -78,7 +78,7 @@ interface AddTaskProps {
   columnId: string | null;
   columns: Column[];
   /** Projects taken from the cards of each node. Used until the node answers. */
-  projectsByNode: Record<string, [string, string][]>;
+  projectsByNode: Record<string, Project[]>;
   onClose: () => void;
   onSubmit: (nodeId: string, t: NewTask) => void;
 }
@@ -94,7 +94,7 @@ export function AddTaskModal({
   onSubmit,
 }: AddTaskProps) {
   const [node, setNode] = useState(defaultNode);
-  const [loaded, setLoaded] = useState<Record<string, [string, string][]>>({});
+  const [loaded, setLoaded] = useState<Record<string, Project[]>>({});
   const [title, setTitle] = useState("");
   const [cwd, setCwd] = useState(defaultProject ?? "");
   const [custom, setCustom] = useState("");
@@ -108,10 +108,10 @@ export function AddTaskModal({
   const notesGrow = useAutoGrow("add.notes", notes);
   // The node answers with its projects. Until then the cards of that node name them.
   const projects = loaded[node] ?? projectsByNode[node] ?? [];
-  const chosen = cwd === "__custom" || projects.some(([c]) => c === cwd) ? cwd : projects[0]?.[0] ?? "";
+  const chosen = cwd === "__custom" || projects.some((p) => p.cwd === cwd) ? cwd : projects[0]?.cwd ?? "";
   const dir = chosen === "__custom" ? custom : chosen;
   const projectItems: PickerItem[] = [
-    ...projects.map(([c, n]) => ({ value: c, label: n, hint: c })),
+    ...projects.map((p) => ({ value: p.cwd, label: p.name, hint: p.cwd })),
     { value: "__custom", label: "Other path…" },
   ];
   // A typed draft is worth more than a stray Escape. The first close asks.

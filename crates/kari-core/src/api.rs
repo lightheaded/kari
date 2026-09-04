@@ -402,7 +402,7 @@ async fn calibration(State(st): State<ApiState>) -> Json<Calibration> {
     Json(st.engine.calibration())
 }
 
-async fn projects(State(st): State<ApiState>) -> R<Vec<(String, String)>> {
+async fn projects(State(st): State<ApiState>) -> R<Vec<Project>> {
     let e = st.engine;
     blocking(move || Ok(e.projects())).await
 }
