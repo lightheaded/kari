@@ -184,7 +184,7 @@ A hub that cannot open an SSH forward, such as the phone, reaches a node by addr
 kari-node serve --private
 ```
 
-The desktop app has a picker in Settings, Nodes: "Let a phone reach this machine on". Name the VPN interface, and kari answers on that address. `every private address` is the wide setting, and it binds every private interface, including one a corporate VPN adds, so name an interface where you can. A public address is never bound. The list is read again every 20 seconds, so a VPN that comes up later needs no restart, and an address that changes is followed. The token is the only guard on that path, so the private network carries the trust. To name one address instead, use `kari-node serve --listen 127.0.0.1:47311 --listen <vpn-ip>:47311 --allow-remote`.
+The desktop app has a picker in Settings, Nodes: "Let a phone reach this machine on". Pick the VPN, and kari answers on that address. The choice is kept as a network in CIDR form, so a tunnel that comes back under another interface name still counts. An interface name works as well. `every private address` is the wide setting, and it binds every private interface, including one a corporate VPN adds, so name an interface where you can. A public address is never bound. The list is read again every 20 seconds, so a VPN that comes up later needs no restart, and an address that changes is followed. The token is the only guard on that path, so the private network carries the trust. To name one address instead, use `kari-node serve --listen 127.0.0.1:47311 --listen <vpn-ip>:47311 --allow-remote`.
 
 Each node reports the addresses it answers on. The desktop learns them over the SSH connection it has already, and puts them in the pairing code, so the phone types no address.
 

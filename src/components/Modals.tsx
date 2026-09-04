@@ -464,6 +464,12 @@ function NodesSection({
   }, []);
   /** One entry per interface that has a private address. */
   const ifaces = addrs.filter((a) => a.private).filter((a, i, all) => all.findIndex((b) => b.interface === a.interface) === i);
+  /** The network of an address, so the choice survives a renamed tunnel. A
+   *  tunnel is `utun4` today and `utun7` tomorrow, while its network stays. */
+  const network = (ip: string) => {
+    const p = ip.split(".");
+    return p.length === 4 ? `${p[0]}.${p[1]}.${p[2]}.0/24` : "";
+  };
   const holder = nodes.find((n) => n.lease && !n.primary)?.lease?.hub_name;
 
   /** Every change reloads the board, and the fresh node list comes back with it. */
@@ -538,19 +544,23 @@ function NodesSection({
           <select value={listenOn} onChange={(e) => onListenOn(e.target.value)}>
             <option value="">loopback only</option>
             {ifaces.map((a) => (
-              <option key={a.interface} value={a.interface}>
+              <option key={a.interface} value={network(a.ip) || a.interface}>
                 {a.interface} · {a.ip}
               </option>
             ))}
             <option value="*">every private address</option>
           </select>
           <div className="hint">
-            A hub on a phone needs this, because a phone cannot open an SSH forward. Name the VPN interface: kari then answers on that address as well as on loopback, and the pairing code carries it. A
-            public address is never bound. The list is read again every 20 seconds, so a VPN that comes up later needs no restart, and an address that changes is followed.
+            A hub on a phone needs this, because a phone cannot open an SSH forward. Pick the VPN: kari then answers on that address as well as on loopback, and the pairing code carries it. The choice is
+            kept as a network, so a tunnel that comes back under another interface name still counts. A public address is never bound. The list is read again every 20 seconds, so a VPN that comes up later
+            needs no restart.
           </div>
         </div>
         {listenOn && (
-          <div className="hint">{reach.length ? `reachable at ${reach.join(", ")}` : "not bound yet. Bring the interface up, then look again in 20 seconds."}</div>
+          <div className="hint">
+            {listenOn === "*" ? "every private address · " : `${listenOn} · `}
+            {reach.length ? `reachable at ${reach.join(", ")}` : "not bound yet. Bring the interface up, then look again in 20 seconds."}
+          </div>
         )}
       </div>
       {code && (

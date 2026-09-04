@@ -53,20 +53,64 @@ pub fn local_addresses() -> Vec<LocalAddress> {
 
 /// The private, non-loopback addresses to bind, with `port`.
 ///
-/// `only` is an interface name, such as `utun5`, or `*` for every interface.
-/// An empty name binds nothing. A public address is never returned.
+/// `only` selects them. Three forms:
+/// - a network in CIDR form: every private address inside it. Best for a VPN,
+///   because the interface of a tunnel is renamed between sessions on macOS
+///   while its network stays the same.
+/// - `utun5` and any other interface name: the private addresses of it.
+/// - `*`: every private address of the machine.
+///
+/// An empty selector binds nothing. A public address is never returned.
 pub fn private_sockets(port: u16, only: &str) -> Vec<SocketAddr> {
     let only = only.trim();
     if only.is_empty() {
         return Vec::new();
     }
+    let network = only.split_once('/').and_then(|(base, bits)| {
+        Some((
+            base.parse::<std::net::IpAddr>().ok()?,
+            bits.parse::<u32>().ok()?,
+        ))
+    });
     local_addresses()
         .into_iter()
         .filter(|a| a.private)
-        .filter(|a| only == "*" || a.interface == only)
-        .filter_map(|a| a.ip.parse::<std::net::IpAddr>().ok())
-        .map(|ip| SocketAddr::new(ip, port))
+        .filter_map(|a| a.ip.parse::<std::net::IpAddr>().ok().map(|ip| (a, ip)))
+        .filter(|(a, ip)| match &network {
+            Some((base, bits)) => in_network(ip, base, *bits),
+            None => only == "*" || a.interface == only,
+        })
+        .map(|(_, ip)| SocketAddr::new(ip, port))
         .collect()
+}
+
+/// True when `ip` sits inside the network `base/bits`.
+fn in_network(ip: &std::net::IpAddr, base: &std::net::IpAddr, bits: u32) -> bool {
+    match (ip, base) {
+        (std::net::IpAddr::V4(ip), std::net::IpAddr::V4(base)) => {
+            if bits > 32 {
+                return false;
+            }
+            let mask = if bits == 0 {
+                0
+            } else {
+                u32::MAX << (32 - bits)
+            };
+            u32::from(*ip) & mask == u32::from(*base) & mask
+        }
+        (std::net::IpAddr::V6(ip), std::net::IpAddr::V6(base)) => {
+            if bits > 128 {
+                return false;
+            }
+            let mask = if bits == 0 {
+                0
+            } else {
+                u128::MAX << (128 - bits)
+            };
+            u128::from(*ip) & mask == u128::from(*base) & mask
+        }
+        _ => false,
+    }
 }
 
 /// What the API listens on now. The listener writes it; identity reads it.
@@ -116,6 +160,24 @@ mod tests {
         assert!(!is_private(&IpAddr::V6(Ipv6Addr::new(
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
         ))));
+    }
+
+    #[test]
+    fn network_match_covers_the_subnet_only() {
+        let v4 = |a, b, c, d| IpAddr::V4(Ipv4Addr::new(a, b, c, d));
+        let base = v4(192, 168, 2, 0);
+        assert!(in_network(&v4(192, 168, 2, 2), &base, 24));
+        assert!(in_network(&v4(192, 168, 2, 254), &base, 24));
+        assert!(!in_network(&v4(192, 168, 3, 2), &base, 24));
+        assert!(in_network(&v4(192, 168, 3, 2), &v4(192, 168, 0, 0), 16));
+        assert!(!in_network(&v4(10, 0, 0, 1), &base, 24));
+        // A mixed pair never matches, and an impossible prefix never matches.
+        assert!(!in_network(
+            &IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1)),
+            &base,
+            24
+        ));
+        assert!(!in_network(&v4(192, 168, 2, 2), &base, 33));
     }
 
     #[test]
