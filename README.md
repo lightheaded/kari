@@ -67,9 +67,15 @@ Build the Android app. It needs JDK 17, the Android SDK with `platforms;android-
 
 ```
 bun tauri android init                                   # once; the project it writes is not tracked
+scripts/android-icons.sh                                 # after every init; init writes the Tauri logo
 bun tauri android build --debug --apk --target aarch64   # a debug APK for adb install
 bun tauri android build --apk --target aarch64           # an unsigned release APK; the release workflow signs it
 ```
+
+The launcher icon comes from `src-tauri/icons-src`. `icon.json` names the three
+adaptive layers: the green plate, the horned glyph, and the monochrome glyph for
+themed icons. Edit the SVG files, then run `scripts/android-icons.sh` again. The
+script leaves the tracked desktop icons in `src-tauri/icons` as they are.
 
 ## Quota tracking
 
