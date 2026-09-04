@@ -173,6 +173,156 @@ pub fn plan(
     })
 }
 
+/// When a trigger fires next, as far as the reset times allow a guess.
+///
+/// Two triggers exist. The weekly one fires a set number of hours before the
+/// 7-day window resets. The idle one fires once nobody has worked for long
+/// enough, and only while the 5-hour window sits below its threshold. The
+/// earlier of the two wins. A trigger that is live already returns `now`.
+pub fn next_trigger_at(
+    ctx: &Context<'_>,
+    s: &Settings,
+) -> Option<(ProposalTrigger, DateTime<Utc>)> {
+    if let Some((t, _)) = detect_trigger(ctx, s) {
+        return Some((t, ctx.now));
+    }
+    let q = ctx.quota?;
+    let mut best: Option<(ProposalTrigger, DateTime<Utc>)> = None;
+    let mut offer = |t: ProposalTrigger, at: DateTime<Utc>| {
+        if at < ctx.now {
+            return;
+        }
+        if best.as_ref().is_none_or(|(_, b)| at < *b) {
+            best = Some((t, at));
+        }
+    };
+    if let Some(seven) = q.seven_day.as_ref() {
+        let unused = 100.0 - seven.used_percentage;
+        if let Some(reset) = seven.resets_at {
+            if unused > s.weekly_unused_pct {
+                offer(
+                    ProposalTrigger::WeeklyReset,
+                    reset - Duration::hours(s.weekly_hours_before_reset),
+                );
+            }
+        }
+    }
+    if let Some(five) = q.five_hour.as_ref() {
+        // Below the threshold the wait is only the idle timer. Above it, the
+        // window must reset first, and the timer runs from there.
+        if five.used_percentage < s.five_hour_idle_pct {
+            let from = ctx.last_interactive_at.unwrap_or(ctx.now);
+            offer(
+                ProposalTrigger::IdleFiveHour,
+                from + Duration::minutes(s.idle_minutes),
+            );
+        } else if let Some(reset) = five.resets_at {
+            offer(
+                ProposalTrigger::IdleFiveHour,
+                reset + Duration::minutes(s.idle_minutes),
+            );
+        }
+    }
+    best
+}
+
+/// Every candidate in the order the planner would take them, whether it fits
+/// the budget or not. This is what the queue strip shows. It starts nothing.
+pub fn queue(
+    mut candidates: Vec<Candidate>,
+    ctx: &Context<'_>,
+    s: &Settings,
+    mode: AutomationMode,
+    open_proposal: bool,
+    next_check_at: DateTime<Utc>,
+) -> QueuePlan {
+    candidates.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then(a.created_at.cmp(&b.created_at))
+    });
+    let budget = budget_pct(ctx, s);
+    let used = ctx
+        .quota
+        .and_then(|q| q.five_hour.as_ref())
+        .map(|w| w.used_percentage)
+        .unwrap_or(0.0);
+    let slots = s.max_parallel_bg.saturating_sub(ctx.running_jobs);
+    let next = next_trigger_at(ctx, s);
+
+    let blocked = if mode == AutomationMode::Off {
+        Some("automation is off".into())
+    } else if ctx.quota.is_none() {
+        Some("no quota sample yet".into())
+    } else if slots == 0 {
+        Some(format!(
+            "every one of the {} job slots is busy",
+            s.max_parallel_bg
+        ))
+    } else if budget <= 1.0 {
+        Some(format!(
+            "the budget is {budget:.0} percent of the 5-hour window"
+        ))
+    } else if candidates.is_empty() {
+        Some("no card is marked may run unattended".into())
+    } else {
+        None
+    };
+
+    let mut steps = vec![];
+    let mut total = 0.0f64;
+    for (i, c) in candidates.into_iter().enumerate() {
+        let cost = c.estimate.pct_five_hour;
+        let over_slots = i as u32 >= slots;
+        let fits = !over_slots && total + cost <= budget && blocked.is_none();
+        if fits {
+            total += cost;
+        }
+        let (starts_at, reason) = if fits {
+            if open_proposal {
+                // The plan panel holds the buttons. The strip says so once, in
+                // its header, so every step keeps a short answer here.
+                (Some(ctx.now), "now".into())
+            } else {
+                match next {
+                    Some((_, at)) if at <= ctx.now => (Some(ctx.now), "now".into()),
+                    Some((_, at)) => (Some(at), "at the next trigger".into()),
+                    None => (None, "no trigger in sight".into()),
+                }
+            }
+        } else if let Some(b) = &blocked {
+            (None, b.clone())
+        } else if over_slots {
+            (None, "no free job slot".into())
+        } else {
+            (None, "does not fit the budget".into())
+        };
+        steps.push(QueueStep {
+            card_id: c.card_id,
+            title: c.title,
+            project_name: c.project_name,
+            model: c.model,
+            window_after_pct: used + total,
+            estimate: c.estimate,
+            fits,
+            starts_at,
+            reason,
+        });
+    }
+
+    QueuePlan {
+        steps,
+        budget_pct: budget,
+        used_pct: used,
+        next_check_at,
+        next_trigger_at: next.map(|(_, at)| at),
+        next_trigger: next.map(|(t, _)| t),
+        mode,
+        blocked,
+        open_proposal,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,5 +459,123 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.items.len(), 1);
+    }
+
+    #[test]
+    fn the_queue_marks_what_fits_and_what_does_not() {
+        // 30 percent used, a ceiling of 85, so the budget is 55 percent.
+        let q = quota(30.0, 20.0, 200);
+        let s = Settings {
+            max_parallel_bg: 4,
+            ..settings()
+        };
+        let cands = vec![
+            candidate("a", 20.0, 5),
+            candidate("b", 20.0, 3),
+            candidate("c", 40.0, 1),
+        ];
+        let plan = queue(
+            cands,
+            &ctx(&q, 0),
+            &s,
+            AutomationMode::Ask,
+            false,
+            Utc::now(),
+        );
+        assert!(plan.blocked.is_none());
+        let fits: Vec<bool> = plan.steps.iter().map(|x| x.fits).collect();
+        assert_eq!(fits, vec![true, true, false]);
+        // Priority decides the order, so "a" comes first.
+        assert_eq!(plan.steps[0].card_id, "a");
+        // The window shows 30 + 20 and then 30 + 20 + 20.
+        assert!((plan.steps[0].window_after_pct - 50.0).abs() < 0.01);
+        assert!((plan.steps[1].window_after_pct - 70.0).abs() < 0.01);
+        assert_eq!(plan.steps[2].reason, "does not fit the budget");
+    }
+
+    #[test]
+    fn a_mode_of_off_blocks_the_whole_queue() {
+        let q = quota(10.0, 20.0, 200);
+        let plan = queue(
+            vec![candidate("a", 5.0, 0)],
+            &ctx(&q, 0),
+            &settings(),
+            AutomationMode::Off,
+            false,
+            Utc::now(),
+        );
+        assert_eq!(plan.blocked.as_deref(), Some("automation is off"));
+        assert!(!plan.steps[0].fits);
+        assert!(plan.steps[0].starts_at.is_none());
+    }
+
+    #[test]
+    fn a_busy_job_slot_leaves_no_room() {
+        let q = quota(10.0, 20.0, 200);
+        let s = Settings {
+            max_parallel_bg: 1,
+            ..settings()
+        };
+        let plan = queue(
+            vec![candidate("a", 5.0, 0)],
+            &ctx(&q, 1),
+            &s,
+            AutomationMode::Ask,
+            false,
+            Utc::now(),
+        );
+        assert!(plan
+            .blocked
+            .as_deref()
+            .is_some_and(|b| b.contains("job slots")));
+    }
+
+    #[test]
+    fn a_live_trigger_starts_the_queue_now() {
+        // 10 percent used with 80 percent of the week unused and a reset in 20
+        // hours fires the weekly trigger at once.
+        let q = quota(10.0, 20.0, 20);
+        let plan = queue(
+            vec![candidate("a", 5.0, 0)],
+            &ctx(&q, 0),
+            &settings(),
+            AutomationMode::Ask,
+            false,
+            Utc::now(),
+        );
+        assert_eq!(plan.next_trigger, Some(ProposalTrigger::WeeklyReset));
+        assert_eq!(plan.steps[0].reason, "now");
+    }
+
+    #[test]
+    fn the_next_weekly_trigger_is_hours_before_the_reset() {
+        // The weekly window resets in 200 hours and the trigger fires 36 hours
+        // before that, so it is 164 hours away. The 5-hour window must not
+        // offer anything earlier, so it carries no reset time here.
+        let mut q = quota(90.0, 20.0, 200);
+        q.five_hour.as_mut().unwrap().resets_at = None;
+        let s = Settings {
+            five_hour_idle_pct: 0.0,
+            ..settings()
+        };
+        let (t, at) = next_trigger_at(&ctx(&q, 0), &s).unwrap();
+        assert_eq!(t, ProposalTrigger::WeeklyReset);
+        let hours = (at - Utc::now()).num_hours();
+        assert!((163..=165).contains(&hours), "{hours} hours");
+    }
+
+    #[test]
+    fn a_full_five_hour_window_waits_for_its_reset_and_the_idle_timer() {
+        // 90 percent used, resets in 3 hours, then 45 idle minutes on top.
+        let q = quota(90.0, 20.0, 200);
+        let s = Settings {
+            five_hour_idle_pct: 30.0,
+            idle_minutes: 45,
+            ..settings()
+        };
+        let (t, at) = next_trigger_at(&ctx(&q, 0), &s).unwrap();
+        assert_eq!(t, ProposalTrigger::IdleFiveHour);
+        let mins = (at - Utc::now()).num_minutes();
+        assert!((224..=226).contains(&mins), "{mins} minutes");
     }
 }

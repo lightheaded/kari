@@ -22,6 +22,7 @@ fn main() -> anyhow::Result<()> {
         priority: 0,
         notes: Some("temporary card from the jobrun example".into()),
         model: model.clone(),
+        column_id: None,
     })?;
     println!("model: {model:?}");
     println!(

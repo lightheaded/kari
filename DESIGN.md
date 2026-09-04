@@ -109,7 +109,7 @@ kari derives one state per card from the sources above. Columns are configurable
 | `done` | manual move, or the PR is merged, or judged done with no live process and no activity for 3 days |
 | `stale` | no live process and no activity for 14 days, not judged done. Hidden by default |
 | `backlog` | task card without a session |
-| `ready` | backlog card with `auto_run` set and a run prompt |
+| `ready` | backlog card with `auto_run` set and a title or a run prompt |
 
 Rules:
 
@@ -124,14 +124,50 @@ Rules:
 | Backlog | `backlog` |
 | Ready | `ready` |
 | Working | `working` |
-| My turn | `my_turn` |
-| Decision needed | `needs_decision` |
-| Approval needed | `needs_approval` |
-| Waiting on others | `waiting_on_others` |
-| Validate | `validate` |
+| Needs me | `needs_approval`, `needs_decision`, `my_turn`, `unknown` |
+| Review | `validate`, `waiting_on_others` |
 | Done | `done` |
 
-Columns can be renamed, merged (one column accepts several states), reordered, hidden, and given WIP limits. The mapping is stored in the database and exported as JSON.
+Six columns fit a 1440-pixel window with no sideways scroll. Version 0.4.1 and
+earlier shipped nine, one per state, and that no longer fits. A column that
+accepts more than one state groups its cards by state inside itself, most urgent
+first, with a collapsible sub-header per group.
+
+Columns can be renamed, split again, reordered, hidden, and given WIP limits.
+The mapping is stored in the database and exported as JSON.
+
+kari replaces a stored nine-column layout with the six once, at start-up, and
+only when that layout still matches the old defaults exactly. A layout the user
+changed is left alone. Manual locks follow their column: `my_turn`, `decision`
+and `approval` become `needs_me`, and `waiting` and `validate` become `review`.
+The app says so once in a toast. "Reset to defaults" gives the six back.
+
+### Board scrolling
+
+Three ways sideways, because a mouse has no horizontal wheel:
+
+- A trackpad and Shift with the wheel already send a horizontal delta.
+- A plain wheel over a column that cannot scroll further moves the board instead.
+- A drag on the ground between the columns pans the board.
+
+The board also keeps a visible scrollbar, because macOS hides an overlay one.
+
+### Card order inside a column
+
+Every card carries a priority. Zero means the automatic order: the urgency of
+the derived state, then recency. A non-zero priority means the user placed the
+card by hand, and every placed card sorts above every automatic one.
+
+A drag writes the priorities. Dropping a card places it and everything above it
+in the column, counting down to the lowest card that was placed already.
+Everything below that keeps priority zero, so a card nobody dragged never jumps.
+The priority box in the drawer still works and writes the same number, and the
+planner reads it, so the top of a placed backlog is also the first card a plan
+takes. A column that holds a placed card shows a reset in its header, which
+gives the whole column back to the automatic order.
+
+Priorities live in the store of the node that owns the card, so a reorder writes
+to one node at a time.
 
 ## 8. Summaries
 
@@ -165,6 +201,47 @@ The status line reports whole percent steps and refreshes every few seconds, so 
 
 Per-task estimate: median weighted tokens of finished sessions in the same project, else the global median, else 4M. A session card is a continuation, so its estimate is eight turns at that session's own rate per turn. Estimates show a band.
 
+### The automation mode
+
+One three-state mode says how much of this runs:
+
+| Mode | `proposals_enabled` | `autopilot` |
+|---|---|---|
+| `off` | false | untouched |
+| `ask` | true | false |
+| `auto` | true | true |
+
+The mode is derived from those two flags, never stored on its own. A stored
+field cannot work here: `Settings` carries `#[serde(default)]`, so a record
+written before the field existed comes back holding the struct default, and that
+is indistinguishable from a mode the user chose. Deriving it means a record from
+an older kari keeps saying exactly what it always said.
+
+`off` leaves `autopilot` alone, so the flag still holds what the user asked for
+the last time plans were on. Only `proposals_enabled` gates the planner, so
+nothing runs while the mode is `off` either way.
+
+The mode is per node, because each node runs its own planner. The control in the
+top bar sets every node that answers at once, or the one node the filter names.
+Settings holds the mode of the local node on its own.
+
+### The queue
+
+The queue is a dry run of the planner. It starts nothing and stores nothing:
+`planner::queue` answers from the board it is handed, and the answer travels
+with `BoardView`, so the strip needs no extra call.
+
+Each step names the card, the cost as a percent of the 5-hour window, the state
+of the window after it, whether it fits the budget, and the start time. That
+time comes from `planner::next_trigger_at`: the weekly trigger fires a set
+number of hours before the 7-day window resets, and the idle trigger fires once
+nobody worked for long enough. The earlier of the two wins. A trigger that is
+live already reads as "now".
+
+The strip also names why nothing can run at all: the mode is off, no quota
+sample arrived, every job slot is busy, the budget is too small, or no card is
+marked "may run unattended".
+
 ### Proposals
 
 Triggers:
@@ -189,6 +266,11 @@ claude --bg --permission-mode <mode> [--model <model>] --name <card-slug> -- "<r
 claude --bg --resume <session-id> [--model <model>] "<continue prompt>"    # for session cards
 ```
 
+The run prompt of a task card is its title, a blank line, then its body, so the
+title never has to be repeated in the body. A session card sends its body alone,
+because its title comes from the transcript and is not an instruction. A one-off
+prompt from the drawer replaces both.
+
 The model comes from the card, else from `default_run_model` in settings, else from Claude Code. The value is an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full model name. Jump in uses the same value, both for a terminal and for a herdr pane.
 
 The default permission mode is `auto` (until 2026-09-03: `bypassPermissions`), set in Settings and overridable per card. `--` ends the options, so a prompt that starts with `-` stays a prompt. Background agents move edits into a git worktree under `.claude/worktrees/`, so parallel runs do not collide. kari records the job id, follows `state.json`, and moves the card: `working` → `validate` on `done`, `needs_approval` on `blocked`, and a notification on `failed`.
@@ -197,7 +279,7 @@ kari writes one `job_log` row per state change and keeps the last state on the c
 
 Safety: a kill switch in the tray stops all kari-started jobs with `claude stop <id>`. The first click arms the menu item, a second click within 10 seconds acts. A card must carry `auto_run` explicitly to be eligible.
 
-Autopilot (off by default) accepts a weekly-reset plan without a click, up to `autopilot_max_jobs`. It sends a notice and the panel keeps a Stop button. The idle trigger and the manual button always wait for a click.
+Mode `auto` accepts a weekly-reset plan without a click, up to `autopilot_max_jobs`. It sends a notice and the panel keeps a Stop button. The idle trigger and the manual button always wait for a click. See "The automation mode".
 
 ## 10. Jump in
 
@@ -225,9 +307,19 @@ crates/kari-core   plain Rust: readers, parser, inference, quota, planner, herdr
                    sqlite store, the HTTP API (axum), the API client, the hub, the SSH tunnel
 crates/kari-cli    `kari-node`: the same engine without a window, plus the installers
 src-tauri          Tauri app: commands over the hub, events to the UI, tray, notifications
-src                React UI: board, card drawer, quota bars, proposals, settings, nodes
+src                React UI: board, card drawer, stats strip, queue strip, proposals, settings, nodes
 scripts            statusline wrapper, version bump
 ```
+
+The window keeps its size and its place across a restart, in
+`~/.config/kari/window.json`. Only those two, and kari writes them itself.
+`tauri-plugin-window-state` does the same job, but it hides the window before it
+restores and shows it again only with its `VISIBLE` flag; kari lives in the
+tray, so whether the window was open at exit must not decide whether it opens
+at the next start. The write waits for the last event of a drag, so one drag
+costs one write. A saved rectangle that no display covers any more keeps its
+size and lets the system place the window, so a window never opens off screen
+after a monitor goes away.
 
 Flow: watchers and pollers in `kari-core` emit domain events on a channel. A reducer updates the store and computes derived state. The hub turns an event of the local engine, or of a remote node, into a `board_changed` event for the UI, which re-fetches the merged board through one command. The UI never reads files and never opens a socket.
 

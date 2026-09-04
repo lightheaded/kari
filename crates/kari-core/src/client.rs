@@ -229,6 +229,22 @@ impl ApiClient {
         )
     }
 
+    /// Send a manual order for one column. The route arrived after version
+    /// 0.4.1, so a node that predates it answers 404. Say what to do about it.
+    pub fn reorder_cards(&self, ranked: &[String], unranked: &[String]) -> anyhow::Result<()> {
+        self.post::<()>(
+            "/kari/v1/cards/reorder",
+            Some(serde_json::json!({ "ranked": ranked, "unranked": unranked })),
+        )
+        .map_err(|e| {
+            if e.to_string().contains("404") {
+                anyhow::anyhow!("this node runs a kari that cannot reorder cards; update it, or set the priority in the card drawer")
+            } else {
+                e
+            }
+        })
+    }
+
     pub fn move_card(&self, id: &str, column_id: &str) -> anyhow::Result<()> {
         self.post(
             &format!("/kari/v1/cards/{id}/move"),
@@ -297,6 +313,14 @@ impl ApiClient {
             return Ok(());
         }
         s.away_mode = on;
+        self.set_settings(&s)
+    }
+
+    /// Write the automation mode through the settings, so a node that predates
+    /// the mode field still follows the two booleans it does understand.
+    pub fn set_automation_mode(&self, mode: AutomationMode) -> anyhow::Result<()> {
+        let mut s = self.settings()?;
+        s.set_automation(mode);
         self.set_settings(&s)
     }
 

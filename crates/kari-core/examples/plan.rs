@@ -50,6 +50,7 @@ fn main() -> anyhow::Result<()> {
             priority: prio,
             notes: Some("temporary card from the plan example".into()),
             model: None,
+            column_id: None,
         })?;
         temp.push(c.id);
     }

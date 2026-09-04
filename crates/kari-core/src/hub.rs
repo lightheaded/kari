@@ -768,6 +768,7 @@ impl Hub {
             lease,
             away_mode: self.engine.settings().away_mode,
             addresses: crate::net::bound_reachable(),
+            automation_mode: self.engine.settings().automation().key().into(),
         }
     }
 
@@ -799,6 +800,13 @@ impl Hub {
             lease: st.lease.clone(),
             away_mode: st.board.as_ref().is_some_and(|b| b.away_mode),
             addresses: Self::candidates(&r.rec, st.identity.as_ref()),
+            // A node running an older kari sends no mode. Empty reads as "ask"
+            // in the UI, which is what that node in fact does.
+            automation_mode: st
+                .board
+                .as_ref()
+                .map(|b| b.automation_mode.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -840,6 +848,7 @@ impl Hub {
         let mut nodes = vec![];
         let mut cards: Vec<HubCard> = vec![];
         let mut quotas = vec![];
+        let mut queues: Vec<NodeQueue> = vec![];
         let mut proposals: Vec<NodeProposal> = vec![];
         // The local board is the whole engine scan; a hub without a local node skips it.
         let lb = if self.with_local {
@@ -860,6 +869,11 @@ impl Hub {
                 quota: lb.quota.clone(),
                 calibration: lb.calibration.clone(),
             });
+            queues.extend(lb.queue.clone().map(|q| NodeQueue {
+                node_id: LOCAL.into(),
+                node_name: local_name.clone(),
+                queue: q,
+            }));
             proposals.extend(lb.proposal.clone().map(|p| NodeProposal {
                 node_id: LOCAL.into(),
                 node_name: local_name.clone(),
@@ -886,6 +900,13 @@ impl Hub {
                         quota: b.quota.clone(),
                         calibration: b.calibration.clone(),
                     });
+                    if let Some(q) = &b.queue {
+                        queues.push(NodeQueue {
+                            node_id: r.rec.id.clone(),
+                            node_name: status.name.clone(),
+                            queue: q.clone(),
+                        });
+                    }
                     if let Some(p) = &b.proposal {
                         proposals.push(NodeProposal {
                             node_id: r.rec.id.clone(),
@@ -906,6 +927,7 @@ impl Hub {
             nodes,
             cards,
             quotas,
+            queues,
             proposals,
             generated_at: Utc::now(),
             scanning: lb.as_ref().is_some_and(|b| b.scanning),
@@ -1034,6 +1056,44 @@ impl Hub {
             |e| e.answer_permission(id, behavior),
             |c| c.answer_permission(id, behavior),
         )
+    }
+
+    /// Store a manual order for one column on the node that owns those cards.
+    pub fn reorder_cards(
+        &self,
+        node: &str,
+        ranked: Vec<String>,
+        unranked: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let (r2, u2) = (ranked.clone(), unranked.clone());
+        self.on_node(
+            node,
+            move |e| e.reorder_cards(&ranked, &unranked),
+            move |c| c.reorder_cards(&r2, &u2),
+        )
+    }
+
+    /// Set how much automatic behaviour one node allows.
+    pub fn set_automation_mode(&self, node: &str, mode: AutomationMode) -> anyhow::Result<()> {
+        self.on_node(
+            node,
+            |e| e.set_automation_mode(mode),
+            |c| c.set_automation_mode(mode),
+        )
+    }
+
+    /// Set the mode on every node that answers. Returns the nodes that failed.
+    pub fn set_automation_mode_all(&self, mode: AutomationMode) -> Vec<String> {
+        let mut failed = vec![];
+        for n in self.nodes() {
+            if !n.enabled || !n.online {
+                continue;
+            }
+            if self.set_automation_mode(&n.id, mode).is_err() {
+                failed.push(n.name);
+            }
+        }
+        failed
     }
 
     /// Hold permission prompts on a node for a remote answer, or stop holding them.

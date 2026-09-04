@@ -3,7 +3,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/board-dark.png">
-    <img src="docs/screenshots/board.png" alt="The kari board: quota meters at the top, columns from Backlog to Validate, cards with state chips, summaries and an open question" width="960">
+    <img src="docs/screenshots/board.png" alt="The kari board: one quota row per node at the top, six columns from Backlog to Done, cards with state chips, summaries and an open question" width="960">
   </picture>
 </p>
 
@@ -37,10 +37,11 @@ xattr -dr com.apple.quarantine /Applications/kari.app
 - Live hooks: Claude Code posts session events to kari on `127.0.0.1:47311`. A permission prompt moves the card to Approval needed within a second.
 - Summaries: Haiku writes a two-sentence narrative per session after a turn ends. Calls are capped per hour.
 - Estimates: kari learns how much of the 5-hour window one million weighted tokens costs, then gives each card a cost estimate with a band.
-- Proposals: when quota would expire unused, kari offers a plan. Start, Start all, Snooze or Dismiss.
+- Proposals: when quota expires unused, kari offers a plan. Start, Start all, Snooze or Dismiss.
 - Model per card: a task can name the model it runs with, for example Fable for a deep review and Sonnet for operational work.
 - Run log and kill switch: every background job kari starts writes a state history on its card. The tray stops all jobs after a confirm click.
-- Autopilot (off by default): a weekly-reset plan can start by itself, with a notice and a Stop button.
+- One switch for the automatic behaviour: Off, Ask or Auto. Off keeps the quota for you. Auto starts a weekly-reset plan by itself, with a notice and a Stop button.
+- A queue strip that names the next runs in order, the cost of each step, and its start time. It starts nothing.
 - Remote nodes: another host runs `kari-node serve` and its cards join the same board, with their own quota meters. See "Remote nodes".
 
 ## Requirements
@@ -103,7 +104,7 @@ After a turn ends, kari runs `claude -p --model haiku` with the last 30 messages
 
 ## Estimates and calibration
 
-Rate limits are percentages. Transcripts are tokens. kari pairs the points where the reported 5-hour percent changed with the token growth it saw between them, then keeps the median. Five clean pairs replace the prior. The learned factor and the band appear in the quota bar tooltip.
+Rate limits are percentages. Transcripts are tokens. kari pairs the points where the reported 5-hour percent changed with the token growth it saw between them, then keeps the median. Five clean pairs replace the prior. The learned factor and the band appear in the tooltip of the quota row.
 
 A task card estimate is the median weighted-token cost of past sessions in the same project, else the global median. A session card estimate is the cost of eight more turns at that session's own rate. Set `estimate_weighted_tokens` on a card to override it.
 
@@ -117,9 +118,9 @@ kari offers a plan when one of three things happens:
 
 1. The 7-day window holds more than 40 percent unused and resets within 36 hours.
 2. The 5-hour window is below 30 percent and nobody worked for 45 minutes.
-3. You press "Fill the quota" in the quota bar.
+3. You press "Fill" on the quota row of a node.
 
-The planner ranks cards by priority, then by age. It only takes cards marked "May run unattended" that carry a prompt and a project directory. It never takes a card that is working, or one that waits for you. It packs the plan into the free part of the 5-hour window, keeps 30 percent free between 08:00 and 20:00, never fills past 85 percent, and holds the parallel cap of two jobs.
+The planner ranks cards by priority, then by age. A drag on the board writes that priority, so the top of a hand-ordered backlog is the first card a plan takes. It only takes cards marked "May run unattended" that carry a prompt and a project directory. It never takes a card that is working, or one that waits for you. It packs the plan into the free part of the 5-hour window, keeps 30 percent free between 08:00 and 20:00, never fills past 85 percent, and holds the parallel cap of two jobs.
 
 The panel shows the reason, the budget, the plan total and the window after the run. Buttons: Start, Start all, Snooze 1 hour, Dismiss. Dismiss keeps the same trigger quiet until its window moves on. Every threshold is in Settings.
 
@@ -131,9 +132,25 @@ Each card can also name a model. The New task dialog and the card drawer offer F
 
 Stop one job from the card drawer. Stop everything from the tray: the first click arms the item, the second click within 10 seconds stops the jobs. The tray tooltip shows how many sessions work and how many need you.
 
-## Autopilot
+## The automation switch
 
-Autopilot is off by default. When it is on, a plan from the weekly-reset trigger starts without a click, up to the autopilot job cap. kari still sends a notice, and the plan panel keeps "Stop these jobs" as the undo. The idle trigger and the manual button always wait for a click.
+One control in the top bar holds three states:
+
+| Mode | What happens |
+|---|---|
+| Off | No plans and no starts. The quota is yours. |
+| Ask | kari offers a plan. You press Start. |
+| Auto | A weekly-reset plan starts without a click, up to the autopilot job cap. |
+
+Ask is the default. In Auto, kari still sends a notice, and the plan panel keeps "Stop these jobs" as the undo. The idle trigger and the manual button always wait for a click.
+
+The mode belongs to a node, because every node runs its own planner. The switch sets every node that answers at once. With a node filter on, it sets that node only. Settings holds the mode of the local machine on its own.
+
+## The queue
+
+The strip under the filter bar is a dry run of the planner. It names each step in order: the card, the cost as a percent of the 5-hour window, the state of the window after it, and the start time. A step outside the budget says so. If nothing can run at all, the strip gives the reason: the mode is off, no quota sample arrived, every job slot is busy, the budget is too small, or no card is marked "May run unattended".
+
+The strip starts nothing. The plan panel keeps the buttons.
 
 ## herdr as a launch target
 

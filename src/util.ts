@@ -85,11 +85,22 @@ export function statePriority(s: DerivedState): number {
   )[s];
 }
 
+/** A card the user placed by hand carries a priority. Priority 0 means automatic. */
+export function isRanked(c: CardView): boolean {
+  return c.card.priority !== 0;
+}
+
+/** Ranked cards hold the order the user gave them. Unranked cards follow, by
+ *  the urgency of their state and then by recency. A card nobody dragged
+ *  therefore never jumps above one that was placed by hand. */
 export function sortCards(a: CardView, b: CardView): number {
+  const ra = isRanked(a);
+  const rb = isRanked(b);
+  if (ra !== rb) return ra ? -1 : 1;
+  if (ra && rb) return b.card.priority - a.card.priority;
   const pa = statePriority(a.state) + (a.live ? 5 : 0);
   const pb = statePriority(b.state) + (b.live ? 5 : 0);
   if (pa !== pb) return pb - pa;
-  if (a.card.priority !== b.card.priority) return b.card.priority - a.card.priority;
   const ta = a.last_activity_at ? new Date(a.last_activity_at).getTime() : 0;
   const tb = b.last_activity_at ? new Date(b.last_activity_at).getTime() : 0;
   return tb - ta;
@@ -103,4 +114,97 @@ export function shortId(id: string | null | undefined): string {
 export function nodeDot(n: NodeStatus): string {
   if (!n.enabled) return "dot disabled";
   return n.online ? "dot online" : "dot offline";
+}
+
+/** macOS text fields in kari must behave like a native app: no autofill list,
+ *  no autocorrect, no first-letter capital. Spread this on every text input.
+ *  A long prose field adds `spellCheck` of its own. */
+export const noAutoFill = {
+  autoComplete: "off",
+  autoCorrect: "off",
+  autoCapitalize: "off",
+  spellCheck: false,
+} as const;
+
+/** The same, for a field that holds prose the user wants checked. */
+export const proseField = {
+  autoComplete: "off",
+  autoCorrect: "off",
+  autoCapitalize: "off",
+  spellCheck: true,
+} as const;
+
+/** Score a fuzzy match of `needle` against `hay`. Higher is better, 0 is no
+ *  match. Every character of the needle must appear in order. A match at a word
+ *  start, and a run of neighbouring characters, both score higher. */
+export function fuzzyScore(hay: string, needle: string): number {
+  if (!needle) return 1;
+  const h = hay.toLowerCase();
+  const n = needle.toLowerCase();
+  let score = 0;
+  let at = 0;
+  let run = 0;
+  for (const ch of n) {
+    const i = h.indexOf(ch, at);
+    if (i < 0) return 0;
+    run = i === at ? run + 1 : 0;
+    const wordStart = i === 0 || /[^a-z0-9]/.test(h[i - 1]);
+    score += 1 + run * 2 + (wordStart ? 3 : 0);
+    at = i + 1;
+  }
+  // A short haystack that matches is a better answer than a long one.
+  return score + Math.max(0, 20 - h.length) / 20;
+}
+
+/** What one card in a column needs, to work out a new manual order. */
+export interface Rankable {
+  /** Unique across the board: node and card together. */
+  key: string;
+  /** The node that stores this card's priority. */
+  node: string;
+  /** The card id, as the node knows it. */
+  id: string;
+  /** Non-zero when the user placed this card by hand. */
+  priority: number;
+}
+
+/** The new order of one column after a drop, and the two priority lists the
+ *  node must store.
+ *
+ *  The rule: every card down to the lowest hand-placed card is hand-placed, in
+ *  the order shown. Everything below that keeps priority 0 and so keeps the
+ *  automatic order. A card the user never dragged therefore never jumps above
+ *  one that was placed.
+ *
+ *  Priorities live in the store of one node, so only the cards of the dragged
+ *  card's node go into the two lists. */
+export function planReorder<T extends Rankable>(
+  column: T[],
+  fromKey: string,
+  overKey: string,
+  node: string,
+): { order: string[]; ranked: string[]; unranked: string[] } | null {
+  const list = [...column];
+  const oldAt = list.findIndex((c) => c.key === fromKey);
+  const newAt = list.findIndex((c) => c.key === overKey);
+  if (oldAt < 0 || newAt < 0 || oldAt === newAt) return null;
+  list.splice(newAt, 0, ...list.splice(oldAt, 1));
+
+  // The run reaches the lowest placed card, so a drop only ever adds to it.
+  // `clearRanks` is the way back to the automatic order.
+  let last = newAt;
+  for (let i = 0; i < list.length; i++) if (list[i].priority !== 0) last = Math.max(last, i);
+  const placed = new Set(list.slice(0, last + 1).map((c) => c.key));
+  const mine = list.filter((c) => c.node === node);
+  return {
+    order: list.map((c) => c.key),
+    ranked: mine.filter((c) => placed.has(c.key)).map((c) => c.id),
+    unranked: mine.filter((c) => !placed.has(c.key) && c.priority !== 0).map((c) => c.id),
+  };
+}
+
+/** Every placed card of one node in a column, so a reset can clear them.
+ *  The result goes to `reorder_cards` as the `unranked` list. */
+export function clearRanks<T extends Rankable>(column: T[], node: string): string[] {
+  return column.filter((c) => c.node === node && c.priority !== 0).map((c) => c.id);
 }

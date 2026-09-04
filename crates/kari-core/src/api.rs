@@ -86,6 +86,15 @@ struct MoveBody {
     column_id: String,
 }
 
+/// The new order of one column. `ranked` holds the cards the user placed, top
+/// first. `unranked` holds the rest of that column, which sort automatically.
+#[derive(Deserialize)]
+struct ReorderBody {
+    ranked: Vec<String>,
+    #[serde(default)]
+    unranked: Vec<String>,
+}
+
 #[derive(Deserialize, Default)]
 struct StartBody {
     prompt: Option<String>,
@@ -226,6 +235,11 @@ async fn patch_card(
 async fn delete_card(State(st): State<ApiState>, Path(id): Path<String>) -> R<()> {
     let e = st.engine;
     blocking(move || e.delete_card(&id)).await
+}
+
+async fn reorder_cards(State(st): State<ApiState>, Json(b): Json<ReorderBody>) -> R<()> {
+    let e = st.engine;
+    blocking(move || e.reorder_cards(&b.ranked, &b.unranked)).await
 }
 
 async fn move_card(
@@ -411,6 +425,7 @@ pub fn router(engine: Arc<Engine>, token: String) -> Router {
         .route("/events", get(events))
         .route("/refresh", post(refresh))
         .route("/cards", post(add_task))
+        .route("/cards/reorder", post(reorder_cards))
         .route(
             "/cards/{id}",
             axum::routing::patch(patch_card).delete(delete_card),

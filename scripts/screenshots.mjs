@@ -8,7 +8,7 @@
 // 2. Starts the Vite dev server with KARI_FIXTURES=docs/demo on port 1421.
 // 3. Opens the board in headless Chromium in a 1920x1080 window. The dummy board
 //    holds two nodes, so the images show the hub: node chips, node names on the
-//    cards and one quota bar per node.
+//    cards and one stats row per node.
 // 4. Pins the clock to the fixture time, so relative times read the same in every release.
 // 5. Saves one PNG per view to docs/screenshots/ and writes the app version to docs/screenshots/VERSION.
 //
@@ -54,7 +54,7 @@ async function waitForServer() {
 }
 
 /** Open the board in a fresh page and wait until it rendered with fonts.
- *  1920x1080 shows seven of the nine default columns. The header images are 2x for retina, the tour images 1x. */
+ *  1920x1080 holds all six default columns. The header images are 2x for retina, the tour images 1x. */
 async function openBoard(browser, colorScheme, scale = 1) {
   const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 },
@@ -110,6 +110,12 @@ async function main() {
     const scrollHome = () => page.evaluate(() => document.querySelector(".board")?.scrollTo(0, 0));
     await scrollHome();
 
+    // The queue strip: what the planner would run next, and when.
+    await page.locator(".qhead").click();
+    await page.locator(".qsteps li").first().waitFor();
+    await shot(page, "queue");
+    await page.locator(".qhead").click();
+
     // Search narrows the board.
     await page.getByPlaceholder("Search title, prompt, project…").fill("test");
     await scrollHome();
@@ -120,9 +126,17 @@ async function main() {
     await page.getByRole("button", { name: "+ Task" }).click();
     await page.getByRole("dialog", { name: "New task" }).waitFor();
     await page.getByPlaceholder("What needs to happen").fill("Add a health endpoint to the API");
-    await page.getByPlaceholder("Leave empty to use the title").fill("Add GET /health that returns the build version and the database status. Add a test.");
+    await page
+      .getByPlaceholder(/The title is always the first line/)
+      .fill("Add GET /health that returns the build version and the database status. Add a test.");
     await shot(page, "new-task");
+    // A filled form asks before it closes, so the first Escape shows the bar
+    // and the second one discards the draft.
     await page.keyboard.press("Escape");
+    await page.locator(".unsaved").waitFor();
+    await shot(page, "unsaved");
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "New task" }).waitFor({ state: "detached" });
 
     await page.getByRole("button", { name: "Columns" }).click();
     await page.getByRole("dialog", { name: "Columns" }).waitFor();
