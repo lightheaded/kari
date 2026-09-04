@@ -1344,6 +1344,16 @@ impl Engine {
         Ok(())
     }
 
+    /// Put a card back exactly as it was. This is the undo of `delete_card`,
+    /// so the board sends the card it deleted, with its own id and times. A
+    /// card that is there again already gets the same content, because a
+    /// second undo must not fail.
+    pub fn restore_card(&self, card: Card) -> anyhow::Result<Card> {
+        self.store.lock().unwrap().upsert_card(&card)?;
+        self.emit_changed();
+        Ok(card)
+    }
+
     /// Store a manual order for one column. `ranked` holds the cards the user
     /// placed, top first; they get descending positive priorities. `unranked`
     /// holds the rest of that column, which go back to priority 0 and so sort

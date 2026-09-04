@@ -229,6 +229,19 @@ impl ApiClient {
         )
     }
 
+    /// Put a deleted card back. The route arrived after version 0.5.4, so a
+    /// node that predates it answers 404. Say what to do about it.
+    pub fn restore_card(&self, card: &Card) -> anyhow::Result<Card> {
+        self.post("/kari/v1/cards/restore", Some(serde_json::to_value(card)?))
+            .map_err(|e| {
+                if e.to_string().contains("404") {
+                    anyhow::anyhow!("this node runs a kari that cannot undo a delete; update it")
+                } else {
+                    e
+                }
+            })
+    }
+
     /// Send a manual order for one column. The route arrived after version
     /// 0.4.1, so a node that predates it answers 404. Say what to do about it.
     pub fn reorder_cards(&self, ranked: &[String], unranked: &[String]) -> anyhow::Result<()> {

@@ -6,6 +6,7 @@ import { clock, fmtM, fmtPct, noAutoFill, proseField, relTime, shortId, weighted
 import { useAutoGrow } from "../hooks";
 import { useCloseGuard } from "../dirty";
 import { UnsavedBar } from "./Modals";
+import type { Act } from "../toasts";
 
 interface Props {
   view: HubCard;
@@ -18,7 +19,7 @@ interface Props {
   /** A phone: no terminal here, so Jump in gives way to the command to run elsewhere. */
   mobile?: boolean;
   onClose: () => void;
-  onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
+  onAction: Act;
 }
 
 const MODES = ["", "bypassPermissions", "acceptEdits", "auto", "plan", "default"];
@@ -95,6 +96,19 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
           model,
         }),
       "Saved",
+      {
+        done: "Card edits put back",
+        run: () =>
+          api.patchCard(node, c.id, {
+            title: c.title ?? "",
+            run_prompt: c.run_prompt ?? "",
+            notes: c.notes ?? "",
+            priority: c.priority,
+            auto_run: c.auto_run,
+            permission_mode: c.permission_mode ?? "",
+            model: c.model ?? "",
+          }),
+      },
     );
 
   const doneCol = columns.find((k) => k.accepts.includes("done"));
@@ -137,7 +151,16 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
             </button>
           )}
           {doneCol && view.state !== "done" && (
-            <button className="btn sm" disabled={offline} onClick={() => onAction(() => api.moveCard(node, c.id, doneCol.id), "Marked done")}>
+            <button
+              className="btn sm"
+              disabled={offline}
+              onClick={() =>
+                onAction(() => api.moveCard(node, c.id, doneCol.id), "Marked done", {
+                  done: "Card moved back",
+                  run: () => api.moveCard(node, c.id, view.column_id),
+                })
+              }
+            >
               ✓ Done
             </button>
           )}
@@ -151,11 +174,29 @@ export function Drawer({ view, columns, settings, showNode, offline, mobile, onC
               ✦ Summarize
             </button>
           )}
-          <button className="btn ghost sm" disabled={offline} onClick={() => onAction(() => api.patchCard(node, c.id, { archived: true }), "Archived").then(onClose)}>
+          <button
+            className="btn ghost sm"
+            disabled={offline}
+            onClick={() =>
+              onAction(() => api.patchCard(node, c.id, { archived: true }), "Archived", {
+                done: "Card back on the board",
+                run: () => api.patchCard(node, c.id, { archived: false }),
+              }).then(onClose)
+            }
+          >
             Archive
           </button>
           {c.kind === "task" && (
-            <button className="btn ghost sm" disabled={offline} onClick={() => onAction(() => api.deleteCard(node, c.id), "Deleted").then(onClose)}>
+            <button
+              className="btn ghost sm"
+              disabled={offline}
+              onClick={() =>
+                onAction(() => api.deleteCard(node, c.id), "Deleted", {
+                  done: "Card put back",
+                  run: () => api.restoreCard(node, c),
+                }).then(onClose)
+              }
+            >
               Delete
             </button>
           )}

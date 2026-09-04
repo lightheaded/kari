@@ -4,6 +4,8 @@ import type { HubBoard, HubCard, Project, Settings } from "../types";
 import type { Picked } from "../components/Board";
 import { Drawer } from "../components/Drawer";
 import { AddTaskModal } from "../components/Modals";
+import { Toasts } from "../components/Toasts";
+import { useToasts, type Undo } from "../toasts";
 import { Inbox } from "./Inbox";
 import { BoardTab } from "./BoardTab";
 import { NodesTab } from "./NodesTab";
@@ -51,28 +53,16 @@ const EMPTY_BOARD: HubBoard = {
   hooks_port: 47311,
 };
 
-interface Toast {
-  id: number;
-  text: string;
-  err?: boolean;
-  card?: Picked | null;
-}
-
 /** The phone: four tabs, one card sheet, the same commands as the desktop. */
 export default function MobileApp() {
   const [board, setBoard] = useState<HubBoard | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [tab, setTab] = useState<Tab>("inbox");
   const [selected, setSelected] = useState<Picked | null>(null);
-  const [toasts, setToasts] = useState<Toast[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [waited, setWaited] = useState(0);
 
-  const toast = useCallback((text: string, err = false, card: Picked | null = null) => {
-    const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text, err, card }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), err ? 7000 : card ? 8000 : 3500);
-  }, []);
+  const { toasts, toast, drop: dropToast, clear: clearToasts } = useToasts();
 
   // The hub may still be opening its store when the first call goes out. A
   // failed call comes back in a moment, not at the next poll thirty seconds
@@ -105,7 +95,7 @@ export default function MobileApp() {
     load();
     loadSettings();
     const un1 = onBoardChanged(load);
-    const un2 = onNotice((n) => toast(`${n.title} — ${n.body}`, false, n.card_id ? { node: n.node_id, id: n.card_id } : null));
+    const un2 = onNotice((n) => toast(`${n.title} — ${n.body}`, { card: n.card_id ? { node: n.node_id, id: n.card_id } : null }));
     const t = window.setInterval(load, 30000);
     return () => {
       un1();
@@ -116,17 +106,23 @@ export default function MobileApp() {
   }, [load, loadSettings, toast]);
 
   const run = useCallback(
-    async (fn: () => Promise<unknown>, ok?: string) => {
+    async <T,>(fn: () => Promise<T>, ok?: string, undo?: Undo | ((r: T) => Undo | null)) => {
       try {
         const r = await fn();
-        if (ok) toast(typeof r === "string" && r ? r : ok);
+        if (ok) {
+          const u = typeof undo === "function" ? undo(r) : undo;
+          toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined });
+        }
         await load();
       } catch (e) {
-        toast(String(e), true);
+        toast(String(e), { err: true });
       }
     },
     [load, toast],
   );
+
+  /** The user pressed Undo. The reversal is an action like any other. */
+  const undo = useCallback((u: Undo) => void run(u.run, u.done), [run]);
 
   useEffect(() => {
     if (board) return;
@@ -174,7 +170,10 @@ export default function MobileApp() {
             projectsByNode={projectsByNode}
             onClose={() => setTab("inbox")}
             onSubmit={(nodeId, t) =>
-              run(() => api.addTask(nodeId, t), "Task added").then(() => {
+              run(() => api.addTask(nodeId, t), "Task added", (c) => ({
+                done: "Task taken off the board",
+                run: () => api.deleteCard(nodeId, c.id),
+              })).then(() => {
                 setTab("board");
               })
             }
@@ -211,22 +210,7 @@ export default function MobileApp() {
         ))}
       </nav>
 
-      <div className="toasts">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={`toast ${t.err ? "err" : ""} ${t.card ? "link" : ""}`}
-            onClick={() => {
-              if (t.card) {
-                setSelected(t.card);
-                setToasts((all) => all.filter((x) => x.id !== t.id));
-              }
-            }}
-          >
-            {t.text}
-          </div>
-        ))}
-      </div>
+      <Toasts toasts={toasts} onDrop={dropToast} onClear={clearToasts} onOpen={setSelected} onUndo={undo} />
     </div>
   );
 }
