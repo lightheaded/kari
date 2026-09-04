@@ -588,8 +588,19 @@ pub fn run() {
                 hub: Arc::clone(&hub),
             });
             forward_events(app.handle().clone(), hub);
-            // Android 13 and later ask the user once before the first notification.
-            let _ = app.notification().request_permission();
+            // Android 13 and later ask the user once before the first
+            // notification. Not from here: this runs on the thread that also
+            // drives the webview, and the message pump that carries every
+            // answer into the page stops for good after one failed call on
+            // that thread. The ask happens a moment later, off this thread.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                match handle.notification().request_permission() {
+                    Ok(state) => tracing::info!("notification permission: {state:?}"),
+                    Err(e) => tracing::warn!("notification permission not asked: {e}"),
+                }
+            });
             tracing::info!("mobile setup done");
             Ok(())
         })
