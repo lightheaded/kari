@@ -730,6 +730,24 @@ impl Store {
         Ok(())
     }
 
+    /// Every key that starts with `prefix`, with the prefix stripped.
+    pub fn kv_prefix(&self, prefix: &str) -> anyhow::Result<HashMap<String, String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key, value FROM kv WHERE key LIKE ?1 || '%'")?;
+        let rows = stmt.query_map(params![prefix], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (k, v) = row?;
+            if let Some(rest) = k.strip_prefix(prefix) {
+                out.insert(rest.to_string(), v);
+            }
+        }
+        Ok(out)
+    }
+
     // ---- hook log ----
 
     // ---- nodes ----

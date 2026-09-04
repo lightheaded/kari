@@ -3,7 +3,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/board-dark.png">
-    <img src="docs/screenshots/board.png" alt="The kari board: one quota row per node at the top, six columns from Backlog to Done, cards with state chips, summaries and an open question" width="960">
+    <img src="docs/screenshots/board.png" alt="The kari board: one quota row per account at the top, six columns from Backlog to Done, cards with state chips, summaries and an open question" width="960">
   </picture>
 </p>
 
@@ -42,7 +42,7 @@ xattr -dr com.apple.quarantine /Applications/kari.app
 - Run log and kill switch: every background job kari starts writes a state history on its card. The tray stops all jobs after a confirm click.
 - One switch for the automatic behaviour: Off, Ask or Auto. Off keeps the quota for you. Auto starts a weekly-reset plan by itself, with a notice and a Stop button.
 - A queue strip that names the next runs in order, the cost of each step, and its start time. It starts nothing.
-- Remote nodes: another host runs `kari-node serve` and its cards join the same board, with their own quota meters. See "Remote nodes".
+- Remote nodes: another host runs `kari-node serve` and its cards join the same board; quota meters are grouped by Claude Code account. See "Remote nodes".
 
 ## Requirements
 
@@ -90,7 +90,7 @@ The script backs up `~/.claude/settings.json`, stores the original command in `~
 
 ## Live hooks
 
-Open Settings and click "Install hooks". kari writes a relay script to `~/.config/kari/hook.sh` and registers it in `~/.claude/settings.json` for these events: SessionStart, SessionEnd, UserPromptSubmit, Stop, Notification, PreToolUse (AskUserQuestion and ExitPlanMode), PostToolUse. kari keeps a backup of the settings file in `~/.config/kari/`. The relay posts the payload with `curl` and always exits 0, so a closed kari never blocks a session. Every post carries a token from `~/.config/kari/hook-token` in the `x-kari-token` header. kari creates the token on first start with mode 0600 and refuses a post without it. A process that runs as your user can read the file, so the token keeps out other users, sandboxed apps and web pages, not your own processes. New sessions pick up the hooks. Running sessions keep the old settings until they restart. "Remove hooks" takes the entries out again and leaves other hooks in place.
+Open Settings and click "Install hooks". kari writes a relay script to `~/.config/kari/hook.sh` (on Windows it registers `kari-node.exe hooks relay` instead, which needs no shell) and registers it in `~/.claude/settings.json` for these events: SessionStart, SessionEnd, UserPromptSubmit, Stop, Notification, PreToolUse (AskUserQuestion and ExitPlanMode), PostToolUse. kari keeps a backup of the settings file in `~/.config/kari/`. The relay posts the payload with `curl` and always exits 0, so a closed kari never blocks a session. Every post carries a token from `~/.config/kari/hook-token` in the `x-kari-token` header. kari creates the token on first start with mode 0600 and refuses a post without it. A process that runs as your user can read the file, so the token keeps out other users, sandboxed apps and web pages, not your own processes. New sessions pick up the hooks. Running sessions keep the old settings until they restart. "Remove hooks" takes the entries out again and leaves other hooks in place.
 
 The receiver also serves `GET /kari/board` (the board as JSON) and `GET /kari/health` for scripts. The board needs the same token:
 
@@ -118,7 +118,7 @@ kari offers a plan when one of three things happens:
 
 1. The 7-day window holds more than 40 percent unused and resets within 36 hours.
 2. The 5-hour window is below 30 percent and nobody worked for 45 minutes.
-3. You press "Fill" on the quota row of a node.
+3. You press "Fill" on an account's quota row. The plan runs on the first machine on that row.
 
 The planner ranks cards by priority, then by age. A drag on the board writes that priority, so the top of a hand-ordered backlog is the first card a plan takes. It only takes cards marked "May run unattended" that carry a prompt and a project directory. It never takes a card that is working, or one that waits for you. It packs the plan into the free part of the 5-hour window, keeps 30 percent free between 08:00 and 20:00, never fills past 85 percent, and holds the parallel cap of two jobs.
 
@@ -172,9 +172,19 @@ In the app, open Settings, Nodes, and add the host. Give the SSH host, which is 
 
 What this needs on the other host: an SSH login and a Claude Code that is logged in. It needs no open port, no certificate and no new secret. The node refuses to bind an address that is not loopback unless you pass `--allow-remote`.
 
-What you see: every card carries a node badge, and a chip row filters the board to one node. Each node keeps its own quota windows, backlog and plans, because each has its own Claude Code login. Jump in on a remote card opens your terminal and runs `ssh -t <host> ... claude --resume <session>`. The tray kill switch stops jobs on every node.
+What you see: every card carries a node badge, and a chip row filters the board to one node. Each node keeps its own backlog and plans. Quota is grouped by Claude Code account rather than by node, so two machines signed in to the same login share one row of meters — see "Quota belongs to the account". Jump in on a remote card opens your terminal and runs `ssh -t <host> ... claude --resume <session>`. The tray kill switch stops jobs on every node.
 
 Deployment of the node is managed outside this repository. `flake.nix` builds it for a NixOS host, and each release carries a Linux tarball and a Windows zip.
+
+### Quota belongs to the account
+
+The 5-hour and 7-day windows belong to a Claude Code login, not to a machine. Two nodes signed in to the same account draw down one window, so the header shows one row per account and names the machines that spend it. Two rows would read as two budgets, and the planner would go after quota that is already spent.
+
+kari reads the account from what Claude Code writes on login and groups on its id. A node whose account cannot be read — one running an older kari, or one not logged in — keeps a row of its own. That is the safe answer: an unknown account is never merged with another, because merging two budgets by guessing is the mistake that costs you a window.
+
+Click the name on a row to give the account one of your own, such as `tom` or `work`. The name lives on this device, next to the board; it is never sent to a node and never touches the Claude account. Clear the field to go back to the name on the account.
+
+"Fill" plans a run on the first machine on the row.
 
 ### A node on Windows
 

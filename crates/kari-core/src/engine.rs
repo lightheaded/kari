@@ -1652,6 +1652,7 @@ impl Engine {
             node_name: self.node_name(),
             platform: std::env::consts::OS.into(),
             addresses: crate::net::bound_reachable(),
+            account: crate::account::read(),
         }
     }
 
@@ -1662,6 +1663,32 @@ impl Engine {
 
     pub fn kv_set(&self, key: &str, value: &str) -> anyhow::Result<()> {
         self.store.lock().unwrap().kv_set(key, value)
+    }
+
+    /// The name the user gave each account, keyed the way `account::group_key`
+    /// keys them. Lives in the hub's store: it is a label this device shows,
+    /// not something a node knows about itself.
+    pub fn account_aliases(&self) -> std::collections::HashMap<String, String> {
+        self.store
+            .lock()
+            .unwrap()
+            .kv_prefix(crate::account::ALIAS_KEY_PREFIX)
+            .unwrap_or_default()
+    }
+
+    /// Name an account, or clear the name with an empty string.
+    pub fn set_account_alias(&self, key: &str, alias: &str) -> anyhow::Result<()> {
+        let full = format!("{}{key}", crate::account::ALIAS_KEY_PREFIX);
+        let alias = alias.trim();
+        let store = self.store.lock().unwrap();
+        if alias.is_empty() {
+            store.kv_delete(&full)?;
+        } else {
+            store.kv_set(&full, alias)?;
+        }
+        drop(store);
+        self.emit_changed();
+        Ok(())
     }
 
     // ---------------------------------------------------------------- column lease

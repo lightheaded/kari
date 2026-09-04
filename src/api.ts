@@ -83,6 +83,20 @@ function toHubBoard(json: BoardView | HubBoard): HubBoard {
     nodes: [node],
     cards: json.cards.map((c) => ({ ...c, ...tag })),
     quotas: [{ ...tag, quota: json.quota, calibration: json.calibration }],
+    // A one-machine fixture predates accounts, so its single budget is keyed
+    // on the node, which is what the grouping does for an unknown account.
+    accounts: [
+      {
+        key: `node:${node.id}`,
+        label: node.name,
+        alias: null,
+        account: null,
+        node_ids: [node.id],
+        node_names: [node.name],
+        quota: json.quota,
+        calibration: json.calibration,
+      },
+    ],
     queues: json.queue ? [{ ...tag, queue: json.queue }] : [],
     proposals: json.proposal ? [{ ...tag, proposal: json.proposal }] : [],
     generated_at: json.generated_at,
@@ -130,6 +144,8 @@ export const api = {
         ? devFixture<Settings>("settings")
         : noBridge<Settings>("settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
+  /** Name an account, or clear the name with an empty string. */
+  setAccountAlias: (key: string, alias: string) => invoke<void>("set_account_alias", { key, alias }),
   jumpIn: (nodeId: string, cardId: string) => invoke<string>("jump_in", { nodeId, cardId }),
   startCard: (nodeId: string, cardId: string, prompt?: string) => invoke<string>("start_card", { nodeId, cardId, prompt: prompt ?? null }),
   stopCard: (nodeId: string, cardId: string) => invoke<void>("stop_card", { nodeId, cardId }),

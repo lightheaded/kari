@@ -38,17 +38,19 @@ export function Inbox({ board, onOpen, onAction }: Props) {
         </button>
       </header>
 
+      {/* One bar per account, not per node: nodes on one Claude Code login
+          share a window, and a bar each would read as two budgets. */}
       <div className="mquotas">
-        {board.quotas
-          .filter((q) => q.quota)
-          .map((q) => (
+        {(board.accounts ?? [])
+          .filter((a) => a.quota)
+          .map((a) => (
             <QuotaBar
-              key={q.node_id}
-              quota={q.quota}
-              calibration={q.calibration}
-              label={many ? q.node_name : undefined}
+              key={a.key}
+              quota={a.quota}
+              calibration={a.calibration}
+              label={many ? a.label : undefined}
               onHelp={() => {}}
-              onFill={() => onAction(() => api.proposeNow(q.node_id), "Plan ready")}
+              onFill={() => onAction(() => api.proposeNow(a.node_ids[0]), "Plan ready")}
             />
           ))}
       </div>

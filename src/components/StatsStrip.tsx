@@ -1,4 +1,5 @@
-import type { Calibration, NodeQuota, NodeStatus, QuotaSample, QuotaWindow } from "../types";
+import { useEffect, useRef, useState } from "react";
+import type { AccountQuota, NodeStatus, QuotaWindow } from "../types";
 import { fmtPct, nodeDot, relTime, untilTime } from "../util";
 
 function Meter({ label, w }: { label: string; w: QuotaWindow | null }) {
@@ -17,39 +18,93 @@ function Meter({ label, w }: { label: string; w: QuotaWindow | null }) {
   );
 }
 
+/** The account's name, and a click to change it. The name is this device's own
+ *  label for the account; it goes nowhere near the Claude account itself. */
+function Name({ row, onRename }: { row: AccountQuota; onRename: (alias: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(row.alias ?? "");
+  const input = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) input.current?.select();
+  }, [editing]);
+
+  function commit() {
+    setEditing(false);
+    if (draft.trim() !== (row.alias ?? "")) onRename(draft.trim());
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={input}
+        className="aname edit"
+        value={draft}
+        placeholder={row.account?.display_name ?? row.account?.email ?? row.label}
+        aria-label="Name for this account"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            setDraft(row.alias ?? "");
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+  const known = [row.account?.display_name, row.account?.email].filter(Boolean).join(" · ");
+  return (
+    <button
+      className="aname"
+      onClick={() => {
+        setDraft(row.alias ?? "");
+        setEditing(true);
+      }}
+      title={[known || "kari could not read this node's Claude Code account", "Click to name this account."]
+        .filter(Boolean)
+        .join("\n")}
+    >
+      {row.label}
+    </button>
+  );
+}
+
 interface RowProps {
-  name: string;
-  quota: QuotaSample | null;
-  calibration: Calibration | null;
-  node: NodeStatus | undefined;
-  /** Hide the node name and the dot on a board with one node. */
-  showName: boolean;
-  /** The node filter names this node. */
-  selected: boolean;
-  onFilter: () => void;
+  row: AccountQuota;
+  byId: Map<string, NodeStatus>;
+  /** Name the machines on the row. Off on a board with a single node. */
+  showNodes: boolean;
   onFill: () => void;
   onHelp: () => void;
-  /** A click on "stale" asks the usage endpoint now. Only the local node can. */
+  onRename: (alias: string) => void;
+  /** Ask the usage endpoint now. Only this machine holds the login token. */
   onRefresh?: () => void;
   refreshing?: boolean;
 }
 
-function Row({ name, quota, calibration, node, showName, selected, onFilter, onFill, onHelp, onRefresh, refreshing }: RowProps) {
+function Row({ row, byId, showNodes, onFill, onHelp, onRename, onRefresh, refreshing }: RowProps) {
+  const quota = row.quota;
   const stale = quota ? (Date.now() - new Date(quota.at).getTime()) / 1000 > 300 : false;
-  const cal = calibration
-    ? `\ncalibration ${fmtPct(calibration.pct_per_mtok)} of the 5-hour window per 1M weighted tokens (${calibration.source})`
+  const cal = row.calibration
+    ? `\ncalibration ${fmtPct(row.calibration.pct_per_mtok)} of the 5-hour window per 1M weighted tokens (${row.calibration.source})`
     : "";
   return (
-    <div className={`srow ${selected ? "sel" : ""}`}>
-      {showName && (
-        <button
-          className="sname"
-          onClick={onFilter}
-          title={selected ? "Show every node again" : `Show only the cards of ${name}`}
-        >
-          {node && <span className={nodeDot(node)} />}
-          {name}
-        </button>
+    <div className="srow">
+      <Name row={row} onRename={onRename} />
+      {showNodes && (
+        <span className="anodes" title={`${row.node_names.length} machine(s) spend this quota`}>
+          {row.node_ids.map((id, i) => {
+            const n = byId.get(id);
+            return (
+              <span key={id} className="anode">
+                <span className={n ? nodeDot(n) : "dot"} />
+                {row.node_names[i]}
+              </span>
+            );
+          })}
+        </span>
       )}
       {quota ? (
         <span className="smeters" title={`sampled ${relTime(quota.at)} ago via ${quota.source}${cal}`}>
@@ -76,7 +131,15 @@ function Row({ name, quota, calibration, node, showName, selected, onFilter, onF
         </button>
       )}
       {quota && (
-        <button className="btn ghost sm sfill" onClick={onFill} title="Plan a run that fills the free quota">
+        <button
+          className="btn ghost sm sfill"
+          onClick={onFill}
+          title={
+            row.node_ids.length > 1
+              ? `Plan a run that fills the free quota, on ${row.node_names[0]}`
+              : "Plan a run that fills the free quota"
+          }
+        >
           Fill
         </button>
       )}
@@ -85,43 +148,58 @@ function Row({ name, quota, calibration, node, showName, selected, onFilter, onF
 }
 
 interface Props {
-  quotas: NodeQuota[];
+  accounts: AccountQuota[];
   nodes: NodeStatus[];
-  /** The node the board filters on, or an empty string for every node. */
-  filter: string;
-  onFilter: (nodeId: string) => void;
   onFill: (nodeId: string) => void;
   onHelp: () => void;
+  onRename: (key: string, alias: string) => void;
   /** Ask the usage endpoint now. Only this machine holds the login token. */
   onRefresh: () => void;
   refreshing: boolean;
 }
 
-/** One row per node under the top bar: both windows, both reset times, and a
- *  Fill button. Above four nodes the rows go two to a line, and the strip
- *  scrolls after that, so the top bar itself never grows. */
-export function StatsStrip({ quotas, nodes, filter, onFilter, onFill, onHelp, onRefresh, refreshing }: Props) {
+/** One row per Claude Code account under the top bar: both windows, both reset
+ *  times, the machines that spend it, and a Fill button.
+ *
+ *  A row per account rather than per node, because that is what the quota
+ *  belongs to. Two machines signed in to one login draw down a single 5-hour
+ *  window; a meter each would read as two budgets and send the planner after
+ *  quota that is already spent. Filtering the board stays with the node chips
+ *  below, which can name one machine — a row here covers several.
+ *
+ *  Above four rows they go two to a line, and the strip scrolls after that, so
+ *  the top bar itself never grows. */
+export function StatsStrip({ accounts, nodes, onFill, onHelp, onRename, onRefresh, refreshing }: Props) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const many = nodes.length > 1;
-  const rows =
-    quotas.length > 0
-      ? quotas
-      : [{ node_id: nodes[0]?.id ?? "local", node_name: nodes[0]?.name ?? "", quota: null, calibration: null }];
+  const rows: AccountQuota[] =
+    accounts.length > 0
+      ? accounts
+      : [
+          {
+            key: `node:${nodes[0]?.id ?? "local"}`,
+            label: nodes[0]?.name ?? "",
+            alias: null,
+            account: null,
+            node_ids: [nodes[0]?.id ?? "local"],
+            node_names: [nodes[0]?.name ?? ""],
+            quota: null,
+            calibration: null,
+          },
+        ];
   return (
     <div className={`stats ${rows.length > 4 ? "wide" : ""}`}>
-      {rows.map((q) => (
+      {rows.map((row) => (
         <Row
-          key={q.node_id}
-          name={q.node_name}
-          quota={q.quota}
-          calibration={"calibration" in q ? (q.calibration as Calibration) : null}
-          node={byId.get(q.node_id)}
-          showName={many}
-          selected={filter === q.node_id}
-          onFilter={() => onFilter(filter === q.node_id ? "" : q.node_id)}
-          onFill={() => onFill(q.node_id)}
+          key={row.key}
+          row={row}
+          byId={byId}
+          showNodes={nodes.length > 1}
+          onFill={() => onFill(row.node_ids[0])}
           onHelp={onHelp}
-          onRefresh={byId.get(q.node_id)?.kind === "local" ? onRefresh : undefined}
+          onRename={(alias) => onRename(row.key, alias)}
+          // The login token lives on this machine only, so the endpoint is
+          // reachable only for an account this machine is itself signed in to.
+          onRefresh={row.node_ids.some((id) => byId.get(id)?.kind === "local") ? onRefresh : undefined}
           refreshing={refreshing}
         />
       ))}

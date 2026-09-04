@@ -452,6 +452,27 @@ export interface NodeProposal {
   node_name: string;
   proposal: Proposal;
 }
+/** The Claude Code account a node is signed in to. */
+export interface AccountIdentity {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  organization_id: string | null;
+}
+/** One budget and every node spending it. The 5-hour and 7-day windows belong
+ *  to a Claude Code account, so two machines on one login share a row. */
+export interface AccountQuota {
+  /** The account id, or `node:<id>` for a node whose account is unknown. */
+  key: string;
+  /** Alias, else the name on the account, else the login, else the node name. */
+  label: string;
+  alias: string | null;
+  account: AccountIdentity | null;
+  node_ids: string[];
+  node_names: string[];
+  quota: QuotaSample | null;
+  calibration: Calibration | null;
+}
 /** Every node on one board. `get_board` returns this. */
 export interface HubBoard {
   columns: Column[];
@@ -462,6 +483,8 @@ export interface HubBoard {
   nodes: NodeStatus[];
   cards: HubCard[];
   quotas: NodeQuota[];
+  /** The same quota, one row per account. What the header shows. */
+  accounts: AccountQuota[];
   queues: NodeQueue[];
   proposals: NodeProposal[];
   generated_at: string;
