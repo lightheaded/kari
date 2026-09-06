@@ -176,6 +176,49 @@ What you see: every card carries a node badge, and a chip row filters the board 
 
 Deployment of the node is managed outside this repository. `flake.nix` builds it for a NixOS host, and each release carries a Linux tarball and a Windows zip.
 
+## A server, when the nodes cannot be reached
+
+Adding nodes one by one works while every machine can reach every other one. It
+stops working as soon as the clients outnumber the desks: a laptop that sleeps,
+a laptop on someone else's network and a phone on mobile data are each
+unreachable from the others, so each client draws a different board and calls
+the same node offline at a different time.
+
+A server turns the connection around. It runs on a host that stays up, the nodes
+dial *it*, and it calls their APIs back down the sockets they opened. A node then
+needs no reachable address, no open port and no SSH forward.
+
+On the server's host:
+
+```
+kari-server serve            # accepts links on 0.0.0.0:47312
+kari-server token            # the token a node needs; copy it to the node
+kari-server nodes            # the roster, as JSON
+```
+
+On each node:
+
+```
+kari-node serve --server http://the-server:47312
+```
+
+The token reaches the node in `KARI_SERVER_TOKEN`, in `--server-token-file`, or
+in `~/.config/kari/server-token`. The link is additional, never instead: the node
+keeps serving loopback for the hook relay whether or not the server answers, so
+nothing about the sessions or the jobs on that host depends on it. A dropped link
+comes back by itself, backing off from 1 s to 60 s.
+
+The server binds a private address and refuses a public one unless you pass
+`--allow-public`. It checks one token on every route, and those routes can start
+jobs, so put it on a private network or behind a VPN rather than on the internet.
+It runs no Claude Code, holds no login and reads no transcript, so it suits a
+container; `flake.nix` builds one as `kari-server-image`.
+
+This is the first half. The server can see every node and serve their boards
+today. Moving the hub itself off the client — so the app and the phone talk only
+to the server, and a sleeping laptop still shows a board — is the next step. See
+"The server" in `DESIGN.md`.
+
 ### Quota belongs to the account
 
 The 5-hour and 7-day windows belong to a Claude Code login, not to a machine. Two nodes signed in to the same account draw down one window, so the header shows one row per account and names the machines that spend it. Two rows would read as two budgets, and the planner would go after quota that is already spent.
@@ -234,7 +277,7 @@ Claude Code asks for permission in the terminal, and only the terminal can answe
 
 ```
 crates/kari-core   readers, parser, inference, store, launcher, HTTP API, hub, SSH tunnel
-crates/kari-cli    kari-node: the engine without a window
+crates/kari-cli    kari-node: the engine without a window; kari-server: the hub on an always-on host
 src/mobile         the phone layout: inbox, one column at a time, nodes and pairing
 src-tauri          Tauri shell: commands, events, tray, notifications
 src                React UI
@@ -254,10 +297,11 @@ cargo run -p kari-core --example jobrun -- /tmp   # start one background job and
 cargo run -p kari-core --example herdr_open -- /tmp   # open and close a herdr pane
 cargo run -p kari-core --example node_api     # serve the local engine and call it as a node
 cargo run -p kari-core --example hub_node     # add a real node to the hub, read both boards, take the lease, remove it
+cargo run -p kari-core --example link_server  # link a real node to a real server and read its board over the link
 cargo run -p kari-core --example permission_hold  # hold a permission prompt on a real node and answer it
 ```
 
-The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project. `hub_node` and `permission_hold` start a node with its own home directory and remove it again; they need `cargo build -p kari-cli` first.
+The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project. `hub_node`, `permission_hold` and `link_server` start a node — and `link_server` a server too — with their own home directories and remove them again; they need `cargo build -p kari-cli` first.
 
 `bun run demo` opens the UI in a browser with the dummy board from `docs/demo`. No Rust toolchain and no Claude Code state are needed for that.
 
