@@ -18,7 +18,7 @@ pub struct LocalAddress {
     pub private: bool,
 }
 
-fn is_private(ip: &std::net::IpAddr) -> bool {
+pub fn is_private(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
             let o = v4.octets();

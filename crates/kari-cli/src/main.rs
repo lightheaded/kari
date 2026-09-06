@@ -54,6 +54,15 @@ enum Cmd {
         /// Install the status line wrapper for this user before serving.
         #[arg(long)]
         install_statusline: bool,
+        /// Base URL of a kari server to link to, such as `http://kari:47312`.
+        /// The node dials out and holds one socket, so it needs no reachable
+        /// address of its own. Without this the node only serves --listen.
+        #[arg(long)]
+        server: Option<String>,
+        /// File holding the token this server expects. Default: the value of
+        /// KARI_SERVER_TOKEN, else ~/.config/kari/server-token.
+        #[arg(long)]
+        server_token_file: Option<std::path::PathBuf>,
     },
     /// Manage the Claude Code hooks that report session events to this node.
     Hooks {
@@ -121,6 +130,8 @@ fn main() -> anyhow::Result<()> {
             summaries,
             install_hooks,
             install_statusline,
+            server,
+            server_token_file,
         } => serve(Serve {
             listen,
             allow_remote,
@@ -130,6 +141,8 @@ fn main() -> anyhow::Result<()> {
             summaries,
             install_hooks,
             install_statusline,
+            server,
+            server_token_file,
         }),
         Cmd::Hooks { action } => match action {
             // The relay runs on every hook event, so it touches the database
@@ -206,6 +219,8 @@ struct Serve {
     summaries: Option<bool>,
     install_hooks: bool,
     install_statusline: bool,
+    server: Option<String>,
+    server_token_file: Option<std::path::PathBuf>,
 }
 
 fn serve(opt: Serve) -> anyhow::Result<()> {
@@ -218,6 +233,8 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
         summaries,
         install_hooks,
         install_statusline,
+        server,
+        server_token_file,
     } = opt;
     let engine = Engine::open()?;
     let mut settings = engine.settings();
@@ -279,8 +296,22 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
     );
     engine.start_watchers();
 
+    // The link is additional, never instead: the node keeps serving loopback
+    // for the hook relay and for a desktop app on this host, whether or not a
+    // server is configured or reachable.
+    let link = match &server {
+        Some(url) => Some((url.clone(), server_token(server_token_file)?)),
+        None => None,
+    };
+
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
+        if let Some((url, token)) = link {
+            let e = Arc::clone(&engine);
+            let local = hooks::token()?;
+            tracing::info!("linking to the server at {url}");
+            tokio::spawn(kari_core::link::run(e, url, token, local));
+        }
         let server = api::serve_dynamic(Arc::clone(&engine), addrs, allow_remote, private);
         tokio::select! {
             r = server => r,
@@ -290,6 +321,31 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
             }
         }
     })
+}
+
+/// The token this node presents to its server. A file the operator placed, the
+/// environment, or the default path — in that order, because a service unit
+/// sets the environment and a person on the host uses the file.
+fn server_token(file: Option<std::path::PathBuf>) -> anyhow::Result<String> {
+    if let Some(p) = file {
+        let t = std::fs::read_to_string(&p)
+            .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", p.display()))?;
+        return Ok(t.trim().to_string());
+    }
+    if let Ok(t) = std::env::var("KARI_SERVER_TOKEN") {
+        if !t.trim().is_empty() {
+            return Ok(t.trim().to_string());
+        }
+    }
+    let p = paths::server_token_file();
+    let t = std::fs::read_to_string(&p).map_err(|_| {
+        anyhow::anyhow!(
+            "--server needs a token: put the server's token in {} , set KARI_SERVER_TOKEN, \
+             or pass --server-token-file. Print it on the server with `kari-server token`.",
+            p.display()
+        )
+    })?;
+    Ok(t.trim().to_string())
 }
 
 async fn shutdown() {

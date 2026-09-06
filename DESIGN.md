@@ -555,10 +555,14 @@ one object each:
 
 | Frame | Direction | Carries |
 |---|---|---|
+| `hello` | node → server | the first frame: the protocol version and the node's identity, so the server never has to call back to learn who dialled |
 | `req` | server → node | id, method, path, body: one call on the node API |
 | `res` | node → server | id, status, body |
 | `evt` | node → server | the events the node already publishes on `/events` |
-| `ping`, `pong` | both | liveness, on the same 20 s cadence the SSE keepalive used |
+
+Liveness is the WebSocket's own ping and pong rather than a frame of kari's:
+the server pings every 20 s, the same cadence the SSE keepalive used, and the
+node's stack answers without waking any kari code.
 
 A `req` is dispatched into `api::router()` as a plain tower service, with no
 listener in front of it. The node therefore serves one API, not two: every route

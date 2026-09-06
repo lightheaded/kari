@@ -248,8 +248,13 @@ pub fn script(port: u16) -> String {
 /// runs as the same user can read it, so the token keeps out other users,
 /// sandboxed apps and web pages, not the user's own processes.
 pub fn token() -> anyhow::Result<String> {
-    let p = paths::hook_token_file();
-    if let Ok(t) = std::fs::read_to_string(&p) {
+    token_in(&paths::hook_token_file())
+}
+
+/// The same secret, in a named file. The server keeps its own beside the
+/// node's, because a node token and a server token guard different things.
+pub fn token_in(p: &std::path::Path) -> anyhow::Result<String> {
+    if let Ok(t) = std::fs::read_to_string(p) {
         let t = t.trim().to_string();
         if t.len() >= 32 {
             return Ok(t);
@@ -264,11 +269,11 @@ pub fn token() -> anyhow::Result<String> {
         uuid::Uuid::new_v4().simple()
     );
     std::fs::create_dir_all(paths::kari_dir())?;
-    std::fs::write(&p, &t)?;
+    std::fs::write(p, &t)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(t)
 }

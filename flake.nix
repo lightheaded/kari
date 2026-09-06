@@ -1,5 +1,5 @@
 {
-  description = "kari — a Kanban board for Claude Code sessions; this flake builds the headless node";
+  description = "kari — a Kanban board for Claude Code sessions; this flake builds the headless node and the server";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -52,12 +52,36 @@
             mainProgram = "kari-node";
           };
         };
+        # The server is the one part of kari with nothing on its host: no
+        # Claude Code, no login, no transcript to read. So it is the part that
+        # suits a container. The node does not — it exists to watch the
+        # sessions of a real user on a real machine.
+        kari-server-image = pkgs.dockerTools.buildLayeredImage {
+          name = "kari-server";
+          tag = manifest.workspace.package.version;
+          # A writable /data for the token, and nothing else. No shell, no
+          # package manager: the image holds one static-ish binary and its libc.
+          extraCommands = "mkdir -p data";
+          config = {
+            Entrypoint = [ "${kari-node}/bin/kari-server" ];
+            Cmd = [ "serve" ];
+            ExposedPorts = { "47312/tcp" = { }; };
+            Env = [
+              "HOME=/data"
+              "XDG_CONFIG_HOME=/data/.config"
+            ];
+            Volumes = { "/data" = { }; };
+          };
+        };
       in
       {
         packages = {
           inherit kari-node;
           default = kari-node;
-        };
+        }
+        # dockerTools builds Linux images; asking for one on darwin is an error
+        # rather than an empty answer, so the attribute is simply absent there.
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux { inherit kari-server-image; };
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [

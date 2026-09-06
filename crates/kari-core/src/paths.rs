@@ -73,6 +73,13 @@ pub fn hook_token_file() -> PathBuf {
     kari_dir().join("hook-token")
 }
 
+/// The shared secret a node presents when it dials a server, and the one a
+/// server checks. Separate from the node's own token: they guard different
+/// things and are held by different people.
+pub fn server_token_file() -> PathBuf {
+    kari_dir().join("server-token")
+}
+
 pub fn rate_limits_file() -> PathBuf {
     kari_dir().join("rate-limits.json")
 }

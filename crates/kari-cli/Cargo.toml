@@ -9,6 +9,10 @@ description = "Headless kari node: serves the board over HTTP for the kari deskt
 name = "kari-node"
 path = "src/main.rs"
 
+[[bin]]
+name = "kari-server"
+path = "src/server_main.rs"
+
 [dependencies]
 kari-core = { path = "../kari-core" }
 anyhow.workspace = true
@@ -17,3 +21,4 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap = { version = "4", features = ["derive"] }
+reqwest.workspace = true
