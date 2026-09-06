@@ -456,6 +456,25 @@ pub async fn serve_link(socket: axum::extract::ws::WebSocket, reg: Arc<LinkRegis
 
 // --------------------------------------------------------------- node side
 
+/// Choose rustls' crypto provider, once per process.
+///
+/// rustls 0.23 will not guess. With neither or both of its `ring` and
+/// `aws-lc-rs` features enabled it panics at the first handshake, inside the
+/// task doing the connecting — so a node pointed at an `https://` server dies
+/// on a background thread while the log still says it is linking. Which of the
+/// two features ends up on is a property of the whole dependency graph, not of
+/// anything kari declares, so kari names the provider itself and stops
+/// depending on the answer.
+///
+/// Idempotent: a second call, or a provider installed by the host application,
+/// is fine and the error is deliberately dropped.
+pub fn ensure_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 /// The WebSocket URL of a server's link endpoint, from whatever base URL the
 /// user configured. `http` and `https` are accepted and translated, because
 /// that is what a person types.
@@ -547,6 +566,7 @@ pub async fn run(
     server_token: String,
     local_token: String,
 ) {
+    ensure_crypto_provider();
     let url = link_url(&server);
     let router = crate::api::router(Arc::clone(&engine), local_token.clone());
     let mut backoff = 1u64;
@@ -758,6 +778,19 @@ mod tests {
         assert!(Frame::decode(r#"{"t":"nope"}"#).is_err());
     }
 
+    /// The panic this prevents happens inside the connecting task, at the first
+    /// handshake, on a machine that has a TLS server to talk to — so no test of
+    /// the plaintext path catches it. Assert the provider directly instead.
+    #[test]
+    fn a_crypto_provider_is_installed_for_wss() {
+        ensure_crypto_provider();
+        assert!(
+            rustls::crypto::CryptoProvider::get_default().is_some(),
+            "no rustls provider: a node pointed at an https:// server would panic"
+        );
+        ensure_crypto_provider(); // idempotent
+    }
+
     #[test]
     fn link_urls_take_what_a_person_types() {
         for (input, want) in [
@@ -934,6 +967,27 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(reg.get("n1").is_none());
         assert!(reg.nodes().is_empty());
+    }
+
+    /// The root and the health route say the same thing, so a probe that knows
+    /// nothing about kari does not read a 404 as a dead service.
+    #[tokio::test]
+    async fn the_root_answers_like_health() {
+        let reg = Arc::new(LinkRegistry::new());
+        let addr = server(Arc::clone(&reg)).await;
+        let http = reqwest::Client::new();
+        let mut seen = vec![];
+        for path in ["/", "/kari/health"] {
+            let r = http
+                .get(format!("http://{addr}{path}"))
+                .send()
+                .await
+                .expect("get");
+            assert_eq!(r.status().as_u16(), 200, "for {path}");
+            seen.push(r.json::<Value>().await.expect("json"));
+        }
+        assert_eq!(seen[0]["app"], "kari-server");
+        assert_eq!(seen[0]["app"], seen[1]["app"]);
     }
 
     #[tokio::test]

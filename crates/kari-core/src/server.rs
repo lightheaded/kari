@@ -185,6 +185,10 @@ pub fn router(registry: Arc<LinkRegistry>, token: String) -> Router {
         .route_layer(middleware::from_fn_with_state(st.clone(), require_token));
     Router::new()
         .route("/kari/health", get(health))
+        // The root answers the same thing. Somebody who opens the server's URL
+        // in a browser, or a health probe that knows nothing about kari, should
+        // learn what this is rather than meet a 404.
+        .route("/", get(health))
         .merge(guarded)
         .with_state(st)
 }
