@@ -42,6 +42,15 @@ enum Cmd {
         /// deployment — put it behind a VPN instead.
         #[arg(long)]
         allow_public: bool,
+        /// Read the token from this file instead of the one beside the store.
+        ///
+        /// The two are separate on purpose. The store must be writable — the
+        /// server owns the columns and every node's last board — and the token
+        /// usually is not: in a container it arrives as a read-only mount, and
+        /// pointing the whole config directory at that mount leaves the server
+        /// with nowhere to put its database.
+        #[arg(long)]
+        token_file: Option<std::path::PathBuf>,
     },
     /// Print the token a node needs to dial this server, creating it if this is
     /// the first run.
@@ -60,7 +69,25 @@ enum Cmd {
 }
 
 fn token() -> anyhow::Result<String> {
-    hooks::token_in(&paths::server_token_file())
+    token_from(None)
+}
+
+/// The token this server checks. A named file is read as it is and never
+/// created: something else placed it, and a server that silently invented its
+/// own token instead would accept nobody and say nothing about why.
+fn token_from(file: Option<&std::path::Path>) -> anyhow::Result<String> {
+    match file {
+        Some(p) => {
+            let t = std::fs::read_to_string(p)
+                .map_err(|e| anyhow::anyhow!("cannot read the token at {}: {e}", p.display()))?;
+            let t = t.trim().to_string();
+            if t.is_empty() {
+                anyhow::bail!("the token file {} is empty", p.display());
+            }
+            Ok(t)
+        }
+        None => hooks::token_in(&paths::server_token_file()),
+    }
 }
 
 fn base(url: Option<String>) -> String {
@@ -111,9 +138,10 @@ fn main() -> anyhow::Result<()> {
         Cmd::Serve {
             listen,
             allow_public,
+            token_file,
         } => {
             let addr = listen.unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)));
-            let token = token()?;
+            let token = token_from(token_file.as_deref())?;
             let registry = Arc::new(LinkRegistry::new());
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
