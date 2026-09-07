@@ -12,14 +12,17 @@
 //! enrolment that gives nodes and clients separate tokens, come next.
 
 use crate::hooks::TOKEN_HEADER;
-use crate::link::{self, LinkRegistry, LinkedNode};
-use crate::model::BoardView;
+use crate::hub::Hub;
+use crate::hubapi::HubApi;
+use crate::link::{self, LinkRegistry, LinkedNode, Presence, RegistryLinks};
+use crate::model::*;
+use crate::Engine;
 use axum::{
     extract::{ws::WebSocketUpgrade, Path, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Serialize;
@@ -35,6 +38,10 @@ pub const SERVER_API_VERSION: u32 = 1;
 pub struct ServerState {
     pub registry: Arc<LinkRegistry>,
     pub token: Arc<String>,
+    /// The hub, when this server holds one. `None` keeps the read-only server
+    /// of the first half working: a roster and the nodes' boards, no columns
+    /// and no actions.
+    pub hub: Option<Arc<Hub>>,
 }
 
 /// What `/kari/health` says. Enough for a client to refuse a server it cannot
@@ -166,11 +173,84 @@ async fn board(State(st): State<ServerState>) -> Json<ServerBoard> {
     })
 }
 
+// --------------------------------------------------------------- the hub API
+//
+// The routes the desktop app and the phone call instead of running a hub of
+// their own. One per `HubApi` method, node-scoped in the path where the method
+// takes a node, so a client is a thin translation and holds no board logic.
+
+/// The hub, or an answer saying this server does not have one.
+fn hub(st: &ServerState) -> Result<&Arc<Hub>, ApiError> {
+    st.hub.as_ref().ok_or_else(|| {
+        ApiError(
+            StatusCode::NOT_IMPLEMENTED,
+            "this server keeps no hub: it serves the roster and the nodes' \
+             boards only"
+                .into(),
+        )
+    })
+}
+
+fn failed(e: anyhow::Error) -> ApiError {
+    ApiError(StatusCode::BAD_GATEWAY, e.to_string())
+}
+
+async fn hub_board(State(st): State<ServerState>) -> Result<Json<HubBoard>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(blocking(move || Ok(h.board())).await?))
+}
+
+async fn hub_nodes(State(st): State<ServerState>) -> Result<Json<Vec<NodeStatus>>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(blocking(move || Ok(h.nodes())).await?))
+}
+
+async fn hub_refresh(State(st): State<ServerState>) -> Result<StatusCode, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    blocking(move || {
+        h.refresh_all();
+        Ok(())
+    })
+    .await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn hub_columns(State(st): State<ServerState>) -> Result<Json<Vec<Column>>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(blocking(move || Ok(h.columns())).await?))
+}
+
+async fn hub_set_columns(
+    State(st): State<ServerState>,
+    Json(cols): Json<Vec<Column>>,
+) -> Result<StatusCode, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    blocking(move || h.set_columns(cols)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Every hub call blocks — it can end up waiting on a node — and this is an
+/// async server, so none of them may run on a runtime worker. `LinkedClient`
+/// blocks a thread on the runtime to reach a node, and doing that from a
+/// worker would deadlock it.
+async fn blocking<T, F>(f: F) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(f).await {
+        Ok(Ok(v)) => Ok(v),
+        Ok(Err(e)) => Err(failed(e)),
+        Err(e) => Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
+}
+
 /// The whole server API. Health is open; everything else needs the token.
-pub fn router(registry: Arc<LinkRegistry>, token: String) -> Router {
+pub fn router(registry: Arc<LinkRegistry>, token: String, hub: Option<Arc<Hub>>) -> Router {
     let st = ServerState {
         registry,
         token: Arc::new(token),
+        hub,
     };
     let v1 = Router::new()
         .route(
@@ -179,7 +259,11 @@ pub fn router(registry: Arc<LinkRegistry>, token: String) -> Router {
         )
         .route("/nodes", get(nodes))
         .route("/nodes/{id}/board", get(node_board))
-        .route("/board", get(board));
+        .route("/board", get(board))
+        .route("/hub/board", get(hub_board))
+        .route("/hub/nodes", get(hub_nodes))
+        .route("/hub/refresh", post(hub_refresh))
+        .route("/hub/columns", get(hub_columns).put(hub_set_columns));
     let guarded = Router::new()
         .nest("/kari/v1", v1)
         .route_layer(middleware::from_fn_with_state(st.clone(), require_token));
@@ -191,6 +275,58 @@ pub fn router(registry: Arc<LinkRegistry>, token: String) -> Router {
         .route("/", get(health))
         .merge(guarded)
         .with_state(st)
+}
+
+/// Build the hub this server serves, and keep it in step with the links.
+///
+/// The store is the server's own: it holds the columns, and the last board of
+/// every node so an absent node is shown dimmed rather than dropped. The engine
+/// is a store only — a server runs no Claude Code and is not a node.
+pub fn hub_over_links(store: Arc<Engine>, registry: Arc<LinkRegistry>) -> Arc<Hub> {
+    let links = Arc::new(RegistryLinks::new(
+        Arc::clone(&registry),
+        tokio::runtime::Handle::current(),
+    ));
+    let hub = Hub::over_links(store, links);
+
+    // A node that dials in takes its place on the board, and one that goes
+    // away keeps its row. Watching presence rather than polling means the
+    // board changes at the moment the socket does.
+    let h = Arc::clone(&hub);
+    let mut rx = registry.subscribe_presence();
+    std::thread::Builder::new()
+        .name("kari-server-presence".into())
+        .spawn(move || {
+            loop {
+                match rx.blocking_recv() {
+                    Ok(Presence {
+                        node_id,
+                        node_name,
+                        online: true,
+                    }) => {
+                        info!("node {node_name} joined the board");
+                        h.link_arrived(&node_id, &node_name);
+                    }
+                    Ok(Presence {
+                        node_id, node_name, ..
+                    }) => {
+                        info!("node {node_name} left the board");
+                        h.link_lost(&node_id);
+                    }
+                    // Dropped presence changes would leave the board wrong in
+                    // a way no later event corrects, so re-read the links.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("missed {n} link changes; re-reading the roster");
+                        for l in registry.open_links() {
+                            h.link_arrived(l.node_id(), &l.identity().node_name);
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+        .expect("spawn");
+    hub
 }
 
 /// True for an address it is safe to bind without saying so out loud: loopback,
@@ -210,6 +346,7 @@ pub async fn serve(
     addr: SocketAddr,
     token: String,
     allow_public: bool,
+    hub: Option<Arc<Hub>>,
 ) -> anyhow::Result<()> {
     if !is_safe_bind(&addr) && !allow_public {
         anyhow::bail!(
@@ -221,7 +358,7 @@ pub async fn serve(
     if addr.ip().is_unspecified() {
         info!("binding {addr}: every address on this host, private and public");
     }
-    let app = router(registry, token);
+    let app = router(registry, token, hub);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("kari-server {} listening on {addr}", crate::version());
     axum::serve(listener, app).await?;

@@ -177,6 +177,13 @@ impl ApiClient {
         }
     }
 
+    /// True when this node was reached over a link it opened. The hub asks
+    /// because a linked node has no lease to arbitrate: a server is the only
+    /// hub there is, so there is nobody to arbitrate with.
+    pub fn is_linked(&self) -> bool {
+        matches!(self.transport, Transport::Link(_))
+    }
+
     fn headers(
         &self,
         mut req: reqwest::blocking::RequestBuilder,

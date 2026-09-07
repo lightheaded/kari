@@ -214,6 +214,16 @@ pub struct LinkRegistry {
     links: Mutex<HashMap<String, LinkHandle>>,
     seen: Mutex<HashMap<String, LinkedNode>>,
     events: broadcast::Sender<LinkEvent>,
+    presence: broadcast::Sender<Presence>,
+}
+
+/// A node arriving or leaving. The hub watches this so a node that dials in
+/// takes its place on the board without anybody polling for it.
+#[derive(Debug, Clone)]
+pub struct Presence {
+    pub node_id: String,
+    pub node_name: String,
+    pub online: bool,
 }
 
 impl Default for LinkRegistry {
@@ -225,15 +235,22 @@ impl Default for LinkRegistry {
 impl LinkRegistry {
     pub fn new() -> LinkRegistry {
         let (events, _) = broadcast::channel(256);
+        let (presence, _) = broadcast::channel(64);
         LinkRegistry {
             links: Mutex::new(HashMap::new()),
             seen: Mutex::new(HashMap::new()),
             events,
+            presence,
         }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<LinkEvent> {
         self.events.subscribe()
+    }
+
+    /// Nodes arriving and leaving.
+    pub fn subscribe_presence(&self) -> broadcast::Receiver<Presence> {
+        self.presence.subscribe()
     }
 
     /// The open link to one node, if it is connected now.
@@ -288,6 +305,11 @@ impl LinkRegistry {
             last_seen: now,
         };
         self.seen.lock().expect("seen").insert(id.clone(), row);
+        let _ = self.presence.send(Presence {
+            node_id: id.clone(),
+            node_name: i.node_name.clone(),
+            online: true,
+        });
         // A node that reconnects before the server noticed the old socket died
         // replaces it. The old handle is returned so the caller can close it.
         self.links.lock().expect("links").insert(id, h)
@@ -309,10 +331,20 @@ impl LinkRegistry {
         if !was_ours {
             return;
         }
+        let mut name = node_id.to_string();
         if let Some(row) = self.seen.lock().expect("seen").get_mut(node_id) {
             row.online = false;
             row.last_seen = chrono::Utc::now();
+            name = row.node_name.clone();
         }
+        // Only when this link was the live one: the `was_ours` return above
+        // means a reconnect already announced the node as present, and telling
+        // the hub it left would undo that.
+        let _ = self.presence.send(Presence {
+            node_id: node_id.to_string(),
+            node_name: name,
+            online: false,
+        });
     }
 
     fn touch(&self, node_id: &str) {
@@ -760,6 +792,32 @@ impl crate::client::NodeLink for LinkedClient {
     }
 }
 
+/// The registry, seen as the place a hub looks for nodes that dialled in.
+///
+/// Holds the runtime handle because the links are async and the hub is not;
+/// see `LinkedClient` for why that is safe from a hub thread and only there.
+pub struct RegistryLinks {
+    reg: Arc<LinkRegistry>,
+    rt: tokio::runtime::Handle,
+}
+
+impl RegistryLinks {
+    pub fn new(reg: Arc<LinkRegistry>, rt: tokio::runtime::Handle) -> RegistryLinks {
+        RegistryLinks { reg, rt }
+    }
+}
+
+impl crate::hub::LinkSource for RegistryLinks {
+    fn node_link(&self, node_id: &str) -> Option<Arc<dyn crate::client::NodeLink>> {
+        let handle = self.reg.get(node_id)?;
+        Some(Arc::new(LinkedClient::new(
+            handle,
+            self.rt.clone(),
+            &self.reg,
+        )))
+    }
+}
+
 /// Every node's events arrive on one channel, so this filters to its own and
 /// puts each in the shape the hub already reads from an SSE stream.
 struct LinkEvents {
@@ -892,7 +950,7 @@ mod tests {
 
     /// Start the server router on a loopback port and hand back its address.
     async fn server(reg: Arc<LinkRegistry>) -> std::net::SocketAddr {
-        let app = crate::server::router(reg, "test-token".into());
+        let app = crate::server::router(reg, "test-token".into(), None);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
@@ -912,6 +970,20 @@ mod tests {
         name: &str,
         answer: Value,
     ) -> tokio::task::JoinHandle<()> {
+        fake_node_by_path(addr, id, name, move |_| (200, answer.clone())).await
+    }
+
+    /// The same, but the answer depends on the path — for a node that has to
+    /// look like a real one to the hub, which asks for several different things.
+    async fn fake_node_by_path<F>(
+        addr: std::net::SocketAddr,
+        id: &str,
+        name: &str,
+        answer: F,
+    ) -> tokio::task::JoinHandle<()>
+    where
+        F: Fn(&str) -> (u16, Value) + Send + 'static,
+    {
         let url = link_url(&format!("http://{addr}"));
         let mut req = url.into_client_request().expect("request");
         req.headers_mut()
@@ -934,14 +1006,9 @@ mod tests {
         tokio::spawn(async move {
             while let Some(Ok(msg)) = stream.next().await {
                 if let Message::Text(t) = msg {
-                    if let Ok(Frame::Req { id, .. }) = Frame::decode(&t) {
-                        let res = Frame::Res {
-                            id,
-                            status: 200,
-                            body: answer.clone(),
-                        }
-                        .encode()
-                        .expect("encode");
+                    if let Ok(Frame::Req { id, path, .. }) = Frame::decode(&t) {
+                        let (status, body) = answer(&path);
+                        let res = Frame::Res { id, status, body }.encode().expect("encode");
                         if sink.send(Message::Text(res.into())).await.is_err() {
                             break;
                         }
