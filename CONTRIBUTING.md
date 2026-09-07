@@ -64,6 +64,8 @@ The maintainer cuts releases. The process:
 
 The workflow refuses a tag whose version differs from `docs/screenshots/VERSION`. That keeps the README header at the latest release. Do not edit the stamp by hand. Run the script.
 
+Every release is signed for the updater. The private key and its password are the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; the public half is `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. The key lives outside this repository, like the Android keystore. The build fails rather than publishing an unsigned release, because an unsigned one is a release that no installed kari can update to — and changing the key strands every copy already out there, which cannot be undone from this end.
+
 ## License
 
 Contributions are licensed under the Apache License 2.0, the same as the project. See `LICENSE`.

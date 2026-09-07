@@ -60,9 +60,13 @@ jobs:
                 'xattr -dr com.apple.quarantine /Applications/kari.app',
                 '```',
                 '',
+                'An installed kari updates itself to this release: it checks on start and every six hours,',
+                'writes the new version beside the running one and offers a restart. Settings, Updates has the switch.',
+                '',
                 'A Linux host runs the headless node from `kari-node-<tag>-x86_64-unknown-linux-gnu.tar.gz`,',
                 'a Windows host from `kari-node-<tag>-x86_64-pc-windows-msvc.zip`.',
                 'Start it with `kari-node serve` and add it under Settings, Nodes in the app.',
+                'A node updates itself only when asked: `kari-node update`, or `serve --auto-update`.',
                 '',
                 'An Android phone installs `kari-latest.apk`. Add this repository to Obtainium: the asset name never',
                 'carries the version and the signing key never changes, so an update installs over the previous build.',
@@ -80,6 +84,12 @@ jobs:
     needs: create-release
     strategy:
       fail-fast: false
+      # One at a time, on purpose. Each job writes `latest.json` by reading the
+      # copy already on the release, adding its own platform and putting it
+      # back. Two jobs that read before either writes both publish a file with
+      # one platform in it, and the updater then answers "no update" for the
+      # other Mac. Serial costs a few minutes and cannot lose a platform.
+      max-parallel: 1
       matrix:
         include:
           - target: aarch64-apple-darwin
@@ -102,10 +112,29 @@ jobs:
       - name: Install the frontend dependencies
         run: bun install --frozen-lockfile
 
+      # The signing key is what lets a running kari trust an update. Its public
+      # half is in tauri.conf.json; the private half and its password are
+      # repository secrets, like the Android keystore above, and the key itself
+      # lives outside this repository.
+      - name: Refuse to run without a signing key
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          # Without the key tauri-action builds bundles and no signature, and
+          # then publishes a release that no installed kari can update to.
+          # Better to fail here than to ship a release that quietly ends the
+          # update chain for everyone already running kari.
+          if [ -z "$KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is a required repository secret."
+            exit 1
+          fi
+
       - name: Build and upload the bundles
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }}
@@ -136,7 +165,14 @@ jobs:
           mkdir -p "$name"
           cp target/release/kari-node LICENSE README.md "$name/"
           tar czf "$name.tar.gz" "$name"
-          gh release upload "${{ github.ref_name }}" "$name.tar.gz" --clobber
+          # The bare binary as well, for `kari-node update`. A node is one file,
+          # so it replaces itself with one file: no tar reader in the node, and
+          # nothing to get wrong about paths inside an archive. The tarball
+          # stays, because a person downloading a node wants the README with it.
+          cp target/release/kari-node "$name"
+          sha256sum "$name" > "$name.sha256"
+          gh release upload "${{ github.ref_name }}" \
+            "$name.tar.gz" "$name" "$name.sha256" --clobber
 
   windows-node-binary:
     # The same headless node for a Windows host. A zip rather than a tarball,
@@ -165,7 +201,11 @@ jobs:
           mkdir -p "$name"
           cp target/release/kari-node.exe LICENSE README.md "$name/"
           7z a "$name.zip" "$name"
-          gh release upload "${{ github.ref_name }}" "$name.zip" --clobber
+          # The bare .exe as well, for `kari-node update`. See the Linux job.
+          cp target/release/kari-node.exe "$name.exe"
+          sha256sum "$name.exe" > "$name.exe.sha256"
+          gh release upload "${{ github.ref_name }}" \
+            "$name.zip" "$name.exe" "$name.exe.sha256" --clobber
 
   android-apk:
     # The phone app, signed with the release key from the repository secrets:
@@ -245,7 +285,17 @@ jobs:
           gh release upload "${{ github.ref_name }}" kari-latest.apk kari-latest.apk.sha256 --clobber
 
   publish-release:
-    needs: [create-release, build, node-binary, android-apk]
+    # Every builder, so the release is never published half-uploaded. An
+    # updater that reads `latest.json` from the newest published release must
+    # not see one whose assets are still arriving.
+    needs:
+      [
+        create-release,
+        build,
+        node-binary,
+        windows-node-binary,
+        android-apk,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Publish the release

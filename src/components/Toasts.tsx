@@ -116,7 +116,7 @@ function ToastItem({ t, held, onClose, onOpen, onUndo }: ItemProps) {
             onUndo();
           }}
         >
-          Undo
+          {t.undo?.label ?? "Undo"}
         </button>
       )}
       <button

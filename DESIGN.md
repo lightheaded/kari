@@ -751,3 +751,24 @@ Made on 2026-09-06:
   directly. One hub, whether that hub is a server or a desktop app.
 - Quota is aggregated per account across nodes, and a planner on a shared login
   reserves against the account budget rather than its own view of the window.
+
+Made on 2026-09-07:
+
+- kari updates itself, rather than leaving that to whatever installed it. A
+  board that spans machines is only as current as its oldest copy, and the
+  system package managers that were the alternative (Homebrew, winget) update
+  everything on the machine to update one app.
+- The desktop app uses the Tauri updater, signed with a minisign key held
+  outside the repository. Signature over checksum: the point is that only the
+  holder of the key can publish an update, not merely that the download
+  arrived whole.
+- The app installs without asking and then offers a restart. It never restarts
+  itself: unsaved input in a card would be the cost, and no update is worth it.
+- Android is left to Obtainium, which already watches the same releases. Two
+  installers for one app would fight.
+- The headless node updates itself only when asked (`kari-node update`, or
+  `serve --auto-update`). A node is installed by whatever manages its host, and
+  that usually pins a version deliberately; a binary that changed itself under
+  such a host would make the pin a lie.
+- The node replaces one file rather than unpacking an archive, so each release
+  carries the bare binary and its checksum beside the tarball and the zip.

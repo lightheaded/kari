@@ -5,6 +5,8 @@
 //! an SSH port forward. The other subcommands install the Claude Code hooks and
 //! the status line wrapper on this host, and read the board of a running node.
 
+mod update;
+
 use clap::{Parser, Subcommand};
 use kari_core::{api, hooks, paths, statusline, Engine};
 use std::net::SocketAddr;
@@ -63,6 +65,19 @@ enum Cmd {
         /// KARI_SERVER_TOKEN, else ~/.config/kari/server-token.
         #[arg(long)]
         server_token_file: Option<std::path::PathBuf>,
+        /// Replace this binary when a newer release appears, then stop so that
+        /// the service manager starts the new one. Off unless asked for: a
+        /// host that pins a version means that pin, and a node that changed
+        /// itself under it would make the pin a lie.
+        ///
+        /// The unit must restart the node on a clean exit. systemd needs
+        /// `Restart=always`; `Restart=on-failure` leaves the host with no node
+        /// after the first update.
+        #[arg(long)]
+        auto_update: bool,
+        /// Hours between update checks while serving.
+        #[arg(long, default_value_t = 6)]
+        update_every_hours: u64,
     },
     /// Manage the Claude Code hooks that report session events to this node.
     Hooks {
@@ -82,6 +97,12 @@ enum Cmd {
     },
     /// Print what this node says on /kari/health.
     Identity,
+    /// Replace this binary with the newest release.
+    Update {
+        /// Say what would happen and change nothing.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -132,6 +153,8 @@ fn main() -> anyhow::Result<()> {
             install_statusline,
             server,
             server_token_file,
+            auto_update,
+            update_every_hours,
         } => serve(Serve {
             listen,
             allow_remote,
@@ -143,6 +166,8 @@ fn main() -> anyhow::Result<()> {
             install_statusline,
             server,
             server_token_file,
+            auto_update,
+            update_every_hours,
         }),
         Cmd::Hooks { action } => match action {
             // The relay runs on every hook event, so it touches the database
@@ -197,6 +222,28 @@ fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&engine.identity())?);
             Ok(())
         }
+        Cmd::Update { check } => {
+            let running = update::current();
+            if check {
+                let latest = update::latest()?;
+                if update::is_newer(&latest.version, running) {
+                    println!("{running} is running; {} is out", latest.version);
+                } else {
+                    println!("{running} is the newest release");
+                }
+                return Ok(());
+            }
+            let out = update::update()?;
+            if out.replaced {
+                println!(
+                    "updated {} to {}. Start kari-node again to run it.",
+                    out.from, out.to
+                );
+            } else {
+                println!("{} is the newest release", out.from);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -221,6 +268,8 @@ struct Serve {
     install_statusline: bool,
     server: Option<String>,
     server_token_file: Option<std::path::PathBuf>,
+    auto_update: bool,
+    update_every_hours: u64,
 }
 
 fn serve(opt: Serve) -> anyhow::Result<()> {
@@ -235,7 +284,12 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
         install_statusline,
         server,
         server_token_file,
+        auto_update,
+        update_every_hours,
     } = opt;
+    // A Windows update leaves the binary it replaced beside the new one. The
+    // first start after that is the earliest moment nothing holds it open.
+    update::sweep();
     let engine = Engine::open()?;
     let mut settings = engine.settings();
     let mut changed = false;
@@ -312,6 +366,22 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
             tracing::info!("linking to the server at {url}");
             tokio::spawn(kari_core::link::run(e, url, token, local));
         }
+        // The updater has one thing to say, once: the version it wrote.
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        if auto_update {
+            tokio::spawn(watch_for_updates(update_every_hours, tx));
+        }
+        // With no updater running the sender is already dropped, and an awaited
+        // receiver would answer `Err` at once and stop the node on start. This
+        // waits for good instead, so the arm below only ever fires on a real
+        // update.
+        let updated = async move {
+            match rx.await {
+                Ok(v) => v,
+                Err(_) => std::future::pending::<String>().await,
+            }
+        };
+
         let server = api::serve_dynamic(Arc::clone(&engine), addrs, allow_remote, private);
         tokio::select! {
             r = server => r,
@@ -319,8 +389,43 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
                 tracing::info!("stopping");
                 Ok(())
             }
+            v = updated => {
+                tracing::info!(
+                    "kari-node {v} is installed; stopping so the service manager starts it"
+                );
+                Ok(())
+            }
         }
     })
+}
+
+/// Look for a newer release for as long as the node serves, and install one.
+///
+/// The first check waits a minute rather than running on start. An update that
+/// does not raise the version this binary reports would otherwise update,
+/// stop, start, and update again with nothing between the attempts; a minute
+/// makes that a slow, visible loop in the log instead of a spin.
+async fn watch_for_updates(every_hours: u64, tx: tokio::sync::oneshot::Sender<String>) {
+    let mut wait = std::time::Duration::from_secs(60);
+    let every = std::time::Duration::from_secs(every_hours.max(1) * 3600);
+    loop {
+        tokio::time::sleep(wait).await;
+        wait = every;
+        // Fetching a release and writing a file both block. Off the runtime
+        // threads, or they stop answering the board while a download runs.
+        match tokio::task::spawn_blocking(update::update).await {
+            Ok(Ok(o)) if o.replaced => {
+                tracing::info!("updated kari-node {} to {}", o.from, o.to);
+                let _ = tx.send(o.to);
+                return;
+            }
+            Ok(Ok(_)) => {}
+            // A check that fails is not a reason to stop serving. The network
+            // is down, or GitHub is, and the next check is in a few hours.
+            Ok(Err(e)) => tracing::warn!("update check failed: {e}"),
+            Err(e) => tracing::warn!("update check did not finish: {e}"),
+        }
+    }
 }
 
 /// The token this node presents to its server. A file the operator placed, the

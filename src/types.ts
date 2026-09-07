@@ -372,6 +372,8 @@ export interface Settings {
   away_mode: boolean;
   away_hold_secs: number;
   listen_on: string;
+  /** Install a new kari without asking. Desktop only; the node has a flag. */
+  auto_update: boolean;
 }
 /** A project directory a node knows, with the name the board shows for it. */
 export interface Project {

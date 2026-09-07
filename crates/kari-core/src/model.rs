@@ -729,6 +729,14 @@ pub struct Settings {
     /// which is what a VPN needs. `*` means every private address of the
     /// machine. A public address is never bound.
     pub listen_on: String,
+    /// Install a new kari over this one, without asking, and say so when it is
+    /// ready to restart. On by default: an app that a person runs at the desk
+    /// should be the release the board on the other machines expects.
+    ///
+    /// The headless node ignores this. A node is deployed by whatever manages
+    /// its host, which pins a version on purpose, so it updates itself only
+    /// when `kari-node serve` is started with `--auto-update`.
+    pub auto_update: bool,
     /// The switch this replaced: it bound every private address. Read once so
     /// that a machine set up before the picker keeps answering, then written
     /// back as `*`. Never sent to the UI.
@@ -807,6 +815,7 @@ impl Default for Settings {
             away_mode: false,
             away_hold_secs: 600,
             listen_on: String::new(),
+            auto_update: true,
             listen_private: false,
         }
     }

@@ -12,6 +12,7 @@ import { AddTaskModal, ColumnsModal, SettingsModal } from "./components/Modals";
 import { ProposalPanel } from "./components/Proposals";
 import { Toasts } from "./components/Toasts";
 import { useToasts, type Undo } from "./toasts";
+import { restartApp, updatesSupported, useUpdater } from "./update";
 import { useSticky } from "./hooks";
 import { anyDirty } from "./dirty";
 import { addTarget, noAutoFill } from "./util";
@@ -98,6 +99,22 @@ export default function App() {
 
   /** The user pressed Undo. The reversal is an action like any other. */
   const undo = useCallback((u: Undo) => void run(u.run, u.done), [run]);
+
+  /** A new kari is on disk. The one on screen is still the old one, so the
+   *  toast holds long and offers the restart rather than taking it: an update
+   *  must never throw away a task someone is halfway through typing. */
+  const updateReady = useCallback(
+    (version: string) =>
+      toast(`kari ${version} is ready.`, {
+        ttl: 60000,
+        undo: { label: "Restart", done: "Restarting", run: restartApp },
+      }),
+    [toast],
+  );
+  // `settings` is null until the first load answers. Not `?? true`: that would
+  // install on a machine whose owner turned auto-update off, in the moment
+  // before the answer arrived.
+  const updater = useUpdater(settings ? settings.auto_update : null, updateReady);
 
   const nodes = useMemo(() => board?.nodes ?? [], [board]);
   const manyNodes = nodes.length > 1;
@@ -451,6 +468,8 @@ export default function App() {
           }
           onSaveNow={(s) => run(() => api.setSettings(s), "Settings saved", undoSettings(settings)).then(() => setSettings(s))}
           onStopAll={() => run(() => api.stopAll(), "Stopped kari jobs")}
+          updater={updater}
+          canUpdate={updatesSupported()}
         />
       )}
 

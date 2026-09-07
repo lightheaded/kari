@@ -1,12 +1,14 @@
 import { useCallback, useState } from "react";
 import type { Picked } from "./components/Board";
 
-/** The reverse of an action the user just took. The toast that reports the
- *  action offers it as an Undo button. */
+/** A button the toast offers. Usually the reverse of what the user just did,
+ *  which is why it says Undo unless the caller names another label. */
 export interface Undo {
-  /** What the next toast says after the reversal goes through. */
+  /** What the next toast says after the button's action goes through. */
   done: string;
   run: () => Promise<unknown>;
+  /** The button's text. Undo, when the caller names none. */
+  label?: string;
 }
 
 export interface Toast {
