@@ -27,7 +27,10 @@ const INTENT_KEY: &str = "primary_intent";
 /// Seconds between two renewals of a lease this hub holds.
 const RENEW_EVERY: u64 = 60;
 
-#[derive(Debug, Clone)]
+/// Serialised so a server can put these on the wire: a client of one holds no
+/// hub, and this is how it learns the board moved.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HubEvent {
     BoardChanged {
         node_id: String,

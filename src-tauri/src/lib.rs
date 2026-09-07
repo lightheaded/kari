@@ -1,4 +1,4 @@
-use kari_core::hub::{Hub, HubEvent};
+use kari_core::hub::HubEvent;
 use kari_core::hubapi::HubApi;
 use kari_core::{
     AutomationMode, Calibration, Card, CardPatch, Column, Engine, HubBoard, NewNode, NewTask,
@@ -804,7 +804,7 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let engine = Engine::open_at(&dir)?;
-            let hub: Arc<dyn HubApi> = Hub::without_local(engine);
+            let hub: Arc<dyn HubApi> = kari_core::remote::open_hub_without_local(engine);
             app.manage(AppState {
                 hub: Arc::clone(&hub),
                 dirty: std::sync::atomic::AtomicBool::new(false),
@@ -844,7 +844,9 @@ pub fn run() {
 
     let engine = Engine::open().expect("open kari store");
     engine.start_watchers();
-    let hub: Arc<dyn HubApi> = Hub::new(Arc::clone(&engine));
+    // Either the in-process hub or a client of a server, decided by this
+    // device's configuration. Nothing below this line knows which.
+    let hub: Arc<dyn HubApi> = kari_core::remote::open_hub(Arc::clone(&engine));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())

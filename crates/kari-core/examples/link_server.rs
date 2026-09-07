@@ -16,6 +16,7 @@
 //! server owns — which is what a client will ask for instead of running a hub
 //! of its own.
 
+use kari_core::hubapi::HubApi;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -248,8 +249,78 @@ fn main() -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_millis(250));
     }
 
+    // ---- a client that holds no hub at all --------------------------------
+    //
+    // This is what the desktop app and the phone become: a RemoteHub behind
+    // the same HubApi the in-process hub implements, so the UI above it cannot
+    // tell the difference.
+
+    let client_home = std::env::temp_dir().join(format!("kari-link-example-client-{port}"));
+    std::fs::create_dir_all(&client_home)?;
+    let store = kari_core::Engine::open_at(&client_home.join("kari"))?;
+    let remote = kari_core::remote::RemoteHub::connect(&base, &token, store);
+
+    let id = remote.health()?;
+    println!(
+        "\nclient sees: {} {} ({} node(s) linked)",
+        id.app, id.version, id.nodes_online
+    );
+
+    // Every one of these goes over HTTP to the server, which asks the hub,
+    // which asks the node down the socket the node opened.
+    let board = remote.board();
+    println!(
+        "board through the client: {} node(s), {} column(s), {} card(s)",
+        board.nodes.len(),
+        board.columns.len(),
+        board.cards.len()
+    );
+    if board.nodes.is_empty() {
+        anyhow::bail!("the client saw no nodes");
+    }
+    if !board.columns[0].name.ends_with("(server)") {
+        anyhow::bail!(
+            "the client did not see the server's columns: {:?}",
+            board.columns[0].name
+        );
+    }
+
+    // A card added through the client must reach the node, because that is the
+    // whole chain: client -> server -> hub -> link -> node.
+    let node_id = board.nodes[0].id.clone();
+    let projects = remote.projects(&node_id);
+    println!("projects on {}: {}", board.nodes[0].name, projects.len());
+
+    let card = remote.add_task(
+        &node_id,
+        kari_core::NewTask {
+            title: "from a client with no hub".into(),
+            project_cwd: None,
+            run_prompt: None,
+            auto_run: false,
+            priority: 0,
+            notes: None,
+            model: None,
+            column_id: None,
+        },
+    )?;
+    println!("card {} added through the client", card.id);
+
+    let after = remote.board();
+    if !after.cards.iter().any(|c| c.view.card.id == card.id) {
+        anyhow::bail!("the card did not come back on the board");
+    }
+    println!("and it came back on the merged board");
+
+    // The roster methods are refused, on purpose and with a reason.
+    match remote.pairing_code() {
+        Err(e) => println!("roster refused, as it should be: {e}"),
+        Ok(_) => anyhow::bail!("a client of a server should not hand out pairing codes"),
+    }
+
     drop(node);
     drop(server);
+    let _ = std::fs::remove_dir_all(&client_home);
     println!("\ndone");
     Ok(())
 }

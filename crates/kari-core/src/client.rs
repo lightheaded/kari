@@ -116,7 +116,7 @@ impl EventReader {
     }
 }
 
-fn error_of(resp: Response) -> anyhow::Error {
+pub(crate) fn error_of(resp: Response) -> anyhow::Error {
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     let msg = serde_json::from_str::<serde_json::Value>(&text)
