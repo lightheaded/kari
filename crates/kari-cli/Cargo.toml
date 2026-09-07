@@ -22,3 +22,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap = { version = "4", features = ["derive"] }
 reqwest.workspace = true
+# `kari-node update` replaces this binary from a GitHub release. semver so that
+# 0.10.0 sorts after 0.9.0, which a string compare gets wrong; sha2 to check the
+# download against the checksum published beside it.
+semver = "1"
+sha2 = "0.10"

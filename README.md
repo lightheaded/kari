@@ -26,6 +26,8 @@ xattr -dr com.apple.quarantine /Applications/kari.app
 4. Start kari. It appears in the menu bar and reads your Claude Code state.
 5. Optional: run `scripts/install-statusline.sh` for quota meters, and click "Install hooks" in Settings for live state. Both are described below.
 
+kari keeps itself current after that. See "Updates".
+
 ## What works
 
 - Cards appear for every session with a transcript in the history window, and for every live process.
@@ -176,6 +178,18 @@ What you see: every card carries a node badge, and a chip row filters the board 
 
 Deployment of the node is managed outside this repository. `flake.nix` builds it for a NixOS host, and each release carries a Linux tarball and a Windows zip.
 
+A node can also replace itself:
+
+```
+kari-node update --check        # say what is out, change nothing
+kari-node update                # fetch the newest release over this binary
+kari-node serve --auto-update   # and keep doing it while it serves
+```
+
+`update` fetches the binary built for this host from the newest release, checks it against the checksum published beside it, and renames it over the running one. The running process keeps the old code either way, so the new version starts on the next run. `--auto-update` therefore stops the node once it has written a new binary, and the unit must bring it back: systemd needs `Restart=always`, because `Restart=on-failure` treats that clean exit as the end and leaves the host with no node. It checks a minute after start and every six hours after that (`--update-every-hours`).
+
+This is off unless you ask for it. A node is installed by whatever manages its host, and that usually pins a version on purpose — a binary that changed itself under such a host would make the pin a lie. It also needs to be able to write to its own directory, which rules out a binary in the Nix store; there, update the host instead.
+
 ## A server, when the nodes cannot be reached
 
 Adding nodes one by one works while every machine can reach every other one. It
@@ -267,6 +281,14 @@ Two hubs can watch the same nodes. Only one pushes columns, and each node decide
 ### Away mode
 
 Claude Code asks for permission in the terminal, and only the terminal can answer. With Away mode on for a node, kari holds the prompt for up to 10 minutes and the phone shows Allow and Deny on the card. While kari waits, the terminal shows a spinner and no dialog, so Away mode is off at the desk and one tap flips it, per node, from the phone or the desktop. If nobody answers in time, the dialog appears as before. Background jobs kari starts never ask. Away mode needs the `PermissionRequest` hook entry: click "Install hooks" once more after an upgrade, or run `kari-node hooks install` on a node.
+
+## Updates
+
+kari installs new releases itself. It looks when it starts and every six hours, downloads the release, writes it beside the running app and says so in a toast with a Restart button. Nothing changes under you: replacing the bundle does not replace the running process, so the version you are using stays the one you opened until you restart. Settings, Updates has the switch, the current version and a "Check now" button.
+
+Every release is signed with a key that is not in this repository, and kari installs an update only if the signature matches the public key built into it. So an update can only come from whoever holds that key, wherever the download came from.
+
+The phone is the exception: it installs through Obtainium, which watches the same releases, so the app carries no updater on Android. A headless node has its own, off by default — see "Remote nodes".
 
 ## Data
 

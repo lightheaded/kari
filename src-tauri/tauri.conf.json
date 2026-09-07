@@ -51,6 +51,18 @@
     },
     "android": {
       "minSdkVersion": 24
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgwRTYxN0U1MTM5Q0M5MTEKUldRUnlad1Q1UmZtZ0tYSkdheHdVb2F5SXNZUVVwaHF3U2dpWG15b2M0SXpMajd5bnM3L1praGsK",
+      "endpoints": [
+        "https://github.com/lightheaded/kari/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

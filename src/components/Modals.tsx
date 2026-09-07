@@ -21,6 +21,7 @@ import { useAutoGrow } from "../hooks";
 import type { CloseGuard } from "../dirty";
 import { useCloseGuard } from "../dirty";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
+import type { Updater } from "../update";
 
 /** The bar a first Escape shows on a form that holds unsaved input. */
 export function UnsavedBar({
@@ -1007,6 +1008,27 @@ function NodesSection({
   );
 }
 
+/** One line of plain language for whatever the updater is doing. */
+function updateLine(u: Updater): string {
+  switch (u.state.kind) {
+    case "checking":
+      return "Looking...";
+    case "downloading": {
+      const { version, done, total } = u.state;
+      if (!total) return `Downloading ${version}...`;
+      return `Downloading ${version}, ${Math.round((done / total) * 100)}%`;
+    }
+    case "ready":
+      return `${u.state.version} is written. Restart to use it.`;
+    case "none":
+      return "kari is up to date.";
+    case "failed":
+      return `Could not check: ${u.state.why}`;
+    default:
+      return u.offered ? `${u.offered.version} is out.` : "";
+  }
+}
+
 export function SettingsModal({
   settings,
   hooksInstalled,
@@ -1019,6 +1041,8 @@ export function SettingsModal({
   onSaveNow,
   onStopAll,
   onHooks,
+  updater,
+  canUpdate,
 }: {
   settings: Settings;
   hooksInstalled: boolean;
@@ -1032,6 +1056,10 @@ export function SettingsModal({
   onSaveNow: (s: Settings) => void;
   onStopAll: () => void;
   onHooks: (install: boolean) => void;
+  updater: Updater;
+  /** This build can replace itself. False in a browser preview and on a phone,
+   *  where the section says why rather than offering a button that cannot work. */
+  canUpdate: boolean;
 }) {
   const [s, setS] = useState<Settings>({ ...settings });
   const [paths, setPaths] = useState<Record<string, string> | null>(null);
@@ -1411,6 +1439,56 @@ export function SettingsModal({
             />
           </div>
         </div>
+      </div>
+      <div className="section">
+        <h5>Updates</h5>
+        <label className="field inline">
+          <input
+            type="checkbox"
+            checked={s.auto_update}
+            disabled={!canUpdate}
+            onChange={(e) => setS({ ...s, auto_update: e.target.checked })}
+          />
+          <span>Install new releases without asking</span>
+        </label>
+        <div className="hint">
+          kari looks for a release when it starts and every six hours. It writes
+          the new version beside the running one and says so; nothing changes
+          under you until you restart.
+        </div>
+        {canUpdate ? (
+          <>
+            <div className="field inline" style={{ marginTop: 8 }}>
+              <button
+                className="btn"
+                onClick={updater.checkNow}
+                disabled={updater.state.kind === "checking" || updater.state.kind === "downloading"}
+              >
+                Check now
+              </button>
+              <span className="hint">{updateLine(updater)}</span>
+            </div>
+            {updater.offered && (
+              <div className="field inline">
+                <button className="btn" onClick={() => void updater.installOffered()}>
+                  Install {updater.offered.version}
+                </button>
+              </div>
+            )}
+            {updater.state.kind === "ready" && (
+              <div className="field inline">
+                <button className="btn" onClick={() => void updater.restart()}>
+                  Restart into {updater.state.version}
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="hint">
+            This build does not replace itself. A phone installs kari through
+            Obtainium, which watches the same releases.
+          </div>
+        )}
       </div>
       <div className="section">
         <h5>Quota tracking</h5>

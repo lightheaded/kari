@@ -20,6 +20,13 @@
   #     };
   #   };
   #
+  # A node installed this way is pinned by the flake, so leave `--auto-update`
+  # off: it needs to write over its own binary, and this one lives in the
+  # read-only store. Update the host instead. `--auto-update` is for a node
+  # installed as a plain file, and it also needs `Restart = "always"` — it
+  # stops cleanly once it has written the new binary, and `on-failure` would
+  # read that as the end and leave the host with no node.
+  #
   # The node binds 127.0.0.1 only, so it needs no open port in the firewall.
   outputs =
     { nixpkgs, flake-utils, ... }:
