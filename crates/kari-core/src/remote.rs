@@ -339,6 +339,25 @@ impl HubApi for RemoteHub {
     }
 
     fn jump_in(&self, node: &str, card: &str) -> anyhow::Result<String> {
+        // The server answers a jump with the command to run, not with a
+        // terminal: it has no desktop, and a node that dialled in cannot be
+        // dialled back. `Hub::jump_in` says the client runs it where the person
+        // actually is — and when the card is on *this* machine, that is here.
+        //
+        // Without this, pointing an app at a server takes Jump in away from the
+        // machine it works best on: before pairing the local engine opened a
+        // terminal, and after pairing the same click only printed a line for
+        // the user to retype. A node and an app on one host share a store, so
+        // the card id from the server resolves locally.
+        //
+        // A failure falls through to the server rather than surfacing: the card
+        // may have come from a node this device only knows through the server,
+        // and the command in the answer is still useful.
+        if self.engine.node_id() == node {
+            if let Ok(msg) = self.engine.jump_in(card) {
+                return Ok(msg);
+            }
+        }
         let b: IdBody = self.post(
             &format!("/kari/v1/hub/nodes/{node}/cards/{card}/jump"),
             None,
