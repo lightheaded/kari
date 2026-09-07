@@ -705,6 +705,92 @@ async fn connect_once(
     result
 }
 
+// ------------------------------------------------------- the hub's view of a link
+
+/// A linked node, seen the way the hub reaches every other node.
+///
+/// The hub is blocking: each node gets a thread, and each thread calls the node
+/// and waits. The link is async, because it lives on a WebSocket the server's
+/// runtime is pumping. This is the one place the two meet, and it meets them by
+/// blocking a hub thread on the runtime.
+///
+/// That is only safe from a thread that is **not** a runtime worker, which is
+/// exactly where the hub calls from — `Hub` spawns `std::thread` per node and
+/// never awaits. Calling any method here from inside an async task would
+/// deadlock the worker, so do not.
+pub struct LinkedClient {
+    handle: LinkHandle,
+    rt: tokio::runtime::Handle,
+    events: broadcast::Sender<LinkEvent>,
+}
+
+impl LinkedClient {
+    pub fn new(handle: LinkHandle, rt: tokio::runtime::Handle, reg: &LinkRegistry) -> LinkedClient {
+        LinkedClient {
+            handle,
+            rt,
+            events: reg.events.clone(),
+        }
+    }
+}
+
+impl crate::client::NodeLink for LinkedClient {
+    fn call(&self, method: &str, path: &str, body: Option<Value>) -> anyhow::Result<Value> {
+        let (status, body) = self.rt.block_on(self.handle.request(method, path, body))?;
+        if !(200..300).contains(&status) {
+            let msg = body
+                .get("error")
+                .and_then(|e| e.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| body.to_string());
+            anyhow::bail!("{status}: {msg}");
+        }
+        Ok(body)
+    }
+
+    fn events(&self) -> anyhow::Result<Box<dyn crate::client::EventSource>> {
+        Ok(Box::new(LinkEvents {
+            node_id: self.handle.node_id().to_string(),
+            rx: self.events.subscribe(),
+        }))
+    }
+
+    fn describe(&self) -> String {
+        self.handle.identity().node_name.clone()
+    }
+}
+
+/// Every node's events arrive on one channel, so this filters to its own and
+/// puts each in the shape the hub already reads from an SSE stream.
+struct LinkEvents {
+    node_id: String,
+    rx: broadcast::Receiver<LinkEvent>,
+}
+
+impl crate::client::EventSource for LinkEvents {
+    fn recv(&mut self) -> Option<crate::client::EventItem> {
+        loop {
+            match self.rx.blocking_recv() {
+                Ok(e) if e.node_id == self.node_id => {
+                    return Some(crate::client::EventItem::Message(
+                        crate::client::SseMessage {
+                            event: e.event,
+                            // The hub parses the data as JSON, which is what the
+                            // SSE path hands it as a string too.
+                            data: e.data.to_string(),
+                        },
+                    ));
+                }
+                Ok(_) => continue,
+                // Lagged means this node's events were dropped, not that the
+                // link died. Keep reading: the next board refresh corrects it.
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -899,6 +985,96 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].node_id, "n1");
         assert!(nodes[0].online);
+    }
+
+    /// The hub does not learn a second way to talk to a node: a linked node
+    /// goes behind the same `ApiClient` every other node is behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_linked_node_answers_through_the_ordinary_client() {
+        let reg = Arc::new(LinkRegistry::new());
+        let addr = server(Arc::clone(&reg)).await;
+        let _node = fake_node(addr, "n1", "one", serde_json::json!([])).await;
+        let link = wait_for(&reg, "n1").await;
+
+        let client = crate::client::ApiClient::over_link(
+            Arc::new(LinkedClient::new(
+                link,
+                tokio::runtime::Handle::current(),
+                &reg,
+            )),
+            "server-hub",
+        );
+
+        // Off the runtime, because that is where the hub calls from.
+        let (cols, base) = tokio::task::spawn_blocking(move || {
+            let cols = client.columns();
+            (cols, client.base())
+        })
+        .await
+        .expect("join");
+
+        assert_eq!(cols.expect("columns").len(), 0);
+        // What a person is shown for a node with no address is its name.
+        assert_eq!(base, "one");
+    }
+
+    /// A node reached over a link never has a lease: a server is the only hub.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_linked_node_has_no_lease() {
+        let reg = Arc::new(LinkRegistry::new());
+        let addr = server(Arc::clone(&reg)).await;
+        let _node = fake_node(addr, "n1", "one", serde_json::json!({})).await;
+        let link = wait_for(&reg, "n1").await;
+        let client = crate::client::ApiClient::over_link(
+            Arc::new(LinkedClient::new(
+                link,
+                tokio::runtime::Handle::current(),
+                &reg,
+            )),
+            "server-hub",
+        );
+        let lease = tokio::task::spawn_blocking(move || client.lease())
+            .await
+            .expect("join");
+        assert!(lease.expect("lease").is_none());
+    }
+
+    /// One channel carries every node's events, so a client must be handed its
+    /// own and nobody else's.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_client_gets_only_its_own_node_s_events() {
+        use crate::client::{EventItem, NodeLink};
+        let reg = Arc::new(LinkRegistry::new());
+        let addr = server(Arc::clone(&reg)).await;
+        let _node = fake_node(addr, "n1", "one", serde_json::json!({})).await;
+        let link = wait_for(&reg, "n1").await;
+        let linked = LinkedClient::new(link, tokio::runtime::Handle::current(), &reg);
+        let mut events = linked.events().expect("events");
+
+        let tx = reg.events.clone();
+        let reader = tokio::task::spawn_blocking(move || events.recv());
+        // The other node's event must be stepped over, not returned.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tx.send(LinkEvent {
+            node_id: "n2".into(),
+            event: "board_changed".into(),
+            data: serde_json::json!({ "from": "somebody else" }),
+        })
+        .expect("send");
+        tx.send(LinkEvent {
+            node_id: "n1".into(),
+            event: "board_changed".into(),
+            data: serde_json::json!({ "from": "ours" }),
+        })
+        .expect("send");
+
+        match reader.await.expect("join") {
+            Some(EventItem::Message(m)) => {
+                assert_eq!(m.event, "board_changed");
+                assert!(m.data.contains("ours"), "got {}", m.data);
+            }
+            other => panic!("expected our node's event, got {other:?}"),
+        }
     }
 
     /// Two calls in flight at once must not take each other's answers.

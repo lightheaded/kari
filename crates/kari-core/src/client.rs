@@ -1,20 +1,65 @@
 //! Blocking client for the node API in `api.rs`. The hub uses it for every
-//! remote node, through an SSH port forward that ends on the node's loopback.
+//! remote node.
+//!
+//! There are two ways to reach a node and the difference matters only here.
+//! The hub in the desktop app connects *to* the node, over an SSH port forward
+//! that ends on the node's loopback. A server is connected *by* the node, which
+//! dials out and holds one socket (see `link`). Above this file the two are the
+//! same node: the client keeps its typed methods and picks a `Transport`.
 
 use crate::hooks::{HUB_HEADER, TOKEN_HEADER};
 use crate::model::*;
 use reqwest::blocking::{Client, Response};
 use serde::de::DeserializeOwned;
 use std::io::{BufRead, BufReader};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Clone)]
 pub struct ApiClient {
-    base: String,
+    transport: Transport,
     token: String,
     /// The hub id sent with column pushes. The node checks it against its lease.
     hub_id: Option<String>,
-    http: Client,
+}
+
+/// How a request reaches the node.
+#[derive(Clone)]
+enum Transport {
+    /// An address this process can connect to.
+    Http { base: String, http: Client },
+    /// A socket the node opened to us. Nothing is dialled; the request is
+    /// written into a link the server already holds.
+    Link(Arc<dyn NodeLink>),
+}
+
+/// A node reached over the socket it dialled out on.
+///
+/// Declared here, beside the HTTP client, and implemented by the server on top
+/// of `link`. The hub then reaches every node through one client whether it
+/// found the node at an address or the node arrived by itself.
+pub trait NodeLink: Send + Sync {
+    /// One request into the node's API. The body comes back decoded; a status
+    /// the node refused becomes an `Err` carrying its message, which is what
+    /// the HTTP path does too.
+    fn call(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value>;
+
+    /// This node's events, already filtered to it.
+    fn events(&self) -> anyhow::Result<Box<dyn EventSource>>;
+
+    /// What to show a person: an address, or the node's name.
+    fn describe(&self) -> String;
+}
+
+/// A live stream of one node's events, however it arrives.
+pub trait EventSource: Send {
+    /// The next item, or None when the stream ended or failed.
+    fn recv(&mut self) -> Option<EventItem>;
 }
 
 /// One server-sent event: its name and its data line.
@@ -29,15 +74,22 @@ pub struct EventReader {
     lines: std::io::Lines<BufReader<Response>>,
 }
 
+#[derive(Debug)]
 pub enum EventItem {
     Message(SseMessage),
     /// A comment line from the server's keepalive. The connection is alive.
     KeepAlive,
 }
 
+impl EventSource for EventReader {
+    fn recv(&mut self) -> Option<EventItem> {
+        EventReader::next_item(self)
+    }
+}
+
 impl EventReader {
     /// The next item, or None when the stream ended or failed.
-    pub fn recv(&mut self) -> Option<EventItem> {
+    fn next_item(&mut self) -> Option<EventItem> {
         let mut event = String::new();
         let mut data = String::new();
         loop {
@@ -87,13 +139,26 @@ impl ApiClient {
     /// A client for a node at a base URL, such as `http://host:47311`.
     pub fn at(base: &str, token: &str) -> ApiClient {
         ApiClient {
-            base: base.trim_end_matches('/').to_string(),
+            transport: Transport::Http {
+                base: base.trim_end_matches('/').to_string(),
+                http: Client::builder()
+                    .timeout(Duration::from_secs(20))
+                    .build()
+                    .expect("http client"),
+            },
             token: token.to_string(),
             hub_id: None,
-            http: Client::builder()
-                .timeout(Duration::from_secs(20))
-                .build()
-                .expect("http client"),
+        }
+    }
+
+    /// A client for a node that dialled in. The token is already spent on the
+    /// link itself, so nothing here carries one; the argument stays so that the
+    /// two constructors read alike and `hub_id` still travels.
+    pub fn over_link(link: Arc<dyn NodeLink>, hub_id: &str) -> ApiClient {
+        ApiClient {
+            transport: Transport::Link(link),
+            token: String::new(),
+            hub_id: Some(hub_id.to_string()),
         }
     }
 
@@ -103,8 +168,13 @@ impl ApiClient {
         self
     }
 
-    pub fn base(&self) -> &str {
-        &self.base
+    /// Where this client sends: an address, or the name of the node holding
+    /// the socket. For a person to read, not to parse.
+    pub fn base(&self) -> String {
+        match &self.transport {
+            Transport::Http { base, .. } => base.clone(),
+            Transport::Link(l) => l.describe(),
+        }
     }
 
     fn headers(
@@ -126,10 +196,7 @@ impl ApiClient {
     }
 
     fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        let r = self
-            .headers(self.http.get(format!("{}{path}", self.base)))
-            .send()?;
-        self.json(r)
+        self.send(reqwest::Method::GET, path, None)
     }
 
     fn send<T: DeserializeOwned>(
@@ -138,11 +205,19 @@ impl ApiClient {
         path: &str,
         body: Option<serde_json::Value>,
     ) -> anyhow::Result<T> {
-        let mut req = self.headers(self.http.request(method, format!("{}{path}", self.base)));
-        if let Some(b) = body {
-            req = req.json(&b);
+        match &self.transport {
+            Transport::Http { base, http } => {
+                let mut req = self.headers(http.request(method, format!("{base}{path}")));
+                if let Some(b) = body {
+                    req = req.json(&b);
+                }
+                self.json(req.send()?)
+            }
+            Transport::Link(l) => {
+                let v = l.call(method.as_str(), path, body)?;
+                Ok(serde_json::from_value(v)?)
+            }
         }
-        self.json(req.send()?)
     }
 
     fn post<T: DeserializeOwned>(
@@ -156,23 +231,34 @@ impl ApiClient {
     // ---- node ----
 
     pub fn health(&self) -> anyhow::Result<NodeIdentity> {
-        let r = self
-            .http
-            .get(format!("{}/kari/health", self.base))
-            .timeout(Duration::from_secs(5))
-            .send()?;
-        self.json(r)
+        self.health_within(Duration::from_secs(5))
     }
 
     /// Health with a short timeout, for trying one candidate address after
     /// another. A blocked address must not hold the whole list.
     pub fn probe(&self, secs: u64) -> anyhow::Result<NodeIdentity> {
-        let r = self
-            .http
-            .get(format!("{}/kari/health", self.base))
-            .timeout(Duration::from_secs(secs))
-            .send()?;
-        self.json(r)
+        self.health_within(Duration::from_secs(secs))
+    }
+
+    /// Health is the one route with its own timeout, because it is what the
+    /// hub uses to decide whether an address answers at all. Over a link there
+    /// is no address and no connect to time out: the socket is already there,
+    /// and `call` carries the link's own deadline.
+    fn health_within(&self, timeout: Duration) -> anyhow::Result<NodeIdentity> {
+        match &self.transport {
+            Transport::Http { base, http } => {
+                let r = http
+                    .get(format!("{base}/kari/health"))
+                    .timeout(timeout)
+                    .send()?;
+                self.json(r)
+            }
+            Transport::Link(l) => Ok(serde_json::from_value(l.call(
+                "GET",
+                "/kari/health",
+                None,
+            )?)?),
+        }
     }
 
     pub fn board(&self) -> anyhow::Result<BoardView> {
@@ -188,23 +274,29 @@ impl ApiClient {
     /// whole request ends after ten minutes and the hub opens a new one. A dead
     /// forward ends it sooner: ssh exits after three missed keepalives and the
     /// socket closes.
-    pub fn events(&self) -> anyhow::Result<EventReader> {
+    pub fn events(&self) -> anyhow::Result<Box<dyn EventSource>> {
+        let (base, _) = match &self.transport {
+            Transport::Http { base, http } => (base.as_str(), http),
+            // The node pushes its events down the link as they happen, so
+            // there is no stream to open: the server is already receiving them.
+            Transport::Link(l) => return l.events(),
+        };
         let http = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(600))
             .tcp_keepalive(Duration::from_secs(30))
             .build()?;
         let resp = http
-            .get(format!("{}/kari/v1/events", self.base))
+            .get(format!("{base}/kari/v1/events"))
             .header(TOKEN_HEADER, &self.token)
             .header("accept", "text/event-stream")
             .send()?;
         if !resp.status().is_success() {
             return Err(error_of(resp));
         }
-        Ok(EventReader {
+        Ok(Box::new(EventReader {
             lines: BufReader::new(resp).lines(),
-        })
+        }))
     }
 
     // ---- cards ----
@@ -342,13 +434,21 @@ impl ApiClient {
     /// The node's column lease. `Ok(None)` when free. An older node without
     /// the route answers 404, which reads as "no lease" too.
     pub fn lease(&self) -> anyhow::Result<Option<Lease>> {
-        let r = self
-            .headers(self.http.get(format!("{}/kari/v1/lease", self.base)))
-            .send()?;
-        if r.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
+        match &self.transport {
+            Transport::Http { base, http } => {
+                let r = self
+                    .headers(http.get(format!("{base}/kari/v1/lease")))
+                    .send()?;
+                if r.status() == reqwest::StatusCode::NOT_FOUND {
+                    return Ok(None);
+                }
+                self.json(r)
+            }
+            // A server is the only hub, so it takes no lease and asks for
+            // none. Answering "free" keeps the caller's shape without
+            // pretending a 404 came back.
+            Transport::Link(_) => Ok(None),
         }
-        self.json(r)
     }
 
     pub fn claim_lease(&self, claim: &LeaseClaim) -> anyhow::Result<Lease> {
