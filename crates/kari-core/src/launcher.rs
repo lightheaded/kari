@@ -73,6 +73,36 @@ pub fn attach_command(job_id: &str) -> String {
     format!("claude attach {}", sh_quote(job_id))
 }
 
+/// The commands above as argument lists.
+///
+/// macOS hands a terminal one line and lets a shell parse it, which is what
+/// `sh_quote` is for. Windows has no `sh` in the middle: the program is
+/// started with an argument list and the quoting is done once, by the caller
+/// that builds the process. The two forms are built side by side so that a
+/// change to one is a change to the other.
+fn push_model(argv: &mut Vec<String>, model: Option<&str>) {
+    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        argv.push("--model".into());
+        argv.push(m.into());
+    }
+}
+
+pub fn resume_argv(session_id: &str, model: Option<&str>) -> Vec<String> {
+    let mut argv = vec!["claude".into(), "--resume".into(), session_id.into()];
+    push_model(&mut argv, model);
+    argv
+}
+
+pub fn new_argv(model: Option<&str>) -> Vec<String> {
+    let mut argv = vec!["claude".to_string()];
+    push_model(&mut argv, model);
+    argv
+}
+
+pub fn attach_argv(job_id: &str) -> Vec<String> {
+    vec!["claude".into(), "attach".into(), job_id.into()]
+}
+
 pub fn focus_herdr(agent: &HerdrAgent, terminal_app: &str) -> anyhow::Result<()> {
     crate::herdr::focus(agent)?;
     raise_terminal(terminal_app);
@@ -130,6 +160,89 @@ pub fn ssh_shell_command(ssh_host: &str, cwd: &str) -> String {
         sh_quote(ssh_host),
         sh_quote(&remote)
     )
+}
+
+/// A jump onto another machine, as an argument list. Only the local half
+/// changes: the remote half stays one `sh`-quoted line, because there really
+/// is a shell at the far end to parse it.
+fn ssh_argv_for(ssh_host: &str, remote: String) -> Vec<String> {
+    vec![
+        "ssh".into(),
+        "-t".into(),
+        ssh_host.into(),
+        "--".into(),
+        "sh".into(),
+        "-lc".into(),
+        remote,
+    ]
+}
+
+pub fn ssh_argv(ssh_host: &str, cwd: &str, command: &str) -> Vec<String> {
+    ssh_argv_for(ssh_host, format!("cd {} && {}", sh_quote(cwd), command))
+}
+
+pub fn ssh_shell_argv(ssh_host: &str, cwd: &str) -> Vec<String> {
+    ssh_argv_for(
+        ssh_host,
+        format!("cd {} && exec \"$SHELL\" -l", sh_quote(cwd)),
+    )
+}
+
+pub fn herdr_remote_argv(ssh_host: &str) -> anyhow::Result<Vec<String>> {
+    let herdr = paths::which("herdr").ok_or_else(|| {
+        anyhow::anyhow!(
+            "herdr is not on PATH here, so kari cannot attach to the pane on {ssh_host}"
+        )
+    })?;
+    Ok(vec![
+        herdr.to_string_lossy().into_owned(),
+        "--remote".into(),
+        ssh_host.into(),
+    ])
+}
+
+/// Open a terminal window in `cwd` and run `argv` there, on Windows.
+///
+/// The program is started with a console of its own, and nothing is asked to
+/// parse a command line: `claude` is a real executable on Windows, so there is
+/// no shell in the way and no second round of quoting to get wrong.
+///
+/// This ignores the terminal setting, which names macOS applications. Windows
+/// routes a new console to whatever "Default terminal application" is set to,
+/// which on Windows 11 is Windows Terminal — so the choice is already the
+/// user's, made in one place for every program rather than here.
+#[cfg(windows)]
+pub fn open_in_terminal_argv(cwd: &str, argv: &[String]) -> anyhow::Result<()> {
+    use std::os::windows::process::CommandExt;
+    /// CREATE_NEW_CONSOLE. kari is a GUI process with no console of its own,
+    /// so a child started without this has nowhere to draw and exits at once.
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
+    let (program, args) = argv
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("nothing to run"))?;
+    let exe = paths::which(program).unwrap_or_else(|| std::path::PathBuf::from(program));
+    // Claude Code from npm is `claude.cmd`, a batch file, and CreateProcess
+    // cannot start one of those: it needs `cmd.exe` to read it. The native
+    // installer leaves a real `claude.exe`, which starts directly.
+    let batch = exe
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+    let mut cmd = if batch {
+        let mut c = Command::new("cmd.exe");
+        c.arg("/c").arg(&exe);
+        c
+    } else {
+        Command::new(&exe)
+    };
+    cmd.args(args)
+        .current_dir(cwd)
+        .env("PATH", paths::child_path())
+        .creation_flags(CREATE_NEW_CONSOLE)
+        .stdin(Stdio::null())
+        .spawn()?;
+    Ok(())
 }
 
 pub struct BgStart {
