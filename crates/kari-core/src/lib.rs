@@ -9,6 +9,7 @@ pub mod estimate;
 pub mod herdr;
 pub mod hooks;
 pub mod hub;
+pub mod hubapi;
 pub mod infer;
 pub mod keychain;
 pub mod launcher;

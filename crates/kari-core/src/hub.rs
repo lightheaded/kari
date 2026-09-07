@@ -17,7 +17,7 @@ use crate::model::*;
 use crate::{keychain, launcher, paths, tunnel::Tunnel, Engine, Event};
 use chrono::{DateTime, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tracing::{info, warn};
@@ -63,6 +63,10 @@ struct Remote {
 
 pub struct Hub {
     engine: Arc<Engine>,
+    /// This hub, weakly. The methods that spawn a watcher thread need an owned
+    /// `Arc<Hub>` to move into it, and they are reached through a trait object
+    /// (`HubApi`), which can only hand them `&self`.
+    me: Weak<Hub>,
     remotes: RwLock<Vec<Remote>>,
     tx: broadcast::Sender<HubEvent>,
     /// This hub's id and name, as the nodes record them in their lease.
@@ -91,8 +95,9 @@ impl Hub {
         let (tx, _) = broadcast::channel(256);
         let hub_id = local.node_id();
         let hub_name = local.node_name();
-        let hub = Arc::new(Hub {
+        let hub = Arc::new_cyclic(|me| Hub {
             engine: Arc::clone(&local),
+            me: me.clone(),
             remotes: RwLock::new(vec![]),
             tx,
             hub_id,
@@ -143,6 +148,13 @@ impl Hub {
         }
         hub.start_lease_keeper();
         hub
+    }
+
+    /// This hub as an owned handle. Infallible in practice: the only `Hub` that
+    /// exists is the one `build` put in an `Arc`, and a method cannot run on a
+    /// hub that has already been dropped.
+    fn arc(&self) -> Arc<Hub> {
+        self.me.upgrade().expect("the hub outlives its own methods")
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<HubEvent> {
@@ -327,7 +339,7 @@ impl Hub {
 
     // ------------------------------------------------------------ node threads
 
-    fn spawn_remote(self: &Arc<Self>, rec: NodeRecord) {
+    fn spawn_remote(&self, rec: NodeRecord) {
         let state = Arc::new(Mutex::new(RemoteState {
             paired: keychain::load_token(&rec.id).is_some(),
             ..Default::default()
@@ -340,7 +352,7 @@ impl Hub {
         }
         let stop = Arc::new(AtomicBool::new(false));
         if rec.enabled {
-            let h = Arc::clone(self);
+            let h = self.arc();
             let (r, s, f) = (rec.clone(), Arc::clone(&state), Arc::clone(&stop));
             std::thread::Builder::new()
                 .name(format!("kari-node-{}", rec.id))
@@ -1391,7 +1403,7 @@ impl Hub {
 
     /// Add a node and pair it at once when it has an SSH host. A failed pairing
     /// still saves the node; the status shows why.
-    pub fn add_node(self: &Arc<Self>, n: NewNode) -> anyhow::Result<NodeStatus> {
+    pub fn add_node(&self, n: NewNode) -> anyhow::Result<NodeStatus> {
         let ssh_host = n
             .ssh_host
             .map(|s| s.trim().to_string())
@@ -1459,7 +1471,7 @@ impl Hub {
     }
 
     /// Change a node. A changed host or port reconnects; a disabled node stops.
-    pub fn update_node(self: &Arc<Self>, id: &str, p: NodePatch) -> anyhow::Result<NodeStatus> {
+    pub fn update_node(&self, id: &str, p: NodePatch) -> anyhow::Result<NodeStatus> {
         let Some(mut rec) = self.stop_remote(id) else {
             anyhow::bail!("unknown node {id}")
         };
@@ -1511,7 +1523,7 @@ impl Hub {
     }
 
     /// Read the node's token over SSH again and reconnect.
-    pub fn pair_node(self: &Arc<Self>, id: &str) -> anyhow::Result<String> {
+    pub fn pair_node(&self, id: &str) -> anyhow::Result<String> {
         let rec = self
             .remotes
             .read()
