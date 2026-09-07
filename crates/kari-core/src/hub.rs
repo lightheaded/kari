@@ -1286,6 +1286,24 @@ impl Hub {
         }
         let (c, rec) = self.client_of(node)?;
         let plan = c.jump(card)?;
+        // A node that dialled in is reached over its own socket, so there is no
+        // host here to ssh to — and this hub may be a server, which has no
+        // terminal and no business opening one on the machine it runs on. Hand
+        // the command back instead: the client that asked runs it where the
+        // person actually is.
+        //
+        // It has to be an Ok. A Windows node has no herdr — herdr.rs is
+        // #[cfg(unix)] — so it never focuses a pane and always lands here, and
+        // an Err would make the one platform that cannot jump in look broken
+        // rather than merely different.
+        if c.is_linked() {
+            let name = self.node_name_of(&rec, None);
+            return Ok(if plan.command.is_empty() {
+                format!("{} on {name}", plan.message)
+            } else {
+                format!("run on {name}: cd {} && {}", plan.cwd, plan.command)
+            });
+        }
         let Some(host) = rec.ssh_host.as_deref() else {
             anyhow::bail!(
                 "node has no SSH host; run there: cd {} && {}",

@@ -312,6 +312,14 @@ fn main() -> anyhow::Result<()> {
     }
     println!("and it came back on the merged board");
 
+    // Jump in must come back as an instruction, not an error. A Windows node
+    // has no herdr and can never focus a pane, and the server has no terminal
+    // to open one in, so this is the normal answer rather than a failure.
+    match remote.jump_in(&node_id, &card.id) {
+        Ok(msg) => println!("jump in: {msg}"),
+        Err(e) => anyhow::bail!("jump in should degrade, not error: {e}"),
+    }
+
     // The roster methods are refused, on purpose and with a reason.
     match remote.pairing_code() {
         Err(e) => println!("roster refused, as it should be: {e}"),
