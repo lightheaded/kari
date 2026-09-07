@@ -162,9 +162,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           name="kari-node-${{ github.ref_name }}-x86_64-unknown-linux-gnu"
-          mkdir -p "$name"
-          cp target/release/kari-node LICENSE README.md "$name/"
-          tar czf "$name.tar.gz" "$name"
+          # The bare binary is published under exactly "$name", because that is
+          # the asset `kari-node update` asks for. So the tarball is staged in a
+          # directory that is NOT "$name" — using one name for both made `cp`
+          # put the binary inside the directory and `sha256sum` read a
+          # directory. The Windows job never hit this: its binary ends in .exe,
+          # so the two names differ there by accident rather than by design.
+          mkdir -p "$name.dir/$name"
+          cp target/release/kari-node LICENSE README.md "$name.dir/$name/"
+          tar czf "$name.tar.gz" -C "$name.dir" "$name"
           # The bare binary as well, for `kari-node update`. A node is one file,
           # so it replaces itself with one file: no tar reader in the node, and
           # nothing to get wrong about paths inside an archive. The tarball
