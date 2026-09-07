@@ -2324,7 +2324,7 @@ dependencies = [
 
 [[package]]
 name = "kari"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2345,7 +2345,7 @@ dependencies = [
 
 [[package]]
 name = "kari-cli"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2361,7 +2361,7 @@ dependencies = [
 
 [[package]]
 name = "kari-core"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "axum",
