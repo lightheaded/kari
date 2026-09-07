@@ -131,6 +131,46 @@ jobs:
           # Uninstall has to recognise the Windows shape it wrote.
           ! grep -q 'kari-node' "$CLAUDE_CONFIG_DIR/settings.json"
 
+  windows-desktop:
+    # The desktop app on Windows. The `check` job builds the same shell on
+    # macOS, against a different dependency set; only a real Windows build
+    # proves the app's cfg branches compile and that the bundler has what it
+    # needs. The installer is kept as an artifact, which is how a Windows box
+    # gets a build between releases.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: windows-desktop
+
+      - name: Install the frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the app and the installer
+        shell: bash
+        # NSIS only: it installs per user, which is what a tray app that reads
+        # one user's Claude Code state wants, and it is the bundle the updater
+        # replaces in place.
+        #
+        # Updater artifacts are off here. They have to be signed, the signing
+        # key is a release secret, and `tauri build` fails rather than writing
+        # an unsigned one. CI proves the build; the release job makes the
+        # signed artifacts.
+        run: bun tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kari-windows-nsis
+          path: target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
   android:
     # The phone app. The generated Android project is not tracked, so the job
     # creates it, then builds a debug APK for arm64 to prove the shell and the

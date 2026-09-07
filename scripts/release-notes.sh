@@ -203,6 +203,10 @@ The app is not signed. After you copy it to Applications, run:
 xattr -dr com.apple.quarantine /Applications/kari.app
 \`\`\`
 
+On Windows, run \`kari_${tag#v}_x64-setup.exe\`. It installs for the current user,
+because kari reads the Claude Code state of whoever is logged in. That installer is
+not signed either, so SmartScreen asks once: More info, then Run anyway.
+
 An installed kari updates itself to this release: it checks on start and every six hours,
 writes the new version beside the running one and offers a restart. Settings, Updates has the switch.
 

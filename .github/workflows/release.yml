@@ -138,6 +138,58 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }}
 
+  windows-desktop:
+    # The desktop app for Windows, as an NSIS installer. It runs after `build`
+    # rather than beside it, and for the same reason that matrix is serial:
+    # tauri-action writes `latest.json` by reading the copy already on the
+    # release, adding its own platform and putting it back. In parallel with a
+    # macOS job, one of the two platforms is lost and the updater then answers
+    # "no update" for it.
+    needs: [create-release, build]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: release-windows-desktop
+
+      - name: Install the frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Refuse to run without a signing key
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          # Same reason as the macOS job: without the key this publishes a
+          # release that no installed kari can update to.
+          if [ -z "$KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is a required repository secret."
+            exit 1
+          fi
+
+      - name: Build and upload the installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          # NSIS only. It installs per user, which suits a tray app that reads
+          # one user's Claude Code state, and `installMode: passive` in
+          # tauri.conf.json is an NSIS setting: an MSI would ignore it and the
+          # updater would put a dialog in front of an unattended restart.
+          args: --target x86_64-pc-windows-msvc --bundles nsis
+
   node-binary:
     # The headless node for a Linux host. The desktop app connects to it over
     # an SSH port forward. Attached to the release as a tarball.
@@ -297,6 +349,7 @@ jobs:
       [
         create-release,
         build,
+        windows-desktop,
         node-binary,
         windows-node-binary,
         android-apk,

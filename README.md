@@ -7,13 +7,15 @@
   </picture>
 </p>
 
-kari (Estonian: herd) is a macOS tray app that shows every Claude Code session as a card on a Kanban board. The board updates itself from local Claude Code state. Backlog tasks can start as background sessions when quota is left over. More than one machine can share the board: a Linux or macOS host runs the headless node, and the app reaches it over SSH.
+kari (Estonian: herd) is a tray app for macOS and Windows that shows every Claude Code session as a card on a Kanban board. The board updates itself from local Claude Code state. Backlog tasks can start as background sessions when quota is left over. More than one machine can share the board: a Linux or macOS host runs the headless node, and the app reaches it over SSH.
 
 kari works with the tools you already use. It reads what Claude Code writes to disk and never writes there. When [herdr](https://github.com/herdrdev/herdr) runs, kari maps sessions to herdr panes and can open new sessions in them.
 
 The screenshot above shows the current release with a demo board. `TOUR.md` walks through every view. Design: see `DESIGN.md`.
 
 ## Install
+
+### macOS
 
 1. Download the `.dmg` for your Mac from the [latest release](https://github.com/lightheaded/kari/releases/latest): `aarch64` for Apple silicon, `x64` for Intel.
 2. Open the image and drag kari to Applications.
@@ -26,7 +28,20 @@ xattr -dr com.apple.quarantine /Applications/kari.app
 4. Start kari. It appears in the menu bar and reads your Claude Code state.
 5. Optional: run `scripts/install-statusline.sh` for quota meters, and click "Install hooks" in Settings for live state. Both are described below.
 
-kari keeps itself current after that. See "Updates".
+### Windows
+
+1. Download `kari_<version>_x64-setup.exe` from the [latest release](https://github.com/lightheaded/kari/releases/latest).
+2. Run it. The installer is not signed, so SmartScreen asks once: More info, then Run anyway.
+3. It installs for the current user, not for the machine. That is deliberate: kari reads the Claude Code state of whoever is logged in, so an all-users install would put the app in front of a profile it cannot read.
+4. Start kari. It appears in the notification area and reads your Claude Code state.
+5. Optional: click "Install hooks" in Settings for live state, and run `kari.exe statusline install` once from the install directory for quota meters. Both register the app binary itself with a subcommand, because Windows has no `sh` to run the wrapper script that macOS uses.
+
+Two things a Mac has and Windows does not, both by construction:
+
+- **"Jump in" opens nothing locally.** The terminal driver is AppleScript, and there is no Windows equivalent yet. Cards, state, quota meters and background jobs all work; a card on a *remote* node still jumps in over SSH.
+- **herdr pane mapping is absent.** herdr talks over a Unix socket.
+
+kari keeps itself current after that on both platforms. See "Updates".
 
 ## What works
 
@@ -49,6 +64,7 @@ kari keeps itself current after that. See "Updates".
 ## Requirements
 
 - macOS 12 or later, Claude Code 2.1 or later, `jq`.
+- Or Windows 10 1809 or later, with the WebView2 runtime, which Windows 11 already has. `jq` is not needed there: nothing on the Windows path shells out to it.
 - Optional: herdr 0.8 or later for pane mapping.
 - For a remote node: an SSH login on that host, plus `kari-node` and Claude Code there.
 - To build from source: Rust toolchain (`rustup`), Bun.
