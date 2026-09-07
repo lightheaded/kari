@@ -31,6 +31,7 @@ fn agent_sock() -> Option<String> {
 
 fn ssh_command() -> Command {
     let mut c = Command::new(ssh_bin());
+    crate::proc::quiet(&mut c);
     c.env("PATH", paths::child_path());
     if let Some(s) = agent_sock() {
         c.env("SSH_AUTH_SOCK", s);

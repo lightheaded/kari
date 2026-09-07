@@ -262,6 +262,7 @@ pub fn start_background(
     let claude =
         paths::which("claude").ok_or_else(|| anyhow::anyhow!("claude not found on PATH"))?;
     let mut cmd = Command::new(claude);
+    crate::proc::quiet(&mut cmd);
     cmd.current_dir(cwd)
         .env("PATH", paths::child_path())
         .arg("--bg");
@@ -350,7 +351,9 @@ pub fn strip_ansi(s: &str) -> String {
 pub fn stop_background(job_id: &str) -> anyhow::Result<()> {
     let claude =
         paths::which("claude").ok_or_else(|| anyhow::anyhow!("claude not found on PATH"))?;
-    let out = Command::new(claude)
+    let mut cmd = Command::new(claude);
+    crate::proc::quiet(&mut cmd);
+    let out = cmd
         .args(["stop", job_id])
         .env("PATH", paths::child_path())
         .stdin(Stdio::null())

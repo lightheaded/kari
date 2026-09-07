@@ -70,6 +70,7 @@ pub fn generate(facts: &SessionFacts, model: &str) -> anyhow::Result<Summary> {
     let workdir = paths::kari_dir().join("summaries");
     std::fs::create_dir_all(&workdir)?;
     let mut cmd = Command::new(claude);
+    crate::proc::quiet(&mut cmd);
     cmd.current_dir(&workdir)
         .env("PATH", paths::child_path())
         .env_remove("CLAUDECODE")

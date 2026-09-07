@@ -11,6 +11,7 @@ pub fn list() -> anyhow::Result<Vec<BgJob>> {
     let claude =
         paths::which("claude").ok_or_else(|| anyhow::anyhow!("claude not found on PATH"))?;
     let mut cmd = Command::new(claude);
+    crate::proc::quiet(&mut cmd);
     cmd.args(["agents", "--json", "--all"])
         .env("PATH", paths::child_path());
     let out = run_with_timeout(cmd, Duration::from_secs(20))?;
