@@ -130,19 +130,43 @@ pub fn child_path() -> String {
 }
 
 /// The machine's host name, without a domain. Falls back to "kari".
+///
+/// The order matters, and the first entry is the whole point. A node names
+/// itself with this when nobody has named it, and asking a *program* for the
+/// answer means the answer depends on `PATH`. Under systemd it does not
+/// survive: a unit gets only the `path` its module lists, `hostname` lives in
+/// neither coreutils nor systemd, and NixOS writes no `/etc/hostname` when the
+/// host name comes from outside (a container taking its name from its host).
+/// Every source then fails and the node calls itself "kari" — the app's name,
+/// on every machine at once, which is exactly the name that must not be
+/// guessable from nothing. The kernel is asked first because it always knows
+/// and needs no PATH.
 pub fn hostname() -> String {
+    // The kernel's own answer. No process, no PATH, always present on Linux.
+    #[cfg(target_os = "linux")]
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
+    #[cfg(not(target_os = "linux"))]
+    let kernel: Option<String> = None;
+
     // Windows has no `hostname -s` and no /etc/hostname, but every session
     // carries the name in the environment.
     #[cfg(windows)]
-    let first = std::env::var("COMPUTERNAME").ok();
+    let spawned = std::env::var("COMPUTERNAME").ok();
     #[cfg(not(windows))]
-    let first = std::process::Command::new("hostname")
-        .arg("-s")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    first
+    let spawned = || {
+        std::process::Command::new("hostname")
+            .arg("-s")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    #[cfg(windows)]
+    let spawned = || spawned.clone();
+
+    kernel
+        .filter(|s: &String| !s.trim().is_empty())
+        .or_else(spawned)
         .filter(|s: &String| !s.trim().is_empty())
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
         .map(|s| s.trim().split('.').next().unwrap_or("").to_string())
@@ -199,6 +223,39 @@ pub fn project_display_name(cwd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The regression this guards cost a node its name. A systemd unit is
+    /// given only the `path` its module lists, `hostname` is in neither
+    /// coreutils nor systemd, and a NixOS container that takes its name from
+    /// its host has no `/etc/hostname`. Every source failed and the node
+    /// called itself "kari" — the app's own name — which on a board of several
+    /// such nodes makes them indistinguishable.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn the_host_name_does_not_depend_on_a_program_being_on_path() {
+        let kernel =
+            std::fs::read_to_string("/proc/sys/kernel/hostname").expect("linux always has this");
+        let kernel = kernel.trim().split('.').next().unwrap_or("").to_string();
+        if kernel.is_empty() {
+            return; // Nothing to compare against; the fallback chain is right.
+        }
+
+        // Whatever PATH holds, the kernel's answer is the one that comes back.
+        let restored = std::env::var_os("PATH");
+        // SAFETY: single-threaded test, and PATH is put back before it ends.
+        unsafe { std::env::set_var("PATH", "") };
+        let got = hostname();
+        match restored {
+            Some(p) => unsafe { std::env::set_var("PATH", p) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        assert_eq!(got, kernel);
+        assert_ne!(
+            got, "kari",
+            "a node fell back to the app name instead of asking the kernel"
+        );
+    }
 
     #[test]
     fn a_display_name_is_not_a_working_directory() {
