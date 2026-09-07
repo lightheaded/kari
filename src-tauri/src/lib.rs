@@ -207,6 +207,49 @@ async fn set_automation_mode(
     .await
 }
 
+/// What server this device uses, if any, and whether the hub in this process is
+/// a client of one. `configured` and `active` differ until a restart, which is
+/// exactly the thing the UI has to be able to say.
+#[derive(serde::Serialize)]
+struct ServerState2 {
+    url: String,
+    active: bool,
+}
+
+#[tauri::command]
+fn get_server(state: State<'_, AppState>) -> ServerState2 {
+    ServerState2 {
+        url: kari_core::remote::server_config()
+            .map(|(u, _)| u)
+            .unwrap_or_default(),
+        active: state.hub.is_remote(),
+    }
+}
+
+/// Point this device at a server. The server is contacted before anything is
+/// written, so a typo or a wrong token is refused here rather than becoming an
+/// empty board with no explanation.
+#[tauri::command]
+async fn set_server(url: String, token: String) -> R<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        kari_core::remote::set_server(&url, &token)
+            .map(|id| {
+                format!(
+                    "{} {} · {} node(s) linked",
+                    id.app, id.version, id.nodes_online
+                )
+            })
+            .map_err(err)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
+fn clear_server() -> R<()> {
+    kari_core::remote::clear_server().map_err(err)
+}
+
 #[tauri::command]
 fn get_columns(state: State<'_, AppState>) -> Vec<Column> {
     state.hub.columns()
@@ -758,6 +801,9 @@ macro_rules! handlers {
             quit_now,
             reorder_cards,
             set_automation_mode,
+            get_server,
+            set_server,
+            clear_server,
             get_columns,
             set_columns,
             reset_columns,

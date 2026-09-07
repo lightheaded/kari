@@ -48,6 +48,9 @@ impl RemoteHub {
     /// down, because the app must still start and show its last board when the
     /// network is not there. The event follower reconnects on its own.
     pub fn connect(base: &str, token: &str, engine: Arc<Engine>) -> Arc<RemoteHub> {
+        // rustls will not pick a provider on its own, and the panic lands on
+        // whichever thread happened to dial. See link::ensure_crypto_provider.
+        crate::link::ensure_crypto_provider();
         let (tx, _) = broadcast::channel(256);
         let hub = Arc::new(RemoteHub {
             base: base.trim_end_matches('/').to_string(),
@@ -463,6 +466,10 @@ impl HubApi for RemoteHub {
         )
     }
 
+    fn is_remote(&self) -> bool {
+        true
+    }
+
     fn local_engine(&self) -> &Arc<Engine> {
         &self.engine
     }
@@ -487,6 +494,83 @@ pub fn server_config() -> Option<(String, String)> {
         .trim()
         .to_string();
     Some((base, token))
+}
+
+/// Point this device at a server, after checking that the server is really
+/// there and really accepts the token.
+///
+/// Checked rather than merely written, because the alternative is a device that
+/// looks configured, shows an empty board, and gives the person no way to tell
+/// a typo from an unreachable network.
+pub fn set_server(base: &str, token: &str) -> anyhow::Result<ServerIdentity> {
+    let base = base.trim().trim_end_matches('/');
+    if base.is_empty() {
+        anyhow::bail!("give the server's address, such as https://kari.example.com");
+    }
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        anyhow::bail!("the address must start with http:// or https://");
+    }
+    let token = token.trim();
+    if token.is_empty() {
+        anyhow::bail!("give the token the server expects: `kari-server token` prints it");
+    }
+
+    crate::link::ensure_crypto_provider();
+    let probe = RemoteHub {
+        base: base.to_string(),
+        token: token.to_string(),
+        http: Client::builder().timeout(Duration::from_secs(15)).build()?,
+        engine: Engine::open()?,
+        tx: broadcast::channel(1).0,
+    };
+    let id = probe.health()?;
+    if id.app != "kari-server" {
+        anyhow::bail!("{base} answered, but it is not a kari server");
+    }
+    // The token is only proved by a route that checks it. Health is open, so a
+    // wrong token would otherwise be found much later, on the first real call.
+    let _: Vec<crate::model::NodeStatus> = probe.get("/kari/v1/hub/nodes")?;
+
+    let dir = crate::paths::kari_dir();
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("server-url"), base)?;
+    write_token(&crate::paths::server_token_file(), token)?;
+    Ok(id)
+}
+
+#[cfg(unix)]
+fn write_token(path: &std::path::Path, token: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    // 0600 from the moment it exists, rather than written and then chmod'd.
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(token.as_bytes())?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_token(path: &std::path::Path, token: &str) -> anyhow::Result<()> {
+    std::fs::write(path, token)?;
+    Ok(())
+}
+
+/// Stop using a server. The board goes back to whatever this device can reach
+/// by itself, which on a phone is nothing until it is pointed at another one.
+pub fn clear_server() -> anyhow::Result<()> {
+    let dir = crate::paths::kari_dir();
+    for f in [dir.join("server-url"), crate::paths::server_token_file()] {
+        match std::fs::remove_file(&f) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
 }
 
 /// The hub this device should use: the server named in its configuration, or

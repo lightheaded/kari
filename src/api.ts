@@ -21,16 +21,23 @@ import type {
   Summary,
 } from "./types";
 
-const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const inTauri =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 /** A browser preview served by the Vite dev server, where fixtures stand in
  *  for the app core. A packaged app is served from its own protocol, so a
  *  missing bridge there is a fault to report, not a reason to read fixtures. */
-const inDevServer = typeof window !== "undefined" && /^https?:\/\/localhost:\d+$/.test(window.location.origin);
+const inDevServer =
+  typeof window !== "undefined" &&
+  /^https?:\/\/localhost:\d+$/.test(window.location.origin);
 
 /** The page has no way to reach the app core. Fail loudly: a silent fall back
  *  to fixtures inside a packaged app looks like a call that never answers. */
 function noBridge<T>(what: string): Promise<T> {
-  return Promise.reject(new Error(`${what}: this page cannot reach the app core (the Tauri bridge is missing)`));
+  return Promise.reject(
+    new Error(
+      `${what}: this page cannot reach the app core (the Tauri bridge is missing)`,
+    ),
+  );
 }
 
 /** Browser preview without Tauri: the Vite dev server serves `fixtures/*.json` at `/dev/*.json`.
@@ -40,7 +47,9 @@ async function devFixture<T>(name: string, fallback?: T): Promise<T> {
   const r = await fetch(`/dev/${name}.json`);
   if (!r.ok) {
     if (fallback !== undefined) return fallback;
-    throw new Error(`no fixtures/${name}.json; run the board example with --json`);
+    throw new Error(
+      `no fixtures/${name}.json; run the board example with --json`,
+    );
   }
   return r.json();
 }
@@ -119,18 +128,33 @@ export const api = {
         ? devFixture<BoardView | HubBoard>("board").then(toHubBoard)
         : noBridge<HubBoard>("board"),
   refresh: () => invoke<void>("refresh"),
-  moveCard: (nodeId: string, cardId: string, columnId: string) => invoke<void>("move_card", { nodeId, cardId, columnId }),
-  addTask: (nodeId: string, task: NewTask) => invoke<Card>("add_task", { nodeId, task }),
-  patchCard: (nodeId: string, cardId: string, patch: CardPatch) => invoke<Card>("patch_card", { nodeId, cardId, patch }),
-  deleteCard: (nodeId: string, cardId: string) => invoke<void>("delete_card", { nodeId, cardId }),
+  moveCard: (nodeId: string, cardId: string, columnId: string) =>
+    invoke<void>("move_card", { nodeId, cardId, columnId }),
+  addTask: (nodeId: string, task: NewTask) =>
+    invoke<Card>("add_task", { nodeId, task }),
+  patchCard: (nodeId: string, cardId: string, patch: CardPatch) =>
+    invoke<Card>("patch_card", { nodeId, cardId, patch }),
+  deleteCard: (nodeId: string, cardId: string) =>
+    invoke<void>("delete_card", { nodeId, cardId }),
   /** Put a deleted card back, exactly as it was. The undo of `deleteCard`. */
-  restoreCard: (nodeId: string, card: Card) => invoke<Card>("restore_card", { nodeId, card }),
+  restoreCard: (nodeId: string, card: Card) =>
+    invoke<Card>("restore_card", { nodeId, card }),
   /** Move one task card to another node. The card is recreated there, so the
    *  returned card has a new id. */
   moveCardToNode: (nodeId: string, cardId: string, toNodeId: string) =>
     invoke<Card>("move_card_to_node", { nodeId, cardId, toNodeId }),
+  /** The server this device is pointed at, and whether the running hub is
+   *  already a client of it. They differ until the app is restarted. */
+  getServer: () => invoke<{ url: string; active: boolean }>("get_server"),
+  /** Point this device at a server. The server is contacted first, so a bad
+   *  address or token is refused here rather than becoming an empty board. */
+  setServer: (url: string, token: string) =>
+    invoke<string>("set_server", { url, token }),
+  /** Stop using a server. Takes effect on the next launch. */
+  clearServer: () => invoke<void>("clear_server"),
   /** Tell the app whether a form holds unsaved input, so a quit can ask first. */
-  setDirty: (dirty: boolean) => (inTauri ? invoke<void>("set_dirty", { dirty }) : Promise.resolve()),
+  setDirty: (dirty: boolean) =>
+    inTauri ? invoke<void>("set_dirty", { dirty }) : Promise.resolve(),
   quitNow: () => invoke<void>("quit_now"),
   /** Store a manual order for one column. `ranked` is top first; `unranked` goes back to automatic. */
   reorderCards: (nodeId: string, ranked: string[], unranked: string[]) =>
@@ -143,49 +167,75 @@ export const api = {
   resetColumns: () => invoke<void>("reset_columns"),
   settings: () =>
     inTauri
-      ? invoke<string>("get_settings_json").then((s) => JSON.parse(s) as Settings)
+      ? invoke<string>("get_settings_json").then(
+          (s) => JSON.parse(s) as Settings,
+        )
       : inDevServer
         ? devFixture<Settings>("settings")
         : noBridge<Settings>("settings"),
-  setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
+  setSettings: (settings: Settings) =>
+    invoke<void>("set_settings", { settings }),
   /** Name an account, or clear the name with an empty string. */
-  setAccountAlias: (key: string, alias: string) => invoke<void>("set_account_alias", { key, alias }),
-  jumpIn: (nodeId: string, cardId: string) => invoke<string>("jump_in", { nodeId, cardId }),
-  startCard: (nodeId: string, cardId: string, prompt?: string) => invoke<string>("start_card", { nodeId, cardId, prompt: prompt ?? null }),
-  stopCard: (nodeId: string, cardId: string) => invoke<void>("stop_card", { nodeId, cardId }),
+  setAccountAlias: (key: string, alias: string) =>
+    invoke<void>("set_account_alias", { key, alias }),
+  jumpIn: (nodeId: string, cardId: string) =>
+    invoke<string>("jump_in", { nodeId, cardId }),
+  startCard: (nodeId: string, cardId: string, prompt?: string) =>
+    invoke<string>("start_card", { nodeId, cardId, prompt: prompt ?? null }),
+  stopCard: (nodeId: string, cardId: string) =>
+    invoke<void>("stop_card", { nodeId, cardId }),
   stopAll: () => invoke<number>("stop_all"),
-  quotaHistory: (nodeId: string, limit: number) => invoke<QuotaSample[]>("quota_history", { nodeId, limit }),
+  quotaHistory: (nodeId: string, limit: number) =>
+    invoke<QuotaSample[]>("quota_history", { nodeId, limit }),
   projects: (nodeId: string) => invoke<Project[]>("list_projects", { nodeId }),
-  statuslineWrapper: (originalCommand: string) => invoke<string>("statusline_wrapper", { originalCommand }),
+  statuslineWrapper: (originalCommand: string) =>
+    invoke<string>("statusline_wrapper", { originalCommand }),
   paths: () => invoke<Record<string, string>>("kari_paths"),
   installHooks: () => invoke<string>("install_hooks"),
   uninstallHooks: () => invoke<void>("uninstall_hooks"),
-  summarizeCard: (nodeId: string, cardId: string) => invoke<Summary>("summarize_card", { nodeId, cardId }),
+  summarizeCard: (nodeId: string, cardId: string) =>
+    invoke<Summary>("summarize_card", { nodeId, cardId }),
   calibration: () => invoke<Calibration>("get_calibration"),
   fetchUsageNow: () => invoke<QuotaSample>("fetch_usage_now"),
-  proposal: (nodeId: string) => invoke<Proposal | null>("get_proposal", { nodeId }),
+  proposal: (nodeId: string) =>
+    invoke<Proposal | null>("get_proposal", { nodeId }),
   proposeNow: (nodeId: string) => invoke<Proposal>("propose_now", { nodeId }),
   acceptProposal: (nodeId: string, proposalId: string, cardIds?: string[]) =>
-    invoke<number>("accept_proposal", { nodeId, proposalId, cardIds: cardIds ?? null }),
-  snoozeProposal: (nodeId: string, proposalId: string, minutes: number) => invoke<void>("snooze_proposal", { nodeId, proposalId, minutes }),
-  dismissProposal: (nodeId: string, proposalId: string) => invoke<void>("dismiss_proposal", { nodeId, proposalId }),
-  stopProposal: (nodeId: string, proposalId: string) => invoke<number>("stop_proposal", { nodeId, proposalId }),
-  proposalHistory: (nodeId: string, limit: number) => invoke<Proposal[]>("proposal_history", { nodeId, limit }),
+    invoke<number>("accept_proposal", {
+      nodeId,
+      proposalId,
+      cardIds: cardIds ?? null,
+    }),
+  snoozeProposal: (nodeId: string, proposalId: string, minutes: number) =>
+    invoke<void>("snooze_proposal", { nodeId, proposalId, minutes }),
+  dismissProposal: (nodeId: string, proposalId: string) =>
+    invoke<void>("dismiss_proposal", { nodeId, proposalId }),
+  stopProposal: (nodeId: string, proposalId: string) =>
+    invoke<number>("stop_proposal", { nodeId, proposalId }),
+  proposalHistory: (nodeId: string, limit: number) =>
+    invoke<Proposal[]>("proposal_history", { nodeId, limit }),
   localAddresses: () => invoke<LocalAddress[]>("local_addresses"),
   listNodes: () => invoke<NodeStatus[]>("list_nodes"),
   addNode: (node: NewNode) => invoke<NodeStatus>("add_node", { node }),
-  updateNode: (nodeId: string, patch: NodePatch) => invoke<NodeStatus>("update_node", { nodeId, patch }),
+  updateNode: (nodeId: string, patch: NodePatch) =>
+    invoke<NodeStatus>("update_node", { nodeId, patch }),
   removeNode: (nodeId: string) => invoke<void>("remove_node", { nodeId }),
   pairNode: (nodeId: string) => invoke<string>("pair_node", { nodeId }),
   claimPrimary: () => invoke<string>("claim_primary"),
-  answerPermission: (nodeId: string, permissionId: string, behavior: "allow" | "deny") =>
-    invoke<void>("answer_permission", { nodeId, permissionId, behavior }),
-  setAwayMode: (nodeId: string, on: boolean) => invoke<void>("set_away_mode", { nodeId, on }),
+  answerPermission: (
+    nodeId: string,
+    permissionId: string,
+    behavior: "allow" | "deny",
+  ) => invoke<void>("answer_permission", { nodeId, permissionId, behavior }),
+  setAwayMode: (nodeId: string, on: boolean) =>
+    invoke<void>("set_away_mode", { nodeId, on }),
   pairingCode: () => invoke<string>("pairing_code"),
   jobLog: (nodeId: string, cardId: string, limit = 40) =>
     inTauri
       ? invoke<JobLogEntry[]>("job_log", { nodeId, cardId, limit })
-      : devFixture<Record<string, JobLogEntry[]>>("job-log", {}).then((m) => (m[cardId] ?? []).slice(0, limit)),
+      : devFixture<Record<string, JobLogEntry[]>>("job-log", {}).then((m) =>
+          (m[cardId] ?? []).slice(0, limit),
+        ),
 };
 
 /** The board changed on one node. The callback reloads the whole board. */

@@ -128,6 +128,15 @@ pub trait HubApi: Send + Sync + 'static {
 
     // --- this machine -----------------------------------------------------
 
+    /// True when this hub is a client of a server rather than the hub itself.
+    ///
+    /// The UI needs to know, because the controls that arbitrate between
+    /// several hubs — the primary lease — mean nothing when there is one hub
+    /// and it is somewhere else.
+    fn is_remote(&self) -> bool {
+        false
+    }
+
     /// This device's own store.
     ///
     /// Settings, the account aliases, the calibration and the hook

@@ -320,6 +320,37 @@ fn main() -> anyhow::Result<()> {
         Err(e) => anyhow::bail!("jump in should degrade, not error: {e}"),
     }
 
+    // Enrolment, the way a phone's Settings does it: check the server, write
+    // the two files, and open the hub from them. A wrong token is refused
+    // before anything is written, because a device that looks configured and
+    // shows an empty board gives the person nothing to go on.
+    let enrol_home = std::env::temp_dir().join(format!("kari-link-example-enrol-{port}"));
+    std::fs::create_dir_all(&enrol_home)?;
+    kari_core::paths::set_kari_dir(&enrol_home);
+    match kari_core::remote::set_server(&base, "not-the-token") {
+        Ok(_) => anyhow::bail!("a wrong token was accepted"),
+        Err(e) => println!("\nwrong token refused: {e}"),
+    }
+    if enrol_home.join("server-url").exists() {
+        anyhow::bail!("a refused enrolment still wrote the config");
+    }
+    let id = kari_core::remote::set_server(&base, &token)?;
+    println!("enrolled against {} {}", id.app, id.version);
+    let enrolled = kari_core::remote::open_hub_without_local(kari_core::Engine::open()?);
+    if !enrolled.is_remote() {
+        anyhow::bail!("an enrolled device still opened a local hub");
+    }
+    let eb = enrolled.board();
+    println!(
+        "board on the enrolled device: {} node(s), {} column(s)",
+        eb.nodes.len(),
+        eb.columns.len()
+    );
+    if eb.nodes.is_empty() {
+        anyhow::bail!("the enrolled device saw no nodes");
+    }
+    kari_core::remote::clear_server()?;
+
     // The roster methods are refused, on purpose and with a reason.
     match remote.pairing_code() {
         Err(e) => println!("roster refused, as it should be: {e}"),
@@ -329,6 +360,7 @@ fn main() -> anyhow::Result<()> {
     drop(node);
     drop(server);
     let _ = std::fs::remove_dir_all(&client_home);
+    let _ = std::fs::remove_dir_all(&enrol_home);
     println!("\ndone");
     Ok(())
 }
