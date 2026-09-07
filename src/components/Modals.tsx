@@ -1,7 +1,21 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AutomationMode, Column, DerivedState, LocalAddress, NewTask, NodeStatus, Project, Settings } from "../types";
-import { ALL_STATES, AUTOMATION_MODES, RUN_MODELS, STATE_LABEL } from "../types";
+import type {
+  AutomationMode,
+  Column,
+  DerivedState,
+  LocalAddress,
+  NewTask,
+  NodeStatus,
+  Project,
+  Settings,
+} from "../types";
+import {
+  ALL_STATES,
+  AUTOMATION_MODES,
+  RUN_MODELS,
+  STATE_LABEL,
+} from "../types";
 import { nodeDot, noAutoFill, proseField, relTime } from "../util";
 import { useAutoGrow } from "../hooks";
 import type { CloseGuard } from "../dirty";
@@ -9,7 +23,13 @@ import { useCloseGuard } from "../dirty";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
 
 /** The bar a first Escape shows on a form that holds unsaved input. */
-export function UnsavedBar({ guard, text }: { guard: CloseGuard; text: string }) {
+export function UnsavedBar({
+  guard,
+  text,
+}: {
+  guard: CloseGuard;
+  text: string;
+}) {
   if (!guard.asking) return null;
   return (
     <div className="unsaved" role="alert">
@@ -49,7 +69,10 @@ function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="modal" role="dialog" aria-label={title}>
         <header>
           <h3>{title}</h3>
@@ -58,7 +81,12 @@ function Modal({
             ✕
           </button>
         </header>
-        {guard && <UnsavedBar guard={guard} text={unsavedText ?? "This form holds unsaved input."} />}
+        {guard && (
+          <UnsavedBar
+            guard={guard}
+            text={unsavedText ?? "This form holds unsaved input."}
+          />
+        )}
         <div className="body" onInput={guard?.asking ? guard.keep : undefined}>
           {children}
         </div>
@@ -102,13 +130,18 @@ export function AddTaskModal({
   const [title, setTitle] = useState(defaultTitle ?? "");
   /** The project, with the node it belongs to. A path lives on one machine, so
    *  a switch of node must not carry the path over. */
-  const [picked, setPicked] = useState({ node: defaultNode, cwd: defaultProject ?? "" });
+  const [picked, setPicked] = useState({
+    node: defaultNode,
+    cwd: defaultProject ?? "",
+  });
   const cwd = picked.node === node ? picked.cwd : "";
   const setCwd = (v: string) => setPicked({ node, cwd: v });
   const [custom, setCustom] = useState("");
   const [prompt, setPrompt] = useState("");
   const target = columns.find((c) => c.id === columnId);
-  const [autoRun, setAutoRun] = useState(target?.accepts.includes("ready") ?? false);
+  const [autoRun, setAutoRun] = useState(
+    target?.accepts.includes("ready") ?? false,
+  );
   const [priority, setPriority] = useState(0);
   const [notes, setNotes] = useState("");
   const [model, setModel] = useState("");
@@ -122,7 +155,15 @@ export function AddTaskModal({
   const dir = cwd === "__custom" ? custom.trim() : cwd;
   const projectItems: PickerItem[] = [
     // The default can name a project that has no card of its own yet.
-    ...(cwd && !known ? [{ value: cwd, label: cwd.split("/").filter(Boolean).pop() ?? cwd, hint: cwd }] : []),
+    ...(cwd && !known
+      ? [
+          {
+            value: cwd,
+            label: cwd.split("/").filter(Boolean).pop() ?? cwd,
+            hint: cwd,
+          },
+        ]
+      : []),
     ...projects.map((p) => ({ value: p.cwd, label: p.name, hint: p.cwd })),
     { value: "__custom", label: "Other path…" },
   ];
@@ -182,7 +223,13 @@ export function AddTaskModal({
       )}
       <div className="field">
         <label>Title</label>
-        <input {...noAutoFill} autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs to happen" />
+        <input
+          {...noAutoFill}
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="What needs to happen"
+        />
       </div>
       {nodes.length > 1 && (
         <div className="field">
@@ -207,9 +254,19 @@ export function AddTaskModal({
           onChange={setCwd}
         />
         {cwd === "__custom" && (
-          <input {...noAutoFill} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="/absolute/path" />
+          <input
+            {...noAutoFill}
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            placeholder="/absolute/path"
+          />
         )}
-        {!dir && <div className="hint">This task cannot run until it has a project. Set one here, or later on the card.</div>}
+        {!dir && (
+          <div className="hint">
+            This task cannot run until it has a project. Set one here, or later
+            on the card.
+          </div>
+        )}
       </div>
       <div className="field">
         <label>Body (added under the title when the task runs)</label>
@@ -244,12 +301,21 @@ export function AddTaskModal({
         </div>
       </div>
       <label className="field inline">
-        <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={autoRun}
+          onChange={(e) => setAutoRun(e.target.checked)}
+        />
         <span>May run unattended</span>
       </label>
       <div className="field">
         <label>Notes</label>
-        <textarea {...proseField} {...notesGrow} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <textarea
+          {...proseField}
+          {...notesGrow}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
       </div>
     </Modal>
   );
@@ -257,9 +323,22 @@ export function AddTaskModal({
 
 const COLORS = ["neutral", "green", "amber", "rust", "slate"];
 
-export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: Column[]; onClose: () => void; onSave: (c: Column[]) => void; onReset: () => void }) {
-  const [cols, setCols] = useState<Column[]>(() => [...columns].sort((a, b) => a.order - b.order).map((c) => ({ ...c })));
-  const update = (i: number, patch: Partial<Column>) => setCols((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+export function ColumnsModal({
+  columns,
+  onClose,
+  onSave,
+  onReset,
+}: {
+  columns: Column[];
+  onClose: () => void;
+  onSave: (c: Column[]) => void;
+  onReset: () => void;
+}) {
+  const [cols, setCols] = useState<Column[]>(() =>
+    [...columns].sort((a, b) => a.order - b.order).map((c) => ({ ...c })),
+  );
+  const update = (i: number, patch: Partial<Column>) =>
+    setCols((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const move = (i: number, d: number) =>
     setCols((cs) => {
       const n = [...cs];
@@ -269,9 +348,18 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
       return n.map((c, k) => ({ ...c, order: k }));
     });
   const toggleState = (i: number, s: DerivedState) =>
-    update(i, { accepts: cols[i].accepts.includes(s) ? cols[i].accepts.filter((x) => x !== s) : [...cols[i].accepts, s] });
-  const unassigned = ALL_STATES.filter((s) => s !== "stale" && !cols.some((c) => !c.hidden && c.accepts.includes(s)));
-  const dirty = JSON.stringify(cols) !== JSON.stringify([...columns].sort((a, b) => a.order - b.order));
+    update(i, {
+      accepts: cols[i].accepts.includes(s)
+        ? cols[i].accepts.filter((x) => x !== s)
+        : [...cols[i].accepts, s],
+    });
+  const unassigned = ALL_STATES.filter(
+    (s) =>
+      s !== "stale" && !cols.some((c) => !c.hidden && c.accepts.includes(s)),
+  );
+  const dirty =
+    JSON.stringify(cols) !==
+    JSON.stringify([...columns].sort((a, b) => a.order - b.order));
   const guard = useCloseGuard(dirty, onClose);
   return (
     <Modal
@@ -288,30 +376,66 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
           <button className="btn" onClick={guard.requestClose}>
             Cancel
           </button>
-          <button className="btn primary" onClick={() => onSave(cols.map((c, k) => ({ ...c, order: k })))}>
+          <button
+            className="btn primary"
+            onClick={() => onSave(cols.map((c, k) => ({ ...c, order: k })))}
+          >
             Save
           </button>
         </>
       }
     >
       <div className="hint">
-        Each column accepts a set of derived states. A state that no visible column accepts falls back to the column that accepts Unknown. Stale cards are hidden unless a column
-        accepts Stale.
+        Each column accepts a set of derived states. A state that no visible
+        column accepts falls back to the column that accepts Unknown. Stale
+        cards are hidden unless a column accepts Stale.
       </div>
-      {unassigned.length > 0 && <div className="hint" style={{ color: "var(--amber)" }}>Not shown anywhere: {unassigned.map((s) => STATE_LABEL[s]).join(", ")}</div>}
+      {unassigned.length > 0 && (
+        <div className="hint" style={{ color: "var(--amber)" }}>
+          Not shown anywhere: {unassigned.map((s) => STATE_LABEL[s]).join(", ")}
+        </div>
+      )}
       {cols.map((c, i) => (
         <div key={c.id} className="colrow">
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <button className="btn ghost sm" onClick={() => move(i, -1)} aria-label="Up">
+            <button
+              className="btn ghost sm"
+              onClick={() => move(i, -1)}
+              aria-label="Up"
+            >
               ↑
             </button>
-            <button className="btn ghost sm" onClick={() => move(i, 1)} aria-label="Down">
+            <button
+              className="btn ghost sm"
+              onClick={() => move(i, 1)}
+              aria-label="Down"
+            >
               ↓
             </button>
           </div>
-          <input {...noAutoFill} type="text" value={c.name} onChange={(e) => update(i, { name: e.target.value })} />
-          <input {...noAutoFill} type="number" placeholder="WIP" value={c.wip_limit ?? ""} onChange={(e) => update(i, { wip_limit: e.target.value === "" ? null : Number(e.target.value) })} title="WIP limit" />
-          <select value={c.color ?? "neutral"} onChange={(e) => update(i, { color: e.target.value })}>
+          <input
+            {...noAutoFill}
+            type="text"
+            value={c.name}
+            onChange={(e) => update(i, { name: e.target.value })}
+          />
+          <input
+            {...noAutoFill}
+            type="number"
+            placeholder="WIP"
+            value={c.wip_limit ?? ""}
+            onChange={(e) =>
+              update(i, {
+                wip_limit:
+                  e.target.value === "" ? null : Number(e.target.value),
+              })
+            }
+            title="WIP limit"
+          />
+          <select
+            value={c.color ?? "neutral"}
+            onChange={(e) => update(i, { color: e.target.value })}
+          >
             {COLORS.map((k) => (
               <option key={k} value={k}>
                 {k}
@@ -319,16 +443,27 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
             ))}
           </select>
           <div style={{ display: "flex", gap: 4 }}>
-            <button className={`toggle ${c.hidden ? "" : "on"}`} onClick={() => update(i, { hidden: !c.hidden })}>
+            <button
+              className={`toggle ${c.hidden ? "" : "on"}`}
+              onClick={() => update(i, { hidden: !c.hidden })}
+            >
               {c.hidden ? "hidden" : "shown"}
             </button>
-            <button className="btn ghost sm" onClick={() => setCols((cs) => cs.filter((_, j) => j !== i))} aria-label="Delete column">
+            <button
+              className="btn ghost sm"
+              onClick={() => setCols((cs) => cs.filter((_, j) => j !== i))}
+              aria-label="Delete column"
+            >
               ✕
             </button>
           </div>
           <div className="accepts">
             {ALL_STATES.map((s) => (
-              <button key={s} className={`toggle ${c.accepts.includes(s) ? "on" : ""}`} onClick={() => toggleState(i, s)}>
+              <button
+                key={s}
+                className={`toggle ${c.accepts.includes(s) ? "on" : ""}`}
+                onClick={() => toggleState(i, s)}
+              >
                 {STATE_LABEL[s]}
               </button>
             ))}
@@ -338,7 +473,20 @@ export function ColumnsModal({ columns, onClose, onSave, onReset }: { columns: C
       <div>
         <button
           className="btn sm"
-          onClick={() => setCols((cs) => [...cs, { id: `col_${Date.now().toString(36)}`, name: "New column", order: cs.length, accepts: [], wip_limit: null, color: "neutral", hidden: false }])}
+          onClick={() =>
+            setCols((cs) => [
+              ...cs,
+              {
+                id: `col_${Date.now().toString(36)}`,
+                name: "New column",
+                order: cs.length,
+                accepts: [],
+                wip_limit: null,
+                color: "neutral",
+                hidden: false,
+              },
+            ])
+          }
         >
           + Column
         </button>
@@ -376,9 +524,18 @@ function NodeRow({
   };
   return (
     <div className="noderow">
-      <span className={`pill ${node.online && node.enabled ? "on" : ""}`} title={node.enabled ? (node.online ? "online" : "offline") : "disabled"}>
+      <span
+        className={`pill ${node.online && node.enabled ? "on" : ""}`}
+        title={node.enabled ? (node.online ? "online" : "offline") : "disabled"}
+      >
         <span className={nodeDot(node)} />
-        {local ? "this machine" : node.enabled ? (node.online ? "online" : "offline") : "off"}
+        {local
+          ? "this machine"
+          : node.enabled
+            ? node.online
+              ? "online"
+              : "offline"
+            : "off"}
       </span>
       {local ? (
         <input
@@ -400,17 +557,36 @@ function NodeRow({
         />
       )}
       <span className="hint">
-        {local ? "local" : node.ssh_host ? `${node.ssh_host} · port ${node.remote_port}` : node.address ? node.address : `127.0.0.1:${node.remote_port}`}
+        {local
+          ? "local"
+          : node.ssh_host
+            ? `${node.ssh_host} · port ${node.remote_port}`
+            : node.address
+              ? node.address
+              : `127.0.0.1:${node.remote_port}`}
         {node.version ? ` · ${node.version}` : ""}
         {node.last_seen ? ` · seen ${relTime(node.last_seen)} ago` : ""}
         {!local && !node.paired ? " · not paired" : ""}
-        {node.primary ? " · columns: this device" : node.lease ? ` · columns: ${node.lease.hub_name}` : ""}
+        {node.primary
+          ? " · columns: this device"
+          : node.lease
+            ? ` · columns: ${node.lease.hub_name}`
+            : ""}
         {node.away_mode ? " · away mode" : ""}
       </span>
-      {node.addresses?.length > 1 && <span className="hint">also at {node.addresses.slice(1).join(", ")}</span>}
+      {node.addresses?.length > 1 && (
+        <span className="hint">
+          also at {node.addresses.slice(1).join(", ")}
+        </span>
+      )}
       <div className="nodeacts">
         {node.online && (
-          <button className="btn ghost sm" disabled={busy} onClick={onAway} title="Hold permission prompts for a remote answer, such as from a phone">
+          <button
+            className="btn ghost sm"
+            disabled={busy}
+            onClick={onAway}
+            title="Hold permission prompts for a remote answer, such as from a phone"
+          >
             {node.away_mode ? "Away mode off" : "Away mode on"}
           </button>
         )}
@@ -435,12 +611,19 @@ function NodeRow({
               >
                 Remove it
               </button>
-              <button className="btn ghost sm" onClick={() => setConfirm(false)}>
+              <button
+                className="btn ghost sm"
+                onClick={() => setConfirm(false)}
+              >
                 Keep
               </button>
             </>
           ) : (
-            <button className="btn ghost sm" disabled={busy} onClick={() => setConfirm(true)}>
+            <button
+              className="btn ghost sm"
+              disabled={busy}
+              onClick={() => setConfirm(true)}
+            >
               Remove
             </button>
           )}
@@ -448,6 +631,124 @@ function NodeRow({
       )}
       {node.error && <div className="nodeerr">{node.error}</div>}
     </div>
+  );
+}
+
+/// Point this device at a server, or take it off one.
+///
+/// A file beside the store rather than a setting in it: the app has to know
+/// which hub to open before it has one to read a setting from. So a change
+/// takes effect on the next launch, and this says so rather than leaving the
+/// person to wonder why the board did not move.
+function ServerSection() {
+  const [state, setState] = useState<{ url: string; active: boolean } | null>(
+    null,
+  );
+  const [url, setUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .getServer()
+      .then((s) => {
+        setState(s);
+        setUrl(s.url);
+      })
+      .catch(() => setState({ url: "", active: false }));
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const what = await api.setServer(url, token);
+      setToken("");
+      setState({
+        url: url.trim().replace(/\/+$/, ""),
+        active: state?.active ?? false,
+      });
+      setMsg(`${what}. Restart kari to use it.`);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const forget = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.clearServer();
+      setState({ url: "", active: state?.active ?? false });
+      setUrl("");
+      setMsg("Server cleared. Restart kari.");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <h5>Server</h5>
+      <div className="hint">
+        A server holds the board, and the nodes dial it rather than waiting to
+        be dialled. With one, this device needs no way to reach each machine —
+        no SSH forward, no address. Without one, it reaches every node itself,
+        which is the arrangement below.
+      </div>
+      <div className="field">
+        <label>Address</label>
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://kari.example.com"
+          spellCheck={false}
+        />
+      </div>
+      <div className="field">
+        <label>Token</label>
+        <input
+          type="password"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder={
+            state?.url
+              ? "leave blank to keep the saved one"
+              : "kari-server token"
+          }
+          spellCheck={false}
+        />
+      </div>
+      <div className="primaryrow">
+        <button
+          className="btn sm"
+          disabled={busy || !url.trim() || !token.trim()}
+          onClick={save}
+        >
+          Use this server
+        </button>
+        {state?.url && (
+          <button className="btn sm ghost" disabled={busy} onClick={forget}>
+            Forget
+          </button>
+        )}
+        {state?.active && (
+          <span className="pill on">the board comes from {state.url}</span>
+        )}
+        {state && !state.active && state.url && (
+          <span className="pill">saved · restart kari to use it</span>
+        )}
+      </div>
+      {msg && <div className="hint">{msg}</div>}
+      {err && <div className="nodeerr">{err}</div>}
+    </>
   );
 }
 
@@ -479,10 +780,17 @@ function NodesSection({
   const [code, setCode] = useState<string | null>(null);
   const [addrs, setAddrs] = useState<LocalAddress[]>([]);
   useEffect(() => {
-    api.localAddresses().then(setAddrs).catch(() => {});
+    api
+      .localAddresses()
+      .then(setAddrs)
+      .catch(() => {});
   }, []);
   /** One entry per interface that has a private address. */
-  const ifaces = addrs.filter((a) => a.private).filter((a, i, all) => all.findIndex((b) => b.interface === a.interface) === i);
+  const ifaces = addrs
+    .filter((a) => a.private)
+    .filter(
+      (a, i, all) => all.findIndex((b) => b.interface === a.interface) === i,
+    );
   /** The network of an address, so the choice survives a renamed tunnel. A
    *  tunnel is `utun4` today and `utun7` tomorrow, while its network stays. */
   const network = (ip: string) => {
@@ -524,13 +832,22 @@ function NodesSection({
 
   return (
     <div className="section">
+      <ServerSection />
       <h5>Nodes</h5>
       <div className="hint">
-        kari connects over an SSH port forward and reads the node's token once. The node must run <code>kari-node serve</code>. A node on a private network takes an address and its token instead. A name is how the other kari
-        instances see the machine. Empty means the host name.
+        kari connects over an SSH port forward and reads the node's token once.
+        The node must run <code>kari-node serve</code>. A node on a private
+        network takes an address and its token instead. A name is how the other
+        kari instances see the machine. Empty means the host name.
       </div>
       <div className="primaryrow">
-        <span className={`pill ${primary ? "on" : ""}`}>{primary ? "this device pushes the columns" : holder ? `${holder} pushes the columns` : "no primary yet"}</span>
+        <span className={`pill ${primary ? "on" : ""}`}>
+          {primary
+            ? "this device pushes the columns"
+            : holder
+              ? `${holder} pushes the columns`
+              : "no primary yet"}
+        </span>
         {!primary && (
           <button
             className="btn sm"
@@ -570,22 +887,37 @@ function NodesSection({
             <option value="*">every private address</option>
           </select>
           <div className="hint">
-            A hub on a phone needs this, because a phone cannot open an SSH forward. Pick the VPN: kari then answers on that address as well as on loopback, and the pairing code carries it. The choice is
-            kept as a network, so a tunnel that comes back under another interface name still counts. A public address is never bound. The list is read again every 20 seconds, so a VPN that comes up later
-            needs no restart.
+            A hub on a phone needs this, because a phone cannot open an SSH
+            forward. Pick the VPN: kari then answers on that address as well as
+            on loopback, and the pairing code carries it. The choice is kept as
+            a network, so a tunnel that comes back under another interface name
+            still counts. A public address is never bound. The list is read
+            again every 20 seconds, so a VPN that comes up later needs no
+            restart.
           </div>
         </div>
         {listenOn && (
           <div className="hint">
             {listenOn === "*" ? "every private address · " : `${listenOn} · `}
-            {reach.length ? `reachable at ${reach.join(", ")}` : "not bound yet. Bring the interface up, then look again in 20 seconds."}
+            {reach.length
+              ? `reachable at ${reach.join(", ")}`
+              : "not bound yet. Bring the interface up, then look again in 20 seconds."}
           </div>
         )}
       </div>
       {code && (
         <div className="paircode">
-          <div className="hint">Paste this in the phone's Nodes tab. The code carries the addresses of every node, so the phone types none. It holds the node tokens: show it at home only, and hide it when done.</div>
-          <textarea readOnly value={code} rows={3} onFocus={(e) => e.currentTarget.select()} />
+          <div className="hint">
+            Paste this in the phone's Nodes tab. The code carries the addresses
+            of every node, so the phone types none. It holds the node tokens:
+            show it at home only, and hide it when done.
+          </div>
+          <textarea
+            readOnly
+            value={code}
+            rows={3}
+            onFocus={(e) => e.currentTarget.select()}
+          />
         </div>
       )}
       <div className="nodelist">
@@ -596,8 +928,12 @@ function NodesSection({
             busy={busy}
             localName={localName}
             onLocalName={onLocalName}
-            onRename={(newName) => change(() => api.updateNode(n.id, { name: newName }))}
-            onToggle={() => change(() => api.updateNode(n.id, { enabled: !n.enabled }))}
+            onRename={(newName) =>
+              change(() => api.updateNode(n.id, { name: newName }))
+            }
+            onToggle={() =>
+              change(() => api.updateNode(n.id, { enabled: !n.enabled }))
+            }
             onAway={() => change(() => api.setAwayMode(n.id, !n.away_mode))}
             onPair={() => change(() => api.pairNode(n.id))}
             onRemove={() => change(() => api.removeNode(n.id))}
@@ -607,29 +943,63 @@ function NodesSection({
       <div className="nodeadd">
         <div className="field">
           <label>SSH host</label>
-          <input {...noAutoFill} value={host} onChange={(e) => setHost(e.target.value)} placeholder="ssh-host" />
+          <input
+            {...noAutoFill}
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            placeholder="ssh-host"
+          />
           <div className="hint">an alias from ~/.ssh/config</div>
         </div>
         <div className="field">
           <label>Name</label>
-          <input {...noAutoFill} value={name} onChange={(e) => setName(e.target.value)} placeholder={host || "same as the SSH host"} />
+          <input
+            {...noAutoFill}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={host || "same as the SSH host"}
+          />
         </div>
         <div className="field">
           <label>Port</label>
-          <input {...noAutoFill} type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+          <input
+            {...noAutoFill}
+            type="number"
+            value={port}
+            onChange={(e) => setPort(Number(e.target.value))}
+          />
         </div>
-        <button className="btn sm" disabled={busy || !(host.trim() || address.trim())} onClick={add}>
+        <button
+          className="btn sm"
+          disabled={busy || !(host.trim() || address.trim())}
+          onClick={add}
+        >
           Add node
         </button>
         <div className="field">
           <label>Address (no SSH)</label>
-          <input {...noAutoFill} value={address} onChange={(e) => setAddress(e.target.value)} placeholder="ip:47311" />
-          <div className="hint">on a private network, when there is no SSH forward</div>
+          <input
+            {...noAutoFill}
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="ip:47311"
+          />
+          <div className="hint">
+            on a private network, when there is no SSH forward
+          </div>
         </div>
         <div className="field">
           <label>Token</label>
-          <input {...noAutoFill} value={token} onChange={(e) => setToken(e.target.value)} placeholder="the node's hook-token" type="password" />
-          <div className="hint">needed with an address; read from the node's config directory</div>
+          <input
+            {...noAutoFill}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="the node's hook-token"
+            type="password"
+          />
+          <div className="hint">
+            needed with an address; read from the node's config directory
+          </div>
         </div>
       </div>
       {err && <div className="nodeerr">{err}</div>}
@@ -666,11 +1036,19 @@ export function SettingsModal({
   const [s, setS] = useState<Settings>({ ...settings });
   const [paths, setPaths] = useState<Record<string, string> | null>(null);
   useEffect(() => {
-    api.paths().then(setPaths).catch(() => {});
+    api
+      .paths()
+      .then(setPaths)
+      .catch(() => {});
   }, []);
-  const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => setS({ ...s, [k]: Number(e.target.value) });
+  const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setS({ ...s, [k]: Number(e.target.value) });
   // The mode is derived from the two flags, never stored on its own.
-  const mode: AutomationMode = !s.proposals_enabled ? "off" : s.autopilot ? "auto" : "ask";
+  const mode: AutomationMode = !s.proposals_enabled
+    ? "off"
+    : s.autopilot
+      ? "auto"
+      : "ask";
   const dirty = JSON.stringify(s) !== JSON.stringify(settings);
   const guard = useCloseGuard(dirty, onClose);
   return (
@@ -681,7 +1059,11 @@ export function SettingsModal({
       unsavedText="The settings are not saved."
       footer={
         <>
-          <button className="btn danger" onClick={onStopAll} title="Stop every background job kari started">
+          <button
+            className="btn danger"
+            onClick={onStopAll}
+            title="Stop every background job kari started"
+          >
             Stop all kari jobs
           </button>
           <div className="spacer" />
@@ -697,23 +1079,46 @@ export function SettingsModal({
       <div className="grid2">
         <div className="field">
           <label>History window (days)</label>
-          <input {...noAutoFill} type="number" value={s.history_days} onChange={num("history_days")} />
+          <input
+            {...noAutoFill}
+            type="number"
+            value={s.history_days}
+            onChange={num("history_days")}
+          />
         </div>
         <div className="field">
           <label>Done after inactivity (days)</label>
-          <input {...noAutoFill} type="number" value={s.done_after_days} onChange={num("done_after_days")} />
+          <input
+            {...noAutoFill}
+            type="number"
+            value={s.done_after_days}
+            onChange={num("done_after_days")}
+          />
         </div>
         <div className="field">
           <label>Stale after inactivity (days)</label>
-          <input {...noAutoFill} type="number" value={s.stale_after_days} onChange={num("stale_after_days")} />
+          <input
+            {...noAutoFill}
+            type="number"
+            value={s.stale_after_days}
+            onChange={num("stale_after_days")}
+          />
         </div>
         <div className="field">
           <label>Max parallel background jobs</label>
-          <input {...noAutoFill} type="number" value={s.max_parallel_bg} onChange={num("max_parallel_bg")} />
+          <input
+            {...noAutoFill}
+            type="number"
+            value={s.max_parallel_bg}
+            onChange={num("max_parallel_bg")}
+          />
         </div>
         <div className="field">
           <label>Terminal for Jump in</label>
-          <select value={s.terminal_app} onChange={(e) => setS({ ...s, terminal_app: e.target.value })}>
+          <select
+            value={s.terminal_app}
+            onChange={(e) => setS({ ...s, terminal_app: e.target.value })}
+          >
             <option value="iTerm">iTerm2</option>
             <option value="Terminal">Terminal.app</option>
             <option value="Ghostty">Ghostty</option>
@@ -721,7 +1126,10 @@ export function SettingsModal({
         </div>
         <div className="field">
           <label>Default model for runs</label>
-          <select value={s.default_run_model} onChange={(e) => setS({ ...s, default_run_model: e.target.value })}>
+          <select
+            value={s.default_run_model}
+            onChange={(e) => setS({ ...s, default_run_model: e.target.value })}
+          >
             {RUN_MODELS.map((m) => (
               <option key={m.value} value={m.value}>
                 {m.label}
@@ -731,8 +1139,19 @@ export function SettingsModal({
         </div>
         <div className="field">
           <label>Default permission mode for unattended runs</label>
-          <select value={s.default_permission_mode} onChange={(e) => setS({ ...s, default_permission_mode: e.target.value })}>
-            {["auto", "acceptEdits", "bypassPermissions", "plan", "default"].map((m) => (
+          <select
+            value={s.default_permission_mode}
+            onChange={(e) =>
+              setS({ ...s, default_permission_mode: e.target.value })
+            }
+          >
+            {[
+              "auto",
+              "acceptEdits",
+              "bypassPermissions",
+              "plan",
+              "default",
+            ].map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>
@@ -757,13 +1176,24 @@ export function SettingsModal({
       <div className="section">
         <h5>Live hooks</h5>
         <div className="hint">
-          Claude Code can tell kari the moment a session starts, stops, or waits for a permission. kari adds a small relay script to <code>~/.claude/settings.json</code> and keeps a backup. The relay
+          Claude Code can tell kari the moment a session starts, stops, or waits
+          for a permission. kari adds a small relay script to{" "}
+          <code>~/.claude/settings.json</code> and keeps a backup. The relay
           never blocks a session when kari is closed.
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            marginTop: 8,
+          }}
+        >
           <span className={`pill ${hooksInstalled ? "on" : ""}`}>
             <span className="dot" />
-            {hooksInstalled ? `hooks installed · port ${hooksPort}` : "hooks not installed"}
+            {hooksInstalled
+              ? `hooks installed · port ${hooksPort}`
+              : "hooks not installed"}
           </span>
           {hooksInstalled ? (
             <button className="btn sm" onClick={() => onHooks(false)}>
@@ -778,35 +1208,64 @@ export function SettingsModal({
       </div>
       <div className="section">
         <h5>Summaries</h5>
-        <div className="hint">kari asks Haiku for a two-sentence narrative after a turn ends. Calls are capped per hour and skip sessions older than the recent window.</div>
+        <div className="hint">
+          kari asks Haiku for a two-sentence narrative after a turn ends. Calls
+          are capped per hour and skip sessions older than the recent window.
+        </div>
         <div className="grid2" style={{ marginTop: 8 }}>
           <label className="field inline">
-            <input type="checkbox" checked={s.summaries_enabled} onChange={(e) => setS({ ...s, summaries_enabled: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={s.summaries_enabled}
+              onChange={(e) =>
+                setS({ ...s, summaries_enabled: e.target.checked })
+              }
+            />
             <span>Summaries on</span>
           </label>
           <div className="field">
             <label>Model</label>
-            <input {...noAutoFill} value={s.summary_model} onChange={(e) => setS({ ...s, summary_model: e.target.value })} />
+            <input
+              {...noAutoFill}
+              value={s.summary_model}
+              onChange={(e) => setS({ ...s, summary_model: e.target.value })}
+            />
           </div>
           <div className="field">
             <label>Max calls per hour</label>
-            <input {...noAutoFill} type="number" value={s.summaries_per_hour} onChange={num("summaries_per_hour")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.summaries_per_hour}
+              onChange={num("summaries_per_hour")}
+            />
           </div>
           <div className="field">
             <label>Only sessions active in the last (hours)</label>
-            <input {...noAutoFill} type="number" value={s.summary_recent_hours} onChange={num("summary_recent_hours")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.summary_recent_hours}
+              onChange={num("summary_recent_hours")}
+            />
           </div>
         </div>
       </div>
       <div className="section">
         <h5>Scheduling</h5>
         <div className="hint">
-          kari offers a plan when quota would expire unused. It never starts a card that is not marked "May run unattended". The planner keeps a reserve free during
-          working hours and never fills a window past the ceiling.
+          kari offers a plan when quota would expire unused. It never starts a
+          card that is not marked "May run unattended". The planner keeps a
+          reserve free during working hours and never fills a window past the
+          ceiling.
         </div>
         <div className="field" style={{ marginTop: 8 }}>
           <label>Automatic behaviour on this machine</label>
-          <div className="modeset" role="radiogroup" aria-label="Automatic behaviour">
+          <div
+            className="modeset"
+            role="radiogroup"
+            aria-label="Automatic behaviour"
+          >
             {AUTOMATION_MODES.map((m) => (
               <button
                 key={m.value}
@@ -819,7 +1278,12 @@ export function SettingsModal({
                   setS({
                     ...s,
                     proposals_enabled: m.value !== "off",
-                    autopilot: m.value === "auto" ? true : m.value === "ask" ? false : s.autopilot,
+                    autopilot:
+                      m.value === "auto"
+                        ? true
+                        : m.value === "ask"
+                          ? false
+                          : s.autopilot,
                   })
                 }
               >
@@ -828,81 +1292,156 @@ export function SettingsModal({
             ))}
           </div>
           <div className="hint">
-            {AUTOMATION_MODES.find((m) => m.value === mode)?.help ?? ""} The same control sits in the top bar and sets every node at once.
+            {AUTOMATION_MODES.find((m) => m.value === mode)?.help ?? ""} The
+            same control sits in the top bar and sets every node at once.
           </div>
         </div>
         <div className="grid2" style={{ marginTop: 8 }}>
           <div className="field">
             <label>Weekly window unused above (percent)</label>
-            <input {...noAutoFill} type="number" value={s.weekly_unused_pct} onChange={num("weekly_unused_pct")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.weekly_unused_pct}
+              onChange={num("weekly_unused_pct")}
+            />
           </div>
           <div className="field">
             <label>and resets within (hours)</label>
-            <input {...noAutoFill} type="number" value={s.weekly_hours_before_reset} onChange={num("weekly_hours_before_reset")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.weekly_hours_before_reset}
+              onChange={num("weekly_hours_before_reset")}
+            />
           </div>
           <div className="field">
             <label>5-hour window below (percent)</label>
-            <input {...noAutoFill} type="number" value={s.five_hour_idle_pct} onChange={num("five_hour_idle_pct")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.five_hour_idle_pct}
+              onChange={num("five_hour_idle_pct")}
+            />
           </div>
           <div className="field">
             <label>and nobody worked for (minutes)</label>
-            <input {...noAutoFill} type="number" value={s.idle_minutes} onChange={num("idle_minutes")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.idle_minutes}
+              onChange={num("idle_minutes")}
+            />
           </div>
           <div className="field">
             <label>Working hours start</label>
-            <input {...noAutoFill} type="number" min={0} max={23} value={s.working_hours_start} onChange={num("working_hours_start")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              min={0}
+              max={23}
+              value={s.working_hours_start}
+              onChange={num("working_hours_start")}
+            />
           </div>
           <div className="field">
             <label>Working hours end</label>
-            <input {...noAutoFill} type="number" min={0} max={23} value={s.working_hours_end} onChange={num("working_hours_end")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              min={0}
+              max={23}
+              value={s.working_hours_end}
+              onChange={num("working_hours_end")}
+            />
           </div>
           <div className="field">
             <label>Keep free in working hours (percent)</label>
-            <input {...noAutoFill} type="number" value={s.working_hours_reserve_pct} onChange={num("working_hours_reserve_pct")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.working_hours_reserve_pct}
+              onChange={num("working_hours_reserve_pct")}
+            />
           </div>
           <div className="field">
             <label>Never fill past (percent)</label>
-            <input {...noAutoFill} type="number" value={s.fill_ceiling_pct} onChange={num("fill_ceiling_pct")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.fill_ceiling_pct}
+              onChange={num("fill_ceiling_pct")}
+            />
           </div>
         </div>
       </div>
       <div className="section">
         <h5>Autopilot</h5>
         <div className="hint">
-          Mode <b>Auto</b> starts a weekly-reset plan by itself. kari still sends a notice and the plan panel keeps a Stop button. Only cards marked "May run
-          unattended" are eligible, and the parallel cap holds.
+          Mode <b>Auto</b> starts a weekly-reset plan by itself. kari still
+          sends a notice and the plan panel keeps a Stop button. Only cards
+          marked "May run unattended" are eligible, and the parallel cap holds.
         </div>
         <div className="grid2" style={{ marginTop: 8 }}>
           <div className="field">
             <label>Jobs autopilot may start at once</label>
-            <input {...noAutoFill} type="number" min={1} value={s.autopilot_max_jobs} onChange={num("autopilot_max_jobs")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              min={1}
+              value={s.autopilot_max_jobs}
+              onChange={num("autopilot_max_jobs")}
+            />
           </div>
           <label className="field inline">
-            <input type="checkbox" checked={s.prefer_herdr} onChange={(e) => setS({ ...s, prefer_herdr: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={s.prefer_herdr}
+              onChange={(e) => setS({ ...s, prefer_herdr: e.target.checked })}
+            />
             <span>Open new sessions in a herdr pane</span>
           </label>
           <div className="field">
             <label>Warn when weekly unused is above (percent)</label>
-            <input {...noAutoFill} type="number" value={s.weekly_warn_unused_pct} onChange={num("weekly_warn_unused_pct")} />
+            <input
+              {...noAutoFill}
+              type="number"
+              value={s.weekly_warn_unused_pct}
+              onChange={num("weekly_warn_unused_pct")}
+            />
           </div>
         </div>
       </div>
       <div className="section">
         <h5>Quota tracking</h5>
         <div className="hint">
-          kari reads the 5-hour and 7-day windows from the Claude Code status line. Run the installer once. It wraps your current status line command and keeps a backup.
+          kari reads the 5-hour and 7-day windows from the Claude Code status
+          line. Run the installer once. It wraps your current status line
+          command and keeps a backup.
         </div>
         <pre className="code">scripts/install-statusline.sh</pre>
         <label className="field inline" style={{ marginTop: 8 }}>
-          <input type="checkbox" checked={s.usage_endpoint_enabled} onChange={(e) => setS({ ...s, usage_endpoint_enabled: e.target.checked })} />
-          <span>Ask the usage endpoint when no session refreshed the status line for 5 minutes</span>
+          <input
+            type="checkbox"
+            checked={s.usage_endpoint_enabled}
+            onChange={(e) =>
+              setS({ ...s, usage_endpoint_enabled: e.target.checked })
+            }
+          />
+          <span>
+            Ask the usage endpoint when no session refreshed the status line for
+            5 minutes
+          </span>
         </label>
         <div className="hint">
-          The endpoint is undocumented. kari reads the Claude Code login token from the keychain and asks at most once every 3 minutes. macOS shows a keychain prompt the first time.
+          The endpoint is undocumented. kari reads the Claude Code login token
+          from the keychain and asks at most once every 3 minutes. macOS shows a
+          keychain prompt the first time.
         </div>
         {paths && (
           <div className="hint">
-            Samples land in <code>{paths.rate_limits}</code>. Database: <code>{paths.db}</code>. kari {paths.version}.
+            Samples land in <code>{paths.rate_limits}</code>. Database:{" "}
+            <code>{paths.db}</code>. kari {paths.version}.
           </div>
         )}
       </div>
