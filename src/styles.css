@@ -233,6 +233,11 @@ a { color: var(--accent); }
 .toggle { display: inline-flex; align-items: center; gap: 4px; font: 11px/1 var(--mono); padding: 4px 7px; border-radius: 3px; border: 1px solid var(--line); background: var(--ground); cursor: pointer; }
 .toggle.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .hint { font-size: 12px; color: var(--ink-3); }
+/* A paragraph explaining a control sits directly against the label of the
+   first field it explains, which reads as though the label belongs to the
+   paragraph. Everywhere else in this modal the gap comes from a grid or an
+   inline style, so neither applies to a section that opens with prose. */
+.hint + .field { margin-top: 8px; }
 .modal.narrow { width: 420px; }
 .modal.narrow .body p { margin: 0; font-size: 12.5px; line-height: 1.5; }
 /* The bar a first Escape shows on a form that holds unsaved input. */

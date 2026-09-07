@@ -28,7 +28,13 @@ bun install --silent
 echo "version set to $v in package.json, Cargo.toml and src-tauri/tauri.conf.json"
 
 # The README header and TOUR.md show the app as it looks in this release.
-bunx playwright install chromium
+# CHROMIUM_PATH means the host is supplying its own browser — a NixOS one, say,
+# where the downloaded build is dynamically linked against libraries that are
+# not there and cannot run at all. Downloading 150MB to not use it also makes a
+# release need the network for no reason.
+if [ -z "${CHROMIUM_PATH:-}" ]; then
+  bunx playwright install chromium
+fi
 bun run screenshots
 
 echo "next: review docs/screenshots/, then:"
