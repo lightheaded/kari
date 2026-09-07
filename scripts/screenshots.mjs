@@ -79,7 +79,12 @@ const shot = (page, name) => page.screenshot({ path: join(OUT, `${name}.png`), a
 async function main() {
   writeFixtures("docs/demo");
   await waitForServer();
-  const browser = await chromium.launch();
+  // Playwright's own Chromium is a generic dynamically linked binary, which a
+  // NixOS host cannot run. CHROMIUM_PATH points at one from the package set
+  // instead, so the screenshots can be retaken somewhere other than a Mac.
+  const browser = await chromium.launch(
+    process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {},
+  );
   try {
     // README header: the board without the plan panel, light and dark, at 2x.
     for (const scheme of ["light", "dark"]) {

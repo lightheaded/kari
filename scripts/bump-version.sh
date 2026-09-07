@@ -18,7 +18,9 @@ cd "$(dirname "$0")/.."
 
 jq --arg v "$v" '.version = $v' package.json > package.json.tmp && mv package.json.tmp package.json
 jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp && mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
-sed -i '' -E "s/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"$/version = \"$v\"/" Cargo.toml
+# Not `sed -i ''`: that is BSD syntax and GNU sed reads the '' as a filename,
+# so the script died on any Linux host. A temp file works on both.
+sed -E "s/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"$/version = \"$v\"/" Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
 
 cargo update --workspace --quiet
 bun install --silent
