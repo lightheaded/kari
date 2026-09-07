@@ -283,4 +283,26 @@ mod tests {
         assert!(!is_newer("nightly", "0.7.0"));
         assert!(!is_newer("0.8.0", "not-a-version"));
     }
+
+    /// The swap is the one step that can leave a host with no node, so it is
+    /// worth a test that does it for real on files rather than on a binary.
+    #[test]
+    fn the_swap_puts_the_staged_file_where_the_running_one_was() {
+        let dir = std::env::temp_dir().join(format!("kari-swap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("kari-node");
+        let staged = dir.join(".kari-node.new");
+        std::fs::write(&exe, b"old").unwrap();
+        super::write_executable(&staged, b"new").unwrap();
+        super::swap(&staged, &exe).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new");
+        assert!(!staged.exists(), "the staged file is consumed by the swap");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&exe).unwrap().permissions().mode();
+            assert_eq!(mode & 0o111, 0o111, "the new binary must be executable");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
