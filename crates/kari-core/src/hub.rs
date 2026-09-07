@@ -17,7 +17,7 @@ use crate::model::*;
 use crate::{keychain, launcher, paths, tunnel::Tunnel, Engine, Event};
 use chrono::{DateTime, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tracing::{info, warn};
@@ -27,7 +27,10 @@ const INTENT_KEY: &str = "primary_intent";
 /// Seconds between two renewals of a lease this hub holds.
 const RENEW_EVERY: u64 = 60;
 
-#[derive(Debug, Clone)]
+/// Serialised so a server can put these on the wire: a client of one holds no
+/// hub, and this is how it learns the board moved.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HubEvent {
     BoardChanged {
         node_id: String,
@@ -61,8 +64,25 @@ struct Remote {
     stop: Arc<AtomicBool>,
 }
 
+/// Where a hub finds nodes that dialled in to it.
+///
+/// The desktop app has none: it reaches every node at an address, over an SSH
+/// forward or a private network. A server has nothing but these — a node it
+/// serves opened the socket, and there is no address to connect to.
+pub trait LinkSource: Send + Sync {
+    /// The live link to this node, if it is connected right now.
+    fn node_link(&self, node_id: &str) -> Option<Arc<dyn crate::client::NodeLink>>;
+}
+
 pub struct Hub {
     engine: Arc<Engine>,
+    /// Set on a server. A node found here is reached over its own socket and
+    /// needs no token, no tunnel and no address.
+    links: Option<Arc<dyn LinkSource>>,
+    /// This hub, weakly. The methods that spawn a watcher thread need an owned
+    /// `Arc<Hub>` to move into it, and they are reached through a trait object
+    /// (`HubApi`), which can only hand them `&self`.
+    me: Weak<Hub>,
     remotes: RwLock<Vec<Remote>>,
     tx: broadcast::Sender<HubEvent>,
     /// This hub's id and name, as the nodes record them in their lease.
@@ -79,20 +99,27 @@ pub struct Hub {
 impl Hub {
     /// A hub whose engine is also a node on the board: the desktop app.
     pub fn new(local: Arc<Engine>) -> Arc<Hub> {
-        Self::build(local, true)
+        Self::build(local, true, None)
     }
 
     /// A hub whose engine is only its store: a device without Claude Code.
     pub fn without_local(store: Arc<Engine>) -> Arc<Hub> {
-        Self::build(store, false)
+        Self::build(store, false, None)
     }
 
-    fn build(local: Arc<Engine>, with_local: bool) -> Arc<Hub> {
+    /// A hub whose nodes dialled in to it: the server.
+    pub fn over_links(store: Arc<Engine>, links: Arc<dyn LinkSource>) -> Arc<Hub> {
+        Self::build(store, false, Some(links))
+    }
+
+    fn build(local: Arc<Engine>, with_local: bool, links: Option<Arc<dyn LinkSource>>) -> Arc<Hub> {
         let (tx, _) = broadcast::channel(256);
         let hub_id = local.node_id();
         let hub_name = local.node_name();
-        let hub = Arc::new(Hub {
+        let hub = Arc::new_cyclic(|me| Hub {
             engine: Arc::clone(&local),
+            me: me.clone(),
+            links,
             remotes: RwLock::new(vec![]),
             tx,
             hub_id,
@@ -145,6 +172,13 @@ impl Hub {
         hub
     }
 
+    /// This hub as an owned handle. Infallible in practice: the only `Hub` that
+    /// exists is the one `build` put in an `Arc`, and a method cannot run on a
+    /// hub that has already been dropped.
+    fn arc(&self) -> Arc<Hub> {
+        self.me.upgrade().expect("the hub outlives its own methods")
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<HubEvent> {
         self.tx.subscribe()
     }
@@ -157,7 +191,11 @@ impl Hub {
 
     /// True when this hub pushes columns.
     pub fn is_primary(&self) -> bool {
-        self.primary.load(Ordering::Relaxed)
+        // A hub whose nodes dialled in to it is the only hub they have, so it
+        // is primary by construction. The flag exists to arbitrate between
+        // several hubs pushing columns at one node, and a server ends that
+        // arrangement rather than joining it.
+        self.links.is_some() || self.primary.load(Ordering::Relaxed)
     }
 
     fn set_intent(&self, on: bool) {
@@ -327,7 +365,7 @@ impl Hub {
 
     // ------------------------------------------------------------ node threads
 
-    fn spawn_remote(self: &Arc<Self>, rec: NodeRecord) {
+    fn spawn_remote(&self, rec: NodeRecord) {
         let state = Arc::new(Mutex::new(RemoteState {
             paired: keychain::load_token(&rec.id).is_some(),
             ..Default::default()
@@ -340,7 +378,7 @@ impl Hub {
         }
         let stop = Arc::new(AtomicBool::new(false));
         if rec.enabled {
-            let h = Arc::clone(self);
+            let h = self.arc();
             let (r, s, f) = (rec.clone(), Arc::clone(&state), Arc::clone(&stop));
             std::thread::Builder::new()
                 .name(format!("kari-node-{}", rec.id))
@@ -351,6 +389,52 @@ impl Hub {
             .write()
             .unwrap()
             .push(Remote { rec, state, stop });
+    }
+
+    /// A node has dialled in. Give it a place on the board.
+    ///
+    /// Unlike `add_node`, nothing is being connected *to*: the node is already
+    /// here and named itself in its handshake. The record is saved so the node
+    /// keeps its row, and its last board, on a restart and while it is away.
+    pub fn link_arrived(&self, id: &str, name: &str) {
+        let existing = self.engine.list_nodes().into_iter().find(|n| n.id == id);
+        let rec = match existing {
+            Some(mut r) => {
+                // The node may have been renamed since it was last here.
+                r.name = name.to_string();
+                r.enabled = true;
+                r
+            }
+            None => NodeRecord {
+                id: id.to_string(),
+                name: name.to_string(),
+                // None of the address fields mean anything for a node that
+                // dialled out: there is nothing here to connect to.
+                ssh_host: None,
+                address: None,
+                addresses: vec![],
+                remote_port: 0,
+                enabled: true,
+                created_at: Utc::now(),
+            },
+        };
+        if let Err(e) = self.engine.save_node(&rec) {
+            warn!("node {name}: not saved: {e}");
+        }
+        // A second link from a node already being watched replaces the watcher,
+        // so a reconnect does not leave two threads on one node.
+        self.stop_remote(id);
+        self.spawn_remote(rec);
+    }
+
+    /// A node's link closed. Stop watching it, but keep its row and its last
+    /// board: an offline node is shown dimmed, not dropped.
+    pub fn link_lost(&self, id: &str) {
+        if self.stop_remote(id).is_some() {
+            self.emit(HubEvent::BoardChanged {
+                node_id: id.to_string(),
+            });
+        }
     }
 
     fn stop_remote(&self, id: &str) -> Option<NodeRecord> {
@@ -431,6 +515,15 @@ impl Hub {
         state: &Arc<Mutex<RemoteState>>,
         stop: &AtomicBool,
     ) -> anyhow::Result<()> {
+        // A node that dialled in is already here. There is nothing to pair,
+        // nothing to dial and no address to pick: the socket is the connection,
+        // and the token was spent opening it.
+        if let Some(link) = self.links.as_ref().and_then(|s| s.node_link(&rec.id)) {
+            let client = ApiClient::over_link(link, &self.hub_id);
+            state.lock().unwrap().paired = true;
+            return self.watch_remote(rec, state, stop, client, None, None);
+        }
+
         let Some(token) = keychain::load_token(&rec.id) else {
             state.lock().unwrap().paired = false;
             anyhow::bail!("not paired: no token for this node; use Pair in Settings");
@@ -455,6 +548,27 @@ impl Hub {
             None => format!("http://127.0.0.1:{}", rec.remote_port),
         };
         let client = ApiClient::at(&base, &token).with_hub(&self.hub_id);
+        // The node says where else it answers. Keep it: this is how the desktop
+        // learns a node's private address without a typed one, and how a
+        // pairing code can carry it to a phone.
+        let working = base
+            .strip_prefix("http://")
+            .filter(|_| rec.ssh_host.is_none())
+            .map(|s| s.to_string());
+        self.watch_remote(rec, state, stop, client, probed, working)
+    }
+
+    /// Everything that is the same whichever way the node was reached: prove
+    /// it is there, take its board, and then follow its events until it stops.
+    fn watch_remote(
+        &self,
+        rec: &NodeRecord,
+        state: &Arc<Mutex<RemoteState>>,
+        stop: &AtomicBool,
+        client: ApiClient,
+        probed: Option<NodeIdentity>,
+        working: Option<String>,
+    ) -> anyhow::Result<()> {
         // The forward needs a moment. Poll health, and give up when ssh exits.
         let deadline = Instant::now() + Duration::from_secs(20);
         let identity = match probed {
@@ -483,13 +597,7 @@ impl Hub {
                 }
             },
         };
-        // The node says where else it answers. Keep it: this is how the desktop
-        // learns a node's private address without a typed one, and how a
-        // pairing code can carry it to a phone.
-        let working = base
-            .strip_prefix("http://")
-            .filter(|_| rec.ssh_host.is_none());
-        self.remember_addresses(&rec.id, working, &identity.addresses);
+        self.remember_addresses(&rec.id, working.as_deref(), &identity.addresses);
         if identity.api_version != API_VERSION {
             anyhow::bail!(
                 "node speaks api v{} but this app needs v{API_VERSION}; update kari on one side",
@@ -502,8 +610,12 @@ impl Hub {
             .map_err(|e| anyhow::anyhow!("token rejected or board failed: {e}"))?;
         // The lease decides who pushes columns. A primary hub renews or takes
         // its claim on connect; a follower only reads.
+        //
+        // A linked node skips all of it. The lease exists because two hubs can
+        // push columns to one node and have to arbitrate; a server is the only
+        // hub its nodes have, so it pushes and does not ask.
         let mut lease = client.lease().unwrap_or_default();
-        if self.is_primary() {
+        if self.is_primary() && !client.is_linked() {
             match client.claim_lease(&self.claim(false)) {
                 Ok(l) => lease = Some(l),
                 Err(e) => {
@@ -516,7 +628,7 @@ impl Hub {
                 }
             }
         }
-        if self.is_primary() && self.lease_ours(&lease) {
+        if client.is_linked() || (self.is_primary() && self.lease_ours(&lease)) {
             if let Err(e) = client.set_columns(&self.engine.columns()) {
                 warn!("node {}: columns not pushed: {e}", identity.node_name);
             }
@@ -550,7 +662,11 @@ impl Hub {
                 anyhow::bail!("event stream ended");
             };
             state.lock().unwrap().last_seen = Some(Utc::now());
-            if self.is_primary() && last_renew.elapsed() > Duration::from_secs(RENEW_EVERY) {
+            // Same reason as on connect: a linked node has no lease to renew.
+            if self.is_primary()
+                && !client.is_linked()
+                && last_renew.elapsed() > Duration::from_secs(RENEW_EVERY)
+            {
                 last_renew = Instant::now();
                 match client.claim_lease(&self.claim(false)) {
                     Ok(l) => state.lock().unwrap().lease = Some(l),
@@ -1170,6 +1286,24 @@ impl Hub {
         }
         let (c, rec) = self.client_of(node)?;
         let plan = c.jump(card)?;
+        // A node that dialled in is reached over its own socket, so there is no
+        // host here to ssh to — and this hub may be a server, which has no
+        // terminal and no business opening one on the machine it runs on. Hand
+        // the command back instead: the client that asked runs it where the
+        // person actually is.
+        //
+        // It has to be an Ok. A Windows node has no herdr — herdr.rs is
+        // #[cfg(unix)] — so it never focuses a pane and always lands here, and
+        // an Err would make the one platform that cannot jump in look broken
+        // rather than merely different.
+        if c.is_linked() {
+            let name = self.node_name_of(&rec, None);
+            return Ok(if plan.command.is_empty() {
+                format!("{} on {name}", plan.message)
+            } else {
+                format!("run on {name}: cd {} && {}", plan.cwd, plan.command)
+            });
+        }
         let Some(host) = rec.ssh_host.as_deref() else {
             anyhow::bail!(
                 "node has no SSH host; run there: cd {} && {}",
@@ -1391,7 +1525,7 @@ impl Hub {
 
     /// Add a node and pair it at once when it has an SSH host. A failed pairing
     /// still saves the node; the status shows why.
-    pub fn add_node(self: &Arc<Self>, n: NewNode) -> anyhow::Result<NodeStatus> {
+    pub fn add_node(&self, n: NewNode) -> anyhow::Result<NodeStatus> {
         let ssh_host = n
             .ssh_host
             .map(|s| s.trim().to_string())
@@ -1459,7 +1593,7 @@ impl Hub {
     }
 
     /// Change a node. A changed host or port reconnects; a disabled node stops.
-    pub fn update_node(self: &Arc<Self>, id: &str, p: NodePatch) -> anyhow::Result<NodeStatus> {
+    pub fn update_node(&self, id: &str, p: NodePatch) -> anyhow::Result<NodeStatus> {
         let Some(mut rec) = self.stop_remote(id) else {
             anyhow::bail!("unknown node {id}")
         };
@@ -1511,7 +1645,7 @@ impl Hub {
     }
 
     /// Read the node's token over SSH again and reconnect.
-    pub fn pair_node(self: &Arc<Self>, id: &str) -> anyhow::Result<String> {
+    pub fn pair_node(&self, id: &str) -> anyhow::Result<String> {
         let rec = self
             .remotes
             .read()

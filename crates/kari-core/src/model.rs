@@ -1119,7 +1119,12 @@ pub struct NodeProposal {
 
 /// The merged board of every node. Columns come from the hub's own store; the
 /// primary hub pushes them to every node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Default` is an empty board, which is what a client of a server shows when
+/// it cannot reach it. Deliberately empty rather than stale: showing a board
+/// that is no longer being updated, with no sign that it is not, is worse than
+/// showing none.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HubBoard {
     pub columns: Vec<Column>,
     /// This hub, as the nodes know it.

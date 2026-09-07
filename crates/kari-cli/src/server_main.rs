@@ -120,7 +120,14 @@ fn main() -> anyhow::Result<()> {
                 .build()?
                 .block_on(async move {
                     tokio::select! {
-                        r = server::serve(registry, addr, token, allow_public) => r,
+                        r = async {
+                            // The store lives beside the token, and the hub is
+                            // built inside the runtime because it needs its
+                            // handle to reach nodes over their links.
+                            let store = kari_core::Engine::open()?;
+                            let hub = server::hub_over_links(store, Arc::clone(&registry));
+                            server::serve(registry, addr, token, allow_public, Some(hub)).await
+                        } => r,
                         _ = shutdown() => Ok(()),
                     }
                 })

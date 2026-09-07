@@ -10,7 +10,13 @@
 //! and both are deleted when the example ends. The point it proves is the one
 //! the link exists for: the node opens the connection, and the server calls the
 //! node's ordinary API back down it.
+//!
+//! It then proves the second half: the server keeps a *hub* over those links,
+//! so `/kari/v1/hub/board` answers with one merged board and the columns the
+//! server owns — which is what a client will ask for instead of running a hub
+//! of its own.
 
+use kari_core::hubapi::HubApi;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -25,6 +31,21 @@ impl Drop for Proc {
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+fn put(url: &str, token: &str, body: &serde_json::Value) -> anyhow::Result<()> {
+    let resp = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()?
+        .put(url)
+        .header(kari_core::hooks::TOKEN_HEADER, token)
+        .json(body)
+        .send()?;
+    let status = resp.status();
+    if !status.is_success() {
+        anyhow::bail!("{status}: {}", resp.text().unwrap_or_default());
+    }
+    Ok(())
 }
 
 fn get(url: &str, token: &str) -> anyhow::Result<serde_json::Value> {
@@ -153,8 +174,161 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("the server got no board over the link");
     }
 
+    // ---- the hub the server keeps over those links ------------------------
+
+    let base = format!("http://127.0.0.1:{port}");
+
+    // The hub finds the node the same way it finds any other, so give the
+    // watcher a moment to have connected and taken the first board.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let hub_board = loop {
+        let v = get(&format!("{base}/kari/v1/hub/board"), &token)?;
+        let nodes = v["nodes"].as_array().cloned().unwrap_or_default();
+        if nodes.iter().any(|n| n["online"].as_bool().unwrap_or(false)) {
+            break v;
+        }
+        if Instant::now() > deadline {
+            anyhow::bail!("the hub never saw the node online:\n{v:#}");
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    };
+    let nodes = hub_board["nodes"].as_array().cloned().unwrap_or_default();
+    println!("\nhub board: {} node(s)", nodes.len());
+    for n in &nodes {
+        println!(
+            "  {} online={}",
+            n["name"]
+                .as_str()
+                .or(n["node_name"].as_str())
+                .unwrap_or("?"),
+            n["online"].as_bool().unwrap_or(false)
+        );
+    }
+
+    // The columns are the server's, not the node's. Change them here and the
+    // hub pushes them down the link, which is the thing a per-client hub could
+    // not do without two hubs fighting over one node.
+    let cols = get(&format!("{base}/kari/v1/hub/columns"), &token)?;
+    let before = cols.as_array().map(|a| a.len()).unwrap_or(0);
+    println!("\ncolumns owned by the server: {before}");
+    if before == 0 {
+        anyhow::bail!("the server's hub has no columns");
+    }
+
+    let mut renamed = cols.as_array().cloned().unwrap_or_default();
+    let was = renamed[0]["name"].as_str().unwrap_or("").to_string();
+    renamed[0]["name"] = serde_json::Value::String(format!("{was} (server)"));
+    put(
+        &format!("{base}/kari/v1/hub/columns"),
+        &token,
+        &serde_json::Value::Array(renamed),
+    )?;
+    let after = get(&format!("{base}/kari/v1/hub/columns"), &token)?;
+    let now = after[0]["name"].as_str().unwrap_or("");
+    println!("first column: {was:?} -> {now:?}");
+    if !now.ends_with("(server)") {
+        anyhow::bail!("the column change did not stick: {after:#}");
+    }
+
+    // And the node was told, because the hub owns the columns of every node
+    // that linked to it.
+    let node_token = std::fs::read_to_string(node_home.join(".config/kari/hook-token"))?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let n = get(
+            &format!("http://127.0.0.1:{node_port}/kari/v1/columns"),
+            node_token.trim(),
+        )?;
+        if n[0]["name"].as_str().unwrap_or("").ends_with("(server)") {
+            println!("the node took the server's columns");
+            break;
+        }
+        if Instant::now() > deadline {
+            anyhow::bail!("the node never took the server's columns:\n{n:#}");
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+
+    // ---- a client that holds no hub at all --------------------------------
+    //
+    // This is what the desktop app and the phone become: a RemoteHub behind
+    // the same HubApi the in-process hub implements, so the UI above it cannot
+    // tell the difference.
+
+    let client_home = std::env::temp_dir().join(format!("kari-link-example-client-{port}"));
+    std::fs::create_dir_all(&client_home)?;
+    let store = kari_core::Engine::open_at(&client_home.join("kari"))?;
+    let remote = kari_core::remote::RemoteHub::connect(&base, &token, store);
+
+    let id = remote.health()?;
+    println!(
+        "\nclient sees: {} {} ({} node(s) linked)",
+        id.app, id.version, id.nodes_online
+    );
+
+    // Every one of these goes over HTTP to the server, which asks the hub,
+    // which asks the node down the socket the node opened.
+    let board = remote.board();
+    println!(
+        "board through the client: {} node(s), {} column(s), {} card(s)",
+        board.nodes.len(),
+        board.columns.len(),
+        board.cards.len()
+    );
+    if board.nodes.is_empty() {
+        anyhow::bail!("the client saw no nodes");
+    }
+    if !board.columns[0].name.ends_with("(server)") {
+        anyhow::bail!(
+            "the client did not see the server's columns: {:?}",
+            board.columns[0].name
+        );
+    }
+
+    // A card added through the client must reach the node, because that is the
+    // whole chain: client -> server -> hub -> link -> node.
+    let node_id = board.nodes[0].id.clone();
+    let projects = remote.projects(&node_id);
+    println!("projects on {}: {}", board.nodes[0].name, projects.len());
+
+    let card = remote.add_task(
+        &node_id,
+        kari_core::NewTask {
+            title: "from a client with no hub".into(),
+            project_cwd: None,
+            run_prompt: None,
+            auto_run: false,
+            priority: 0,
+            notes: None,
+            model: None,
+            column_id: None,
+        },
+    )?;
+    println!("card {} added through the client", card.id);
+
+    let after = remote.board();
+    if !after.cards.iter().any(|c| c.view.card.id == card.id) {
+        anyhow::bail!("the card did not come back on the board");
+    }
+    println!("and it came back on the merged board");
+
+    // Jump in must come back as an instruction, not an error. A Windows node
+    // has no herdr and can never focus a pane, and the server has no terminal
+    // to open one in, so this is the normal answer rather than a failure.
+    match remote.jump_in(&node_id, &card.id) {
+        Ok(msg) => println!("jump in: {msg}"),
+        Err(e) => anyhow::bail!("jump in should degrade, not error: {e}"),
+    }
+
+    // The roster methods are refused, on purpose and with a reason.
+    match remote.pairing_code() {
+        Err(e) => println!("roster refused, as it should be: {e}"),
+        Ok(_) => anyhow::bail!("a client of a server should not hand out pairing codes"),
+    }
+
     drop(node);
     drop(server);
+    let _ = std::fs::remove_dir_all(&client_home);
     println!("\ndone");
     Ok(())
 }
