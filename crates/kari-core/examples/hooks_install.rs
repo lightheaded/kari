@@ -4,8 +4,8 @@ fn main() -> anyhow::Result<()> {
     let arg = std::env::args().nth(1).unwrap_or_else(|| "cycle".into());
     let path = kari_core::paths::claude_dir().join("settings.json");
     if arg == "install" || arg == "cycle" {
-        let p = hooks::install(47311)?;
-        println!("installed relay {}", p.display());
+        let cmd = hooks::install(47311)?;
+        println!("installed relay {cmd}");
         println!("installed(): {}", hooks::installed());
         println!("{}", std::fs::read_to_string(&path)?);
     }

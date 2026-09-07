@@ -18,12 +18,21 @@ notify-debouncer-mini = "0.5"
 dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
-libc = "0.2"
 axum.workspace = true
 tokio-stream.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
 if-addrs = "0.13"
+
+# Both are for one job only: asking whether a pid is still alive. See registry.rs.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

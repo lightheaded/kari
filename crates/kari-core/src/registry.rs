@@ -27,9 +27,32 @@ fn ms(v: Option<i64>) -> Option<DateTime<Utc>> {
     v.and_then(|m| Utc.timestamp_millis_opt(m).single())
 }
 
+#[cfg(unix)]
 pub fn pid_alive(pid: u32) -> bool {
     // kill(pid, 0) succeeds when the process exists and we may signal it.
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+/// Windows has no `kill(pid, 0)`. A handle opens for a process that has already
+/// exited but is still referenced, so the exit code decides: `STILL_ACTIVE`
+/// means running. A process that exits with that value in its own right is
+/// reported alive, which errs towards keeping a card rather than dropping one.
+#[cfg(windows)]
+pub fn pid_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        ok && code == STILL_ACTIVE as u32
+    }
 }
 
 /// Read every registry file. Dead pids are kept with `alive = false` so the caller can prune.
