@@ -1,4 +1,5 @@
 use kari_core::hub::{Hub, HubEvent};
+use kari_core::hubapi::HubApi;
 use kari_core::{
     AutomationMode, Calibration, Card, CardPatch, Column, Engine, HubBoard, NewNode, NewTask,
     NodePatch, NodeStatus, Project, Proposal, QuotaSample, Settings, Summary,
@@ -12,7 +13,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
 struct AppState {
-    hub: Arc<Hub>,
+    /// The hub, whichever kind it is. `Hub` in this process today; a client of
+    /// a server once one is configured. Nothing below this line knows which.
+    hub: Arc<dyn HubApi>,
     /// The window holds unsaved input: a task draft, an edited card. A quit
     /// from the tray or from Cmd+Q asks before it throws that away.
     dirty: std::sync::atomic::AtomicBool,
@@ -38,10 +41,10 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 
 /// Remote nodes answer over the network. Every command that can reach one runs
 /// off the main thread.
-async fn off_thread<T, F>(hub: &Arc<Hub>, f: F) -> R<T>
+async fn off_thread<T, F>(hub: &Arc<dyn HubApi>, f: F) -> R<T>
 where
     T: Send + 'static,
-    F: FnOnce(Arc<Hub>) -> anyhow::Result<T> + Send + 'static,
+    F: FnOnce(Arc<dyn HubApi>) -> anyhow::Result<T> + Send + 'static,
 {
     let h = Arc::clone(hub);
     tauri::async_runtime::spawn_blocking(move || f(h).map_err(err))
@@ -191,7 +194,7 @@ async fn set_automation_mode(
 
 #[tauri::command]
 fn get_columns(state: State<'_, AppState>) -> Vec<Column> {
-    state.hub.engine().columns()
+    state.hub.columns()
 }
 
 #[tauri::command]
@@ -206,18 +209,18 @@ async fn reset_columns(state: State<'_, AppState>) -> R<()> {
 
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Settings {
-    state.hub.engine().settings()
+    state.hub.local_engine().settings()
 }
 
 /// The settings as a JSON string. See `get_board_json` for why.
 #[tauri::command]
 fn get_settings_json(state: State<'_, AppState>) -> R<String> {
-    serde_json::to_string(&state.hub.engine().settings()).map_err(err)
+    serde_json::to_string(&state.hub.local_engine().settings()).map_err(err)
 }
 
 #[tauri::command]
 fn set_settings(state: State<'_, AppState>, settings: Settings) -> R<()> {
-    state.hub.engine().set_settings(settings).map_err(err)
+    state.hub.local_engine().set_settings(settings).map_err(err)
 }
 
 /// Name an account, or clear the name with an empty string. `key` is the one
@@ -227,7 +230,7 @@ fn set_settings(state: State<'_, AppState>, settings: Settings) -> R<()> {
 fn set_account_alias(state: State<'_, AppState>, key: String, alias: String) -> R<()> {
     state
         .hub
-        .engine()
+        .local_engine()
         .set_account_alias(&key, &alias)
         .map_err(err)
 }
@@ -281,12 +284,12 @@ fn statusline_wrapper(original_command: String) -> String {
 
 #[tauri::command]
 fn install_hooks(state: State<'_, AppState>) -> R<String> {
-    state.hub.engine().install_hooks().map_err(err)
+    state.hub.local_engine().install_hooks().map_err(err)
 }
 
 #[tauri::command]
 fn uninstall_hooks(state: State<'_, AppState>) -> R<()> {
-    state.hub.engine().uninstall_hooks().map_err(err)
+    state.hub.local_engine().uninstall_hooks().map_err(err)
 }
 
 #[tauri::command]
@@ -380,13 +383,13 @@ async fn proposal_history(
 
 #[tauri::command]
 fn get_calibration(state: State<'_, AppState>) -> Calibration {
-    state.hub.engine().calibration()
+    state.hub.local_engine().calibration()
 }
 
 /// Ask the OAuth usage endpoint once, outside the stale check. For a manual test.
 #[tauri::command]
 async fn fetch_usage_now(state: State<'_, AppState>) -> R<QuotaSample> {
-    let e = state.hub.engine().clone();
+    let e = Arc::clone(state.hub.local_engine());
     tauri::async_runtime::spawn_blocking(move || e.fetch_usage_now().map_err(err))
         .await
         .map_err(err)?
@@ -616,7 +619,7 @@ fn request_quit(app: &AppHandle) -> bool {
 
 /// Show the counts that matter on the tray icon.
 #[cfg(desktop)]
-fn update_tray(app: &AppHandle, hub: &Arc<Hub>) {
+fn update_tray(app: &AppHandle, hub: &Arc<dyn HubApi>) {
     let board = hub.board();
     let working = board
         .cards
@@ -670,7 +673,7 @@ fn update_tray(app: &AppHandle, hub: &Arc<Hub>) {
     }
 }
 
-fn forward_events(app: AppHandle, hub: Arc<Hub>) {
+fn forward_events(app: AppHandle, hub: Arc<dyn HubApi>) {
     let mut rx = hub.subscribe();
     #[cfg(desktop)]
     let mut last_tray = std::time::Instant::now() - std::time::Duration::from_secs(10);
@@ -801,7 +804,7 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let engine = Engine::open_at(&dir)?;
-            let hub = Hub::without_local(engine);
+            let hub: Arc<dyn HubApi> = Hub::without_local(engine);
             app.manage(AppState {
                 hub: Arc::clone(&hub),
                 dirty: std::sync::atomic::AtomicBool::new(false),
@@ -841,7 +844,7 @@ pub fn run() {
 
     let engine = Engine::open().expect("open kari store");
     engine.start_watchers();
-    let hub = Hub::new(Arc::clone(&engine));
+    let hub: Arc<dyn HubApi> = Hub::new(Arc::clone(&engine));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())

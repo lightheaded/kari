@@ -19,7 +19,7 @@
 //! async would have rewritten every one of them for no gain.
 
 use crate::model::*;
-use crate::{Engine, hub::HubEvent};
+use crate::{hub::HubEvent, Engine};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -68,8 +68,7 @@ pub trait HubApi: Send + Sync + 'static {
 
     // --- running a card --------------------------------------------------
 
-    fn start_card(&self, node: &str, card: &str, prompt: Option<String>)
-    -> anyhow::Result<String>;
+    fn start_card(&self, node: &str, card: &str, prompt: Option<String>) -> anyhow::Result<String>;
     fn stop_card(&self, node: &str, card: &str) -> anyhow::Result<()>;
     fn stop_all(&self) -> anyhow::Result<usize>;
     fn summarize_card(&self, node: &str, card: &str) -> anyhow::Result<Summary>;
@@ -125,13 +124,15 @@ pub trait HubApi: Send + Sync + 'static {
 
     // --- this machine -----------------------------------------------------
 
-    /// The engine in *this* process, when there is one.
+    /// This device's own store.
     ///
-    /// Settings, hook installation and calibration are properties of a machine
-    /// that runs Claude Code, not of the board, so they never travel to a
-    /// server. `None` says this hub is a client of one; the caller must say so
-    /// rather than reach for a hub that is not here.
-    fn local_engine(&self) -> Option<&Arc<Engine>>;
+    /// Settings, the account aliases, the calibration and the hook
+    /// installation are properties of the machine the app runs on, not of the
+    /// board, so they never travel to a server. Every hub has one of these,
+    /// including a client of a server and including a phone: what differs is
+    /// whether that engine is also a *node* on the board, which is the
+    /// distinction `Hub::new` and `Hub::without_local` already draw.
+    fn local_engine(&self) -> &Arc<Engine>;
 }
 
 /// The in-process hub, which is what the app has had all along. Every method
@@ -184,12 +185,7 @@ impl HubApi for crate::hub::Hub {
         crate::hub::Hub::reorder_cards(self, node, ranked, unranked)
     }
 
-    fn start_card(
-        &self,
-        node: &str,
-        card: &str,
-        prompt: Option<String>,
-    ) -> anyhow::Result<String> {
+    fn start_card(&self, node: &str, card: &str, prompt: Option<String>) -> anyhow::Result<String> {
         crate::hub::Hub::start_card(self, node, card, prompt)
     }
     fn stop_card(&self, node: &str, card: &str) -> anyhow::Result<()> {
@@ -278,7 +274,7 @@ impl HubApi for crate::hub::Hub {
         crate::hub::Hub::claim_primary(self)
     }
 
-    fn local_engine(&self) -> Option<&Arc<Engine>> {
-        Some(self.engine())
+    fn local_engine(&self) -> &Arc<Engine> {
+        self.engine()
     }
 }
