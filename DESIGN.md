@@ -306,6 +306,7 @@ The terminal (iTerm2, Terminal or Ghostty, set in Settings) is driven with `osas
 crates/kari-core   plain Rust: readers, parser, inference, quota, planner, herdr client, launcher,
                    sqlite store, the HTTP API (axum), the API client, the hub, the SSH tunnel
 crates/kari-cli    `kari-node`: the same engine without a window, plus the installers
+                   `kari-server`: the hub on a host that stays up, and the node links into it
 src-tauri          Tauri app: commands over the hub, events to the UI, tray, notifications
 src                React UI: board, card drawer, stats strip, queue strip, proposals, settings, nodes
 scripts            statusline wrapper, version bump
@@ -330,11 +331,17 @@ Flow: watchers and pollers in `kari-core` emit domain events on a channel. A red
 3. Estimates and calibration, proposals, background runs, job tracking, kill switch. Built 2026-09-03.
 4. Automatic starts on a schedule, herdr as a launch target. Built 2026-09-03.
 5. Remote nodes: the headless node, the hub, one board over many hosts. Built 2026-09-03. See "Remote nodes".
+6. The server: nodes that dial out, one hub off the client, the lease removed, quota per account across nodes. See "The server".
 
 ## 14. Remote nodes
 
 A developer works on more than one machine: a laptop and a server that runs
 unattended jobs. Version 2 shows every machine on one board.
+
+Version 3 keeps this section's engine, API and card rules and changes who dials
+whom. Where the two disagree — the direction of a connection, who owns the
+columns, and the primary lease — "The server" is the current design and this
+section is the history.
 
 ### Parts
 
@@ -504,7 +511,187 @@ with `kari-node statusline install`, and the usage endpoint with
 configuration manager rebuilds. Deployment of the node is managed outside this
 repository.
 
-## 15. Risks
+## 15. The server
+
+A peer-to-peer board works while every machine can reach every other machine.
+That holds for one laptop and one server on one network. It stops holding as
+soon as the clients outnumber the desks: a laptop that sleeps, a laptop on a
+café network, and a phone on a mobile network are each unreachable from the
+others, so each client draws a different board and calls the same node offline
+at a different time. The always-on host is the only party everyone can reach,
+and in version 2 it was a node like any other, dialled *in to* rather than
+dialled *out from*.
+
+Version 3 adds an optional server. It is the same `kari-core` engine wearing the
+hub role on a host that stays up. Two things change:
+
+- **Nodes dial out.** A node opens one outbound connection to the server and
+  serves its API back down that connection. A node needs no reachable address,
+  no port, and no SSH forward, so a laptop behind a hotel NAT is on the board.
+- **The hub moves off the client.** The server holds the columns, the node
+  registry and the last board of every node. Clients render what the server
+  merged; they store nothing durable.
+
+The server is optional and off by default. With no server configured, kari is
+exactly the version-2 desktop app: a local engine, a local hub, one machine, one
+account, no daemon to install. That path is not a fallback, it is the default.
+
+### Parts
+
+| Part | Runs where | Does |
+|---|---|---|
+| Node daemon `kari-node serve` | every host with Claude Code on it | The engine. Serves its API on loopback, and, when a server is configured, down one outbound link to it. |
+| Server `kari-server` | one host that stays up | The hub. Accepts node links, merges the boards, owns the columns, serves the hub API to clients. Runs no Claude Code and holds no account. |
+| Client | every screen: desktop app, phone | The board, the drawer, the tray, the notifications. Talks to the server, or, with no server, to its own local hub. |
+
+The desktop app is both a client and a node: it keeps its local engine, so the
+sessions on that machine are on the board whether or not the server answers.
+
+### The link
+
+The node opens a WebSocket to `/kari/v1/link` and holds it, reconnecting with
+the same 1 s to 60 s backoff the hub used for a dead forward. Frames are JSON,
+one object each:
+
+| Frame | Direction | Carries |
+|---|---|---|
+| `hello` | node → server | the first frame: the protocol version and the node's identity, so the server never has to call back to learn who dialled |
+| `req` | server → node | id, method, path, body: one call on the node API |
+| `res` | node → server | id, status, body |
+| `evt` | node → server | the events the node already publishes on `/events` |
+
+Liveness is the WebSocket's own ping and pong rather than a frame of kari's:
+the server pings every 20 s, the same cadence the SSE keepalive used, and the
+node's stack answers without waking any kari code.
+
+A `req` is dispatched into `api::router()` as a plain tower service, with no
+listener in front of it. The node therefore serves one API, not two: every route
+in "API v1" is reachable over the link, in the same shape, with the same
+handlers. Adding a route adds it to both transports at once.
+
+`evt` is a push, not a stream the server subscribes to, because a request and
+response pair cannot carry a stream. The node forwards its own engine events up
+the link as they happen, and the server turns each into the hub event it would
+have made from an SSE message.
+
+The link replaces the SSH forward, the port walk and the address list for any
+node that uses a server. `kari-node serve` still binds loopback for the hook
+relay, and still takes `--listen` and `--private` for a setup with no server.
+
+### Reaching the server
+
+The server binds a private address. Everything that talks to it — nodes and
+clients alike — is expected to be on that private network, over a VPN when it is
+not on the LAN. That is the same trust model version 2 gave a node on a private
+address: the network carries the trust and the token keeps other processes on
+the host out. The server refuses a public address unless `--allow-public` names
+one, and that flag is not a supported deployment.
+
+### Enrolment
+
+The reverse of version-2 pairing, because the party that dials is now the node.
+
+1. `kari-server enrol node` and `kari-server enrol client` each print a
+   short-lived code. The desktop Settings shows the same codes.
+2. `kari-node serve --server <url> --enrol <code>` presents the code once. The
+   server records the node id and its name, issues a long-lived node token, and
+   the node keeps it beside its own token. Later starts need only `--server`.
+3. A client redeems a client code the same way and keeps the token in the OS
+   keychain, one item per server.
+
+Node tokens and client tokens are separate: a node token opens a link and
+nothing else, a client token calls the hub API and cannot register a node. A
+code is single-use and expires in 15 minutes.
+
+### The hub API
+
+The server serves the methods the UI already calls, which until now were Tauri
+commands over an in-process hub. They become HTTP routes under
+`/kari/v1/hub/`, node-scoped in the path where the hub method takes a node:
+
+```
+GET  /kari/v1/hub/board          the merged board
+GET  /kari/v1/hub/events         board_changed, notice
+GET  /kari/v1/hub/nodes          every node, with its status and account
+GET  /kari/v1/hub/quota          the meters, grouped by account
+GET  PUT /kari/v1/hub/columns    the columns the server owns
+POST /kari/v1/hub/nodes/{node}/cards
+POST /kari/v1/hub/nodes/{node}/cards/{card}/move|start|stop|jump|summarize
+POST /kari/v1/hub/nodes/{node}/permissions/{id}
+POST /kari/v1/hub/stop-all
+```
+
+To keep one UI over two arrangements, the hub methods become a trait. `Hub`
+implements it in-process, as today. A new `RemoteHub` implements it by calling
+the routes above. The Tauri layer and the React UI hold the trait, so neither
+knows which one it has, and the single-machine path runs the code it always ran.
+
+### One board, still
+
+The rules from "One board" hold, with one correction each:
+
+- A card is still `(node id, card id)`, and every action still routes by node.
+  The server does the routing the client used to do.
+- Columns still live in the hub's store — now the server's, so there is one
+  store rather than one per client.
+- A task still belongs to the host that holds its project directory. Cards do
+  not move between nodes.
+- A node that is offline no longer empties the board. The server serves its last
+  board, dimmed, with the time it was last seen, from its own store rather than
+  from a client's memory. Actions on such a card are refused with the node's
+  name, not silently dropped.
+
+### The lease is gone
+
+The primary lease existed because two hubs could push columns to one node and
+had to arbitrate. With a server there is exactly one hub, and without a server
+there is exactly one too. So the lease, `x-kari-hub`, `lease_changed`,
+`claim_primary` and "Make this device primary" are all removed, along with the
+mode where a phone dials nodes directly.
+
+That is the trade the server buys: multi-client is the server's job now. A setup
+that today runs several hubs against one node moves to a server, or goes back to
+one hub.
+
+### Quota across nodes on one account
+
+Quota belongs to a Claude Code login, not to a machine, and the board already
+groups the meters on the account a node reports. A server makes that grouping
+complete, because it is the first party that sees every node at once. Two
+consequences:
+
+- **One meter per account.** Nodes signed in to the same login show one pair of
+  windows, not one pair each. A user with a work login and a personal login sees
+  two rows however many machines carry them.
+- **One budget per account.** Each node still runs its own planner, but a
+  planner on a shared login can no longer assume the whole window is its own.
+  The server publishes the account's aggregate windows and the reservations the
+  other nodes on that login already hold; a planner packs against what is left,
+  not against what its own samples show. Without this, two nodes on one login
+  both plan to fill the same 40 percent and together overrun it.
+
+A node the server has never seen an account for keeps a row of its own, as every
+node did before kari knew about accounts.
+
+### Deployment
+
+The server is a second binary from the `kari-cli` crate, so it builds and ships
+with the node and shares its release. It needs a writable directory for its
+database and nothing else: no Claude Code, no login, no access to a transcript.
+It is therefore the one part of kari that suits a container, and deploying it is
+outside this repository.
+
+### Phases
+
+1. The link: framing, the node's outbound client, the server's acceptor, the
+   node API dispatched as a service. Nodes visible on a server.
+2. The hub API and the `HubApi` trait. `RemoteHub` behind it. The desktop app
+   configurable against a server, the local path unchanged.
+3. Enrolment, the two token kinds, the keychain item per server.
+4. The offline board from the server's store. The lease removed.
+5. Account-aggregate quota and planner reservations.
+
+## 16. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -514,8 +701,11 @@ repository.
 | Percent-to-token calibration is noisy | Confidence bands, conservative headroom, the planner never fills past 85 percent of a window |
 | Haiku summaries spend quota | Hard throttle, heuristics fallback, off switch |
 | A remote node exposes a board and a way to start jobs | Loopback bind, an SSH forward as the only transport, a token on every route, a refusal to bind a public address without a flag |
+| The server is one point of failure for every board | It is optional, and a desktop client keeps its local engine, so the machine the user sits at still shows its own sessions when the server is down. Nodes keep working: a link that drops changes nothing about the sessions or the jobs on that host |
+| A node that dials out reaches further than a node that only listens | The node dials one configured URL and nothing else. The server binds a private address, so the link never leaves the private network |
+| One store holds every node's board and columns | The server's database is rebuildable: nodes re-send their boards on reconnect, and columns are exported as JSON like any other layout |
 
-## 16. Decisions
+## 17. Decisions
 
 Made on 2026-09-02:
 
@@ -543,3 +733,21 @@ Made on 2026-09-03:
   token. A laptop listens on loopback plus one chosen address, never on every
   interface (2026-09-03).
 - Quota, planner and summaries stay per node, because each node has its own login.
+
+Made on 2026-09-06:
+
+- An optional server takes the hub role. With none configured, kari stays the
+  single-machine app it was, and that path is the default rather than a fallback.
+- Nodes dial the server, the server never dials a node. Reachability was the
+  thing peer-to-peer could not give: a laptop that sleeps or roams is offline to
+  every peer but reachable from itself.
+- One outbound WebSocket per node carries the node API unchanged, dispatched
+  into the same router. One API, two transports.
+- The server binds a private address. A VPN, not a public endpoint, is how a
+  device off the LAN reaches it.
+- Separate token kinds for nodes and clients, both redeemed from a short-lived
+  enrolment code.
+- The primary lease is removed, and with it the phone that dialled nodes
+  directly. One hub, whether that hub is a server or a desktop app.
+- Quota is aggregated per account across nodes, and a planner on a shared login
+  reserves against the account budget rather than its own view of the window.

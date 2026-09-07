@@ -19,6 +19,9 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 axum.workspace = true
+tower.workspace = true
+tokio-tungstenite.workspace = true
+rustls.workspace = true
 tokio-stream.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
