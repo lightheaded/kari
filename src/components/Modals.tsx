@@ -1461,8 +1461,15 @@ export function SettingsModal({
             <div className="field inline" style={{ marginTop: 8 }}>
               <button
                 className="btn"
-                onClick={updater.checkNow}
-                disabled={updater.state.kind === "checking" || updater.state.kind === "downloading"}
+                onClick={() => void updater.checkNow()}
+                // Nothing left to look for once a version is written: the
+                // running process is still the old one, so a check would find
+                // the same release and answer the same way.
+                disabled={
+                  updater.state.kind === "checking" ||
+                  updater.state.kind === "downloading" ||
+                  updater.state.kind === "ready"
+                }
               >
                 Check now
               </button>

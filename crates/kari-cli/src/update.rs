@@ -252,3 +252,35 @@ pub fn sweep() {
         let _ = std::fs::remove_file(aside(&exe));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::is_newer;
+
+    #[test]
+    fn a_later_release_is_newer() {
+        assert!(is_newer("0.8.0", "0.7.0"));
+        assert!(is_newer("0.7.1", "0.7.0"));
+        assert!(is_newer("1.0.0", "0.99.0"));
+    }
+
+    #[test]
+    fn the_same_release_is_not() {
+        assert!(!is_newer("0.7.0", "0.7.0"));
+        assert!(!is_newer("0.6.0", "0.7.0"));
+    }
+
+    #[test]
+    fn double_digits_sort_by_number_not_by_text() {
+        // The reason semver is a dependency at all: "0.10.0" < "0.9.0" as text,
+        // and a node that believed that would stop updating at 0.9.
+        assert!(is_newer("0.10.0", "0.9.0"));
+        assert!(!is_newer("0.9.0", "0.10.0"));
+    }
+
+    #[test]
+    fn a_tag_that_does_not_parse_never_replaces_a_working_binary() {
+        assert!(!is_newer("nightly", "0.7.0"));
+        assert!(!is_newer("0.8.0", "not-a-version"));
+    }
+}
