@@ -290,6 +290,15 @@ impl HubApi for RemoteHub {
         )
     }
 
+    fn move_card_to_node(&self, from: &str, card: &str, to: &str) -> anyhow::Result<Card> {
+        self.post(
+            &format!("/kari/v1/hub/nodes/{from}/cards/{card}/move-to-node"),
+            v(ToNodeBody {
+                to_node_id: to.to_string(),
+            }),
+        )
+    }
+
     fn start_card(&self, node: &str, card: &str, prompt: Option<String>) -> anyhow::Result<String> {
         let b: IdBody = self.post(
             &format!("/kari/v1/hub/nodes/{node}/cards/{card}/start"),

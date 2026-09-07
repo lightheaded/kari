@@ -65,6 +65,10 @@ pub trait HubApi: Send + Sync + 'static {
         ranked: Vec<String>,
         unranked: Vec<String>,
     ) -> anyhow::Result<()>;
+    /// Move a task card to another node. Each node keeps its own store, so the
+    /// card is written on the target and deleted from the source: the card
+    /// that comes back has a new id.
+    fn move_card_to_node(&self, from: &str, card: &str, to: &str) -> anyhow::Result<Card>;
 
     // --- running a card --------------------------------------------------
 
@@ -183,6 +187,9 @@ impl HubApi for crate::hub::Hub {
         unranked: Vec<String>,
     ) -> anyhow::Result<()> {
         crate::hub::Hub::reorder_cards(self, node, ranked, unranked)
+    }
+    fn move_card_to_node(&self, from: &str, card: &str, to: &str) -> anyhow::Result<Card> {
+        crate::hub::Hub::move_card_to_node(self, from, card, to)
     }
 
     fn start_card(&self, node: &str, card: &str, prompt: Option<String>) -> anyhow::Result<String> {

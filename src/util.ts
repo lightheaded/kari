@@ -208,3 +208,47 @@ export function planReorder<T extends Rankable>(
 export function clearRanks<T extends Rankable>(column: T[], node: string): string[] {
   return column.filter((c) => c.node === node && c.priority !== 0).map((c) => c.id);
 }
+
+/** One project directory on one node, as the board's filter list holds it. */
+export interface FilterProject {
+  node: string;
+  cwd: string;
+  name: string;
+}
+
+/** Where a new task goes. */
+export interface AddTarget {
+  /** The node that gets the card. Empty means no filter names one. */
+  node: string;
+  /** The project directory, or null when nothing names one. */
+  cwd: string | null;
+  /** The name to show for that directory, or null. */
+  name: string | null;
+}
+
+/**
+ * Read the node and the project a new task must go to out of the filters.
+ *
+ * The project filter names a node as well as a directory, so both must come
+ * from the same entry. A project on another node once sent the card to the
+ * local one, where its path does not exist.
+ *
+ * `projects` is the filter list, keyed the way the filter values are. `project`
+ * is the chosen project filter, `node` the chosen node filter, and `last` the
+ * project the last task went to.
+ */
+export function addTarget(
+  projects: [string, FilterProject][],
+  project: string,
+  node: string,
+  last: string,
+): AddTarget {
+  const pick = (key: string) => {
+    if (!key) return null;
+    const p = projects.find(([k]) => k === key)?.[1];
+    // A node filter wins over a remembered project on another node.
+    return p && (!node || p.node === node) ? p : null;
+  };
+  const p = pick(project) ?? pick(last);
+  return { node: p?.node ?? node, cwd: p?.cwd ?? null, name: p?.name ?? null };
+}

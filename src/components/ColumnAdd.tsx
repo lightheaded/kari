@@ -3,15 +3,18 @@ import { noAutoFill } from "../util";
 
 interface Props {
   columnName: string;
+  /** Where a one-line task lands: the node, and the project when one is known.
+   *  Shown in the draft bar, so the card never goes somewhere unseen. */
+  target: { node: string; project: string | null };
   /** Save a one-line task. Rejects when the node refuses it. */
   onAdd: (title: string) => Promise<void>;
   /** Open the full dialog with what is typed so far. */
-  onFull: () => void;
+  onFull: (title: string) => void;
 }
 
 /** The foot of every column: add a task here without leaving the board. Enter
  *  saves and keeps the field open for the next one. Escape closes it. */
-export function ColumnAdd({ columnName, onAdd, onFull }: Props) {
+export function ColumnAdd({ columnName, target, onAdd, onFull }: Props) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,10 +69,14 @@ export function ColumnAdd({ columnName, onAdd, onFull }: Props) {
           if (!title.trim()) setOpen(false);
         }}
       />
+      <div className="coltarget hint" title="Change either of these in the full dialog, or later on the card">
+        {target.project ? `→ ${target.project}` : "→ no project yet"}
+        {target.node ? ` · ${target.node}` : ""}
+      </div>
       <div className="draftbar">
         <span className="hint">Enter saves</span>
         <div className="spacer" />
-        <button className="btn ghost sm" onClick={onFull} title="Open the full dialog">
+        <button className="btn ghost sm" onClick={() => onFull(title)} title="Open the full dialog">
           More ⌄
         </button>
         <button className="btn primary sm" disabled={!title.trim() || busy} onClick={save}>

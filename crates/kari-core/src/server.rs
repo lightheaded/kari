@@ -311,6 +311,19 @@ async fn hub_reorder_cards(
 
 // ---- running a card --------------------------------------------------------
 
+/// Both nodes are in the path: the card leaves one and arrives at the other,
+/// and a route naming only one of them would hide half of what happens.
+async fn hub_move_card_to_node(
+    State(st): State<ServerState>,
+    Path((node, card)): Path<(String, String)>,
+    Json(b): Json<ToNodeBody>,
+) -> Result<Json<Card>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(
+        blocking(move || h.move_card_to_node(&node, &card, &b.to_node_id)).await?,
+    ))
+}
+
 async fn hub_start_card(
     State(st): State<ServerState>,
     Path((node, card)): Path<(String, String)>,
@@ -536,6 +549,11 @@ pub struct PromptBody {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ToNodeBody {
+    pub to_node_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct IdBody {
     pub id: String,
 }
@@ -647,6 +665,10 @@ pub fn router(registry: Arc<LinkRegistry>, token: String, hub: Option<Arc<Hub>>)
             axum::routing::patch(hub_patch_card).delete(hub_delete_card),
         )
         .route("/hub/nodes/{node}/cards/{card}/move", post(hub_move_card))
+        .route(
+            "/hub/nodes/{node}/cards/{card}/move-to-node",
+            post(hub_move_card_to_node),
+        )
         .route("/hub/nodes/{node}/cards/{card}/start", post(hub_start_card))
         .route("/hub/nodes/{node}/cards/{card}/stop", post(hub_stop_card))
         .route("/hub/nodes/{node}/cards/{card}/jump", post(hub_jump_in))
