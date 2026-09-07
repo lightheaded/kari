@@ -1646,7 +1646,7 @@ impl Engine {
         #[cfg(windows)]
         {
             launcher::open_in_terminal_argv(&plan.cwd, &plan.argv)?;
-            return Ok(plan.message);
+            Ok(plan.message)
         }
         #[cfg(not(windows))]
         {

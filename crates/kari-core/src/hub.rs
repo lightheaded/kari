@@ -1398,7 +1398,6 @@ impl Hub {
                 plan.command
             )
         };
-        let settings = self.engine.settings();
         let home = paths::home().to_string_lossy().into_owned();
         // Windows opens the local half as an argument list: there is no `sh`
         // here to parse a command line. The remote half is `sh`-quoted either
@@ -1413,10 +1412,10 @@ impl Hub {
                 launcher::ssh_argv(host, &plan.cwd, &plan.command)
             };
             launcher::open_in_terminal_argv(&home, &argv)?;
-            let _ = &settings;
         }
         #[cfg(not(windows))]
         {
+            let settings = self.engine.settings();
             let cmd = if plan.herdr_pane.is_some() {
                 // The node focused a herdr pane. herdr attaches to its own
                 // server over SSH, so the pane the node focused is the one on
