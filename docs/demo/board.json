@@ -113,6 +113,28 @@
         "lab:47311"
       ],
       "automation_mode": "ask"
+    },
+    {
+      "id": "desk",
+      "name": "desk",
+      "kind": "remote",
+      "online": true,
+      "enabled": true,
+      "paired": true,
+      "ssh_host": "desk",
+      "remote_port": 47311,
+      "version": "0.1.0",
+      "api_version": 1,
+      "remote_node_id": "node_desk",
+      "last_seen": "2026-09-03T09:58:00.000Z",
+      "error": null,
+      "lease": null,
+      "primary": false,
+      "away_mode": false,
+      "addresses": [
+        "desk:47311"
+      ],
+      "automation_mode": "ask"
     }
   ],
   "cards": [
@@ -1535,6 +1557,84 @@
     {
       "node_id": "lab",
       "node_name": "lab",
+      "quota": {
+        "at": "2026-09-03T09:58:00.000Z",
+        "five_hour": {
+          "used_percentage": 14,
+          "resets_at": "2026-09-03T11:36:00.000Z"
+        },
+        "seven_day": {
+          "used_percentage": 27,
+          "resets_at": "2026-09-07T10:00:00.000Z"
+        },
+        "source": "statusline"
+      },
+      "calibration": {
+        "pct_per_mtok": 1.9,
+        "low": 1.4,
+        "high": 2.6,
+        "samples": 7,
+        "source": "learned",
+        "updated_at": "2026-09-03T07:00:00.000Z"
+      }
+    }
+  ],
+  "accounts": [
+    {
+      "key": "acct_you",
+      "label": "you",
+      "alias": "you",
+      "account": {
+        "id": "acct_you",
+        "email": "you@example.com",
+        "display_name": "You",
+        "organization_id": "org_you"
+      },
+      "node_ids": [
+        "local",
+        "desk"
+      ],
+      "node_names": [
+        "studio",
+        "desk"
+      ],
+      "quota": {
+        "at": "2026-09-03T09:59:00.000Z",
+        "five_hour": {
+          "used_percentage": 38,
+          "resets_at": "2026-09-03T12:10:00.000Z"
+        },
+        "seven_day": {
+          "used_percentage": 52,
+          "resets_at": "2026-09-06T10:15:00.000Z"
+        },
+        "source": "statusline"
+      },
+      "calibration": {
+        "pct_per_mtok": 1.9,
+        "low": 1.4,
+        "high": 2.6,
+        "samples": 7,
+        "source": "learned",
+        "updated_at": "2026-09-03T07:00:00.000Z"
+      }
+    },
+    {
+      "key": "acct_lab",
+      "label": "Lab",
+      "alias": null,
+      "account": {
+        "id": "acct_lab",
+        "email": "lab@example.com",
+        "display_name": "Lab",
+        "organization_id": "org_lab"
+      },
+      "node_ids": [
+        "lab"
+      ],
+      "node_names": [
+        "lab"
+      ],
       "quota": {
         "at": "2026-09-03T09:58:00.000Z",
         "five_hour": {

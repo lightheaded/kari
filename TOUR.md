@@ -6,12 +6,12 @@ The README explains how kari reads its data and how to install it. This page exp
 
 ## The board
 
-![The board with six columns, one quota row per node, and cards](docs/screenshots/board.png)
+![The board with six columns, one quota row per Claude Code account, and cards](docs/screenshots/board.png)
 
 The window has four bands.
 
 1. The top bar: the automation switch, the herdr indicator, a counter of sessions that work and sessions that need you, and the buttons for Columns, Settings and a new task.
-2. The stats strip: one row per node with both quota windows, both reset times, and "Fill". A click on a node name filters the board to that node. The strip grows with the node count; the top bar never does.
+2. The stats strip: one row per Claude Code account with both quota windows, both reset times, the machines that spend it, and "Fill". The windows belong to the login, so two machines on one account share a row. A click on the name gives the account one of your own, such as `tom` or `work`; the name stays on this device. Filtering the board is the job of the node chips below, which name one machine where a row here can cover several. The strip grows with the account count; the top bar never does.
 3. The filter bar: a search field, a project filter that searches as you type, a chip per node, and the card count with the time of the last scan. Under it sits the queue strip.
 4. The columns. Each column accepts a set of derived states. The number in the header is the card count, or the count against the WIP limit.
 
@@ -124,7 +124,7 @@ Settings holds every threshold and switch.
 A remote node is another host that runs `kari-node serve`. Add it in Settings with its SSH host. kari holds an SSH port forward to it and shows its cards on the same board.
 
 - Every card carries a node badge, and a chip row above the board filters to one node.
-- Each node has its own quota meters, because each has its own Claude Code login.
+- Quota meters are grouped by Claude Code account, not by node: two machines on one login draw down one window and share a row. A node whose account kari cannot read keeps a row of its own, so two budgets are never merged by guessing.
 - An offline node keeps its cards on the board, dimmed, with the time it was last seen. Its actions come back when the forward does.
 - Jump in on a remote card opens your terminal and connects over SSH.
 
@@ -136,7 +136,7 @@ The Nodes section also shows who pushes the columns. Two hubs, the desktop and t
 
 The Android app is a second hub. It reaches the nodes over a private network, such as a VPN, and pairs with the code from the desktop. Four tabs:
 
-- **Needs you**: the quota per node, the open plans with Start, Snooze and Dismiss, then every card that waits for a person. The actions sit on the card: an option of an open question, a reply, Allow and Deny for a held permission prompt, Stop, Done, Open.
+- **Needs you**: the quota per account, the open plans with Start, Snooze and Dismiss, then every card that waits for a person. The actions sit on the card: an option of an open question, a reply, Allow and Deny for a held permission prompt, Stop, Done, Open.
 - **Board**: one column at a time. The arrows or the dots move between columns. A chip row filters to one node.
 - **Add**: the task form. A task with a prompt and auto-run on is ready for the next plan.
 - **Nodes**: the status and the lease holder per node, Away mode per node, "Make this device primary", the pairing code, and this device's name.

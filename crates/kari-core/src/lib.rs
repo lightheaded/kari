@@ -1,5 +1,6 @@
 //! kari core: reads Claude Code and herdr state, derives board state, stores cards.
 
+pub mod account;
 pub mod agents;
 pub mod api;
 pub mod client;

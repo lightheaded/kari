@@ -44,6 +44,7 @@ const EMPTY_BOARD: HubBoard = {
   nodes: [],
   cards: [],
   quotas: [],
+  accounts: [],
   queues: [],
   proposals: [],
   generated_at: "",

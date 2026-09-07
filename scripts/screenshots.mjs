@@ -7,8 +7,9 @@
 // 1. Writes the dummy board to docs/demo/ (scripts/demo-fixtures.mjs).
 // 2. Starts the Vite dev server with KARI_FIXTURES=docs/demo on port 1421.
 // 3. Opens the board in headless Chromium in a 1920x1080 window. The dummy board
-//    holds two nodes, so the images show the hub: node chips, node names on the
-//    cards and one stats row per node.
+//    holds three nodes on two Claude Code accounts, so the images show the hub:
+//    node chips, node names on the cards, and a stats row per account with the
+//    two machines that share one of them.
 // 4. Pins the clock to the fixture time, so relative times read the same in every release.
 // 5. Saves one PNG per view to docs/screenshots/ and writes the app version to docs/screenshots/VERSION.
 //
