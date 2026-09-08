@@ -100,16 +100,22 @@ done)
 #
 # A subject is compared without a trailing `(#12)`, which GitHub adds to the
 # squash subject and not to the bullets.
+#
+# The three arguments arrive in the environment rather than through `-v`. An
+# `-v` assignment is parsed for escapes and cannot hold a newline at all: the
+# subject list is one string of many lines, and awk answered "newline in string"
+# and wrote no notes for any release that held a squash commit.
 unsquash() {
-  awk -v own="$1" -v others="$2" -v short="$3" '
+  OWN="$1" OTHERS="$2" SHORT="$3" awk '
     function norm(s) {
       sub(/[[:space:]]*\(#[0-9]+\)[[:space:]]*$/, "", s)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
       return s
     }
     BEGIN {
-      own = norm(own)
-      n = split(others, o, "\n")
+      own = norm(ENVIRON["OWN"])
+      short = ENVIRON["SHORT"]
+      n = split(ENVIRON["OTHERS"], o, "\n")
       for (i = 1; i <= n; i++) if (o[i] != "") drop[norm(o[i])] = 1
       count = 0
     }
@@ -210,9 +216,12 @@ not signed either, so SmartScreen asks once: More info, then Run anyway.
 An installed kari updates itself to this release: it checks on start and every six hours,
 writes the new version beside the running one and offers a restart. Settings, Updates has the switch.
 
-A Linux host runs the headless node from \`kari-node-$tag-x86_64-unknown-linux-gnu.tar.gz\`,
-a Windows host from \`kari-node-$tag-x86_64-pc-windows-msvc.zip\`.
-Start it with \`kari-node serve\` and add it under Settings, Nodes in the app.
+Every host runs the headless node, so that its sessions stay on the board while no window is open.
+A Mac takes \`kari-node-$tag-aarch64-apple-darwin\` (or the \`x86_64\` one),
+a Linux host \`kari-node-$tag-x86_64-unknown-linux-gnu.tar.gz\`,
+a Windows host \`kari-node-$tag-x86_64-pc-windows-msvc.zip\`.
+Run \`kari-node service install\` to keep it running at login. One engine runs on a host at a time:
+open the app and the node steps down, quit the app and it takes the host back.
 A node updates itself only when asked: \`kari-node update\`, or \`serve --auto-update\`.
 
 An Android phone installs \`kari-latest.apk\`. Add this repository to Obtainium: the asset name never
