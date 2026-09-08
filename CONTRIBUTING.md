@@ -37,6 +37,7 @@ CI runs the same commands, plus a gitleaks scan of the history. The last script 
 - Keep one change per pull request.
 - Write the pull request text in plain, short sentences. Say what changed and why.
 - Do not put personal data in fixtures, screenshots or examples: no real session ids, project paths, prompts or transcript excerpts.
+- Write a commit message that works as a release note: a subject that stands alone in a change list, and a body that explains the change. The release page is built from these messages. See [Releases](#releases).
 - Sign off your commits with `git commit -s`. The sign-off says that you have the right to submit the change under the project license ([Developer Certificate of Origin](https://developercertificate.org/)).
 
 ## Screenshots
@@ -59,8 +60,33 @@ The maintainer cuts releases. The process:
 
 1. Run `scripts/bump-version.sh X.Y.Z`. The script sets the version in the manifests, refreshes the lock files and retakes the screenshots.
 2. Look at `docs/screenshots/` and at the README header. Every image must show this release.
-3. Commit, tag `vX.Y.Z` with a signature (`git tag -s`) and push the tag.
-4. The `release` workflow checks that the tag matches the app version and the screenshot stamp. Then it builds the macOS bundles and publishes the GitHub release.
+3. Commit the bump with the subject `Release X.Y.Z`. Write a body that says what the release is for. That body becomes the headline of the release page.
+4. Run `scripts/release-notes.sh` and read the result. This is the text that the release page will carry.
+5. Tag `vX.Y.Z` with a signature (`git tag -s`) and push the tag.
+6. The `release` workflow checks that the tag matches the app version and the screenshot stamp. Then it builds the macOS bundles and publishes the GitHub release.
+
+### What the release page says
+
+`scripts/release-notes.sh` builds the release body from git history. There is no separate release-notes step. The commit message is the release note.
+
+- The body of the `Release X.Y.Z` commit becomes the headline.
+- Every commit subject since the previous tag becomes one line of the TL;DR list.
+- Every commit body becomes one section of "What changed".
+- Merge commits and `Release X.Y.Z` commits do not appear in those two lists.
+- The `Co-Authored-By:`, `Claude-Session:` and `Signed-off-by:` trailers are removed.
+- The install text comes last.
+
+Therefore every commit that reaches `main` must carry a real message. The subject must stand alone as one line of a change list. The body must explain the change for a reader who was not there. `fix bug` and `address review comments` are acceptable inside a branch. They must not reach `main` as the last word on a change. Squash or reword first.
+
+A release page that holds only install text tells a reader nothing about why to install it. That is the failure this guards against.
+
+### The privacy gate
+
+Every commit body goes onto a public page. The workflow runs `scripts/check-privacy.sh` over the notes and refuses to create the release on a hit.
+
+The check is a net, not a proof. It finds an absolute home path, an email address, a private network address and an internal host name. It cannot find a machine that carries a name only its owner knows. So keep that text out of the commit message, and read the preview at step 4 before you tag.
+
+If the gate stops a release, delete the tag, reword the commit, force-push the branch and tag again. A commit message that is already pushed is already public, so this limits the damage rather than undoing it.
 
 The workflow refuses a tag whose version differs from `docs/screenshots/VERSION`. That keeps the README header at the latest release. Do not edit the stamp by hand. Run the script.
 
