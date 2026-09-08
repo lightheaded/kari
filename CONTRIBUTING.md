@@ -6,6 +6,8 @@ kari works with the tools people already use. It reads the state that Claude Cod
 
 One person maintains kari at the moment. Replies can take a few days.
 
+If you work on kari with a coding agent, [AGENTS.md](AGENTS.md) holds the rules it must follow. The commit message rule there applies to everybody: the release page is built from git history.
+
 ## Before you write code
 
 Open an issue first for anything larger than a fix. Say what problem you saw and how you want to solve it. This avoids work on a change that cannot go in.
