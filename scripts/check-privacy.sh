@@ -1,14 +1,33 @@
 #!/bin/bash
 # Refuse text that points at one machine or one person.
 #
-# The tracked files must hold no absolute home path, no personal email address,
-# no private network address and no internal host name. CI runs this script.
-# Run it before a commit: scripts/check-privacy.sh
+# The text must hold no absolute home path, no personal email address, no
+# private network address and no internal host name. CI runs this script.
+#
+# Usage: scripts/check-privacy.sh              # every tracked file
+#        scripts/check-privacy.sh FILE...      # only these files
+#
+# The release workflow uses the second form on the generated release notes,
+# because a commit body becomes a public release page. See scripts/release-notes.sh.
 set -uo pipefail
+
+# The named files are resolved against the caller's directory, before the cd below.
+args=()
+for f in "$@"; do
+  case "$f" in
+    /*) args+=("$f") ;;
+    *) args+=("$PWD/$f") ;;
+  esac
+done
+
 cd "$(dirname "$0")/.."
 
-# Binary and generated files carry no prose.
-files=$(git ls-files | grep -vE '\.(png|icns|ico|jpg|gif|woff2?|ttf)$|(^|/)(bun\.lock|Cargo\.lock)$')
+if [ "${#args[@]}" -gt 0 ]; then
+  files=$(printf '%s\n' "${args[@]}")
+else
+  # Binary and generated files carry no prose.
+  files=$(git ls-files | grep -vE '\.(png|icns|ico|jpg|gif|woff2?|ttf)$|(^|/)(bun\.lock|Cargo\.lock)$')
+fi
 
 hits=0
 check() { # $1 = rule, $2 = regex, $3 = regex of allowed matches (may be empty)

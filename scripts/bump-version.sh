@@ -3,9 +3,13 @@
 #
 # Usage: scripts/bump-version.sh 0.2.0
 #
-# Then review, commit, tag `v0.2.0` with a signature and push the tag. The release
-# workflow builds the bundles and publishes the GitHub release. It refuses the tag
-# when docs/screenshots/VERSION does not match, so do not skip the screenshots.
+# Then review, and commit the bump with the subject `Release 0.2.0` and a body that
+# says what the release is for. That body is the headline of the release page, and
+# the commits since the previous tag are the rest of it: see scripts/release-notes.sh.
+# Read `scripts/release-notes.sh`, then tag `v0.2.0` with a signature and push the tag.
+#
+# The release workflow builds the bundles and publishes the GitHub release. It refuses
+# the tag when docs/screenshots/VERSION does not match, so do not skip the screenshots.
 set -euo pipefail
 
 v="${1:?usage: scripts/bump-version.sh X.Y.Z}"
@@ -37,5 +41,12 @@ if [ -z "${CHROMIUM_PATH:-}" ]; then
 fi
 bun run screenshots
 
-echo "next: review docs/screenshots/, then:"
-echo "  git add -A && git commit -m \"Release $v\" && git tag -s v$v -m \"kari v$v\" && git push && git push origin v$v"
+echo "next: review docs/screenshots/, then commit the bump."
+echo "The body of that commit is the headline of the release page, so write one:"
+echo
+echo "  git add -A && git commit -m \"Release $v\" -m \"<what this release is for>\""
+echo
+echo "Then read the notes that the release page will carry, and tag:"
+echo
+echo "  scripts/release-notes.sh"
+echo "  git tag -s v$v -m \"kari v$v\" && git push && git push origin v$v"

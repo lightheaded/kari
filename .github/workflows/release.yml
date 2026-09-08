@@ -17,7 +17,12 @@ jobs:
     outputs:
       release_id: ${{ steps.create.outputs.result }}
     steps:
+      # The whole history and every tag. The release notes are built from the
+      # commits since the previous release tag, and the default shallow clone
+      # has neither the commits nor the tag to measure from.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Check that the tag matches the app version
         run: |
@@ -40,6 +45,22 @@ jobs:
             test -s "docs/screenshots/$f.png" || { echo "docs/screenshots/$f.png is missing"; exit 1; }
           done
 
+      # The commit message is the release note. Subjects since the previous tag
+      # become the TL;DR, bodies become "What changed". A release whose notes are
+      # the install text and nothing else tells a reader nothing about why they
+      # want the update, which is the failure this replaced.
+      - name: Write the release notes
+        run: |
+          scripts/release-notes.sh "${{ github.ref_name }}" > release-notes.md
+          echo "release notes: $(wc -c < release-notes.md) bytes"
+
+      # Every commit body goes onto a public page. This is a net, not a proof: it
+      # catches a home path, an address or an internal host name, and it cannot
+      # catch a machine called by a name only its owner knows. The control that
+      # works is not writing it into the commit in the first place.
+      - name: Refuse notes that point at one machine or one person
+        run: scripts/check-privacy.sh release-notes.md
+
       - name: Create a draft release
         id: create
         uses: actions/github-script@v7
@@ -50,31 +71,9 @@ jobs:
               repo: context.repo.repo,
               tag_name: context.ref.replace('refs/tags/', ''),
               name: `kari ${context.ref.replace('refs/tags/', '')}`,
-              body: [
-                '## Install',
-                '',
-                'Download the `.dmg` for your Mac: `aarch64` for Apple silicon, `x64` for Intel.',
-                'The app is not signed. After you copy it to Applications, run:',
-                '',
-                '```',
-                'xattr -dr com.apple.quarantine /Applications/kari.app',
-                '```',
-                '',
-                'An installed kari updates itself to this release: it checks on start and every six hours,',
-                'writes the new version beside the running one and offers a restart. Settings, Updates has the switch.',
-                '',
-                'A Linux host runs the headless node from `kari-node-<tag>-x86_64-unknown-linux-gnu.tar.gz`,',
-                'a Windows host from `kari-node-<tag>-x86_64-pc-windows-msvc.zip`.',
-                'Start it with `kari-node serve` and add it under Settings, Nodes in the app.',
-                'A node updates itself only when asked: `kari-node update`, or `serve --auto-update`.',
-                '',
-                'An Android phone installs `kari-latest.apk`. Add this repository to Obtainium: the asset name never',
-                'carries the version and the signing key never changes, so an update installs over the previous build.',
-                'The phone reaches the nodes over a private network, such as a VPN, and pairs with the code from',
-                'Settings, Nodes on the desktop. See TOUR.md.',
-                '',
-                'See the README for requirements and setup.',
-              ].join('\n'),
+              // Written to a file rather than inlined here. The notes run to
+              // tens of kilobytes of prose that no YAML string should hold.
+              body: require('fs').readFileSync('release-notes.md', 'utf8'),
               draft: true,
               prerelease: false,
             });
