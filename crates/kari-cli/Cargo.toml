@@ -27,3 +27,7 @@ reqwest.workspace = true
 # download against the checksum published beside it.
 semver = "1"
 sha2 = "0.10"
+
+# One job only: the uid that `launchctl` needs to name the user's own domain.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

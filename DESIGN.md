@@ -332,6 +332,7 @@ Flow: watchers and pollers in `kari-core` emit domain events on a channel. A red
 4. Automatic starts on a schedule, herdr as a launch target. Built 2026-09-03.
 5. Remote nodes: the headless node, the hub, one board over many hosts. Built 2026-09-03. See "Remote nodes".
 6. The server: nodes that dial out, one hub off the client, the lease removed, quota per account across nodes. See "The server".
+7. One engine per machine: a daemon on every host, and the claim that stops it running beside a window. See "One engine per machine".
 
 ## 14. Remote nodes
 
@@ -684,14 +685,81 @@ outside this repository.
 ### Phases
 
 1. The link: framing, the node's outbound client, the server's acceptor, the
-   node API dispatched as a service. Nodes visible on a server.
+   node API dispatched as a service. Nodes visible on a server. Built.
 2. The hub API and the `HubApi` trait. `RemoteHub` behind it. The desktop app
-   configurable against a server, the local path unchanged.
-3. Enrolment, the two token kinds, the keychain item per server.
-4. The offline board from the server's store. The lease removed.
-5. Account-aggregate quota and planner reservations.
+   configurable against a server, the local path unchanged. Built.
+3. The desktop as a client *and* a node: `SplitHub` over the local engine and
+   the server, and the app linking to its server the way a daemon does. Built.
+   This one was missed the first time, and the app in server mode showed no
+   cards of its own — see rule 2 in `AGENTS.md`.
+4. Enrolment, the two token kinds, the keychain item per server.
+5. The offline board of every node from the client's own store, the way the
+   server already caches an absent node. The columns are cached now; the cards
+   of an absent node are not.
+6. Account-aggregate quota and planner reservations.
 
-## 16. Risks
+## 16. One engine per machine
+
+A host holds the state of its own sessions, and it must hold it whether or not
+a window is open. So every host runs a daemon, the desktop included: `kari-node
+serve`, kept alive by the supervisor of the user's session. A laptop that is
+shut for a day comes back with the cards it earned while it was shut.
+
+The desktop app also has an engine. Both cannot run at one time, and the reason
+is not tidiness:
+
+- **One port.** The hook relay is registered in `~/.claude/settings.json` as
+  one address. The second engine to start binds nothing, and the hooks reach
+  whichever won.
+- **One node id.** The id lives in the store the two share. A server sees one
+  node dial twice and drops each link as the other arrives, so the machine
+  flickers on every other client's board.
+- **One budget.** Two planners on one Claude Code login each believe the window
+  is theirs, and together they overrun it.
+
+### The claim
+
+`~/.config/kari/engine-owner.json` names the process that runs the engine: a
+pid, what it is, and the port it serves. The rule is that the window wins.
+
+| Who | On start | While running |
+|---|---|---|
+| The app | Takes the claim at once, then waits for the port to close | Holds it until it quits |
+| The daemon | Waits for the claim to be free, however long that takes | Reads it every 3 s and exits when it names another process |
+
+A daemon's claim is taken at once, on purpose. The daemon steps down when it
+sees the claim change, so it is waiting for exactly that write, and a window
+that waited for the daemon to let go first would deadlock against it. A claim
+by another *window* is waited for instead, and taken after 12 seconds: two
+windows are a mistake rather than a design, and a window that refused to open
+would be worse than the two engines every version before the claim already
+allowed.
+
+The daemon exits rather than close its engine in place. The engine holds
+watchers, a port, a link to a server and a planner, and unwinding all of that
+is more machinery than a restart. `KeepAlive` on macOS and `Restart=always` on
+Linux bring it back, and it comes back into the wait. That is also why the
+restart interval is 10 seconds: while a window stays open the daemon restarts,
+reads the claim and waits, which costs nothing.
+
+The claim holds a pid, and a pid is checked for life before it is believed.
+That is what makes a crash safe: a process that dies without clearing its claim
+leaves a pid that answers nothing, and the next reader takes over.
+
+### Installing it
+
+`kari-node service install` writes the service file for the platform and starts
+it: a `launchd` agent under `~/Library/LaunchAgents` on macOS, a `systemd --user`
+unit under `~/.config/systemd/user` on Linux. It is a service of the user, never
+of the system: the node reads `~/.claude`, runs Claude Code and holds that
+user's login, so it must not start before the user logs in. `service uninstall`
+and `service status` are the other two.
+
+Windows has no per-user supervisor of that shape. A scheduled task with an
+at-log-on trigger is the nearest thing, and the command says so rather than
+write something that looks installed and is not.
+
+## 17. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -705,7 +773,7 @@ outside this repository.
 | A node that dials out reaches further than a node that only listens | The node dials one configured URL and nothing else. The server binds a private address, so the link never leaves the private network |
 | One store holds every node's board and columns | The server's database is rebuildable: nodes re-send their boards on reconnect, and columns are exported as JSON like any other layout |
 
-## 17. Decisions
+## 18. Decisions
 
 Made on 2026-09-02:
 

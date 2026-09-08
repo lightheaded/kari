@@ -29,6 +29,13 @@ fn ms(v: Option<i64>) -> Option<DateTime<Utc>> {
 
 #[cfg(unix)]
 pub fn pid_alive(pid: u32) -> bool {
+    // A pid that does not fit a positive i32 is no process. The cast would
+    // otherwise turn a large number into a negative one, and kill(-1, 0) asks
+    // about every process this user may signal, which succeeds — so a nonsense
+    // pid would read as alive and keep whatever depends on it waiting for ever.
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     // kill(pid, 0) succeeds when the process exists and we may signal it.
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }

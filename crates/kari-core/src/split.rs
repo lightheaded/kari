@@ -40,7 +40,12 @@ use tracing::{info, warn};
 pub struct SplitHub {
     /// This machine, and nothing else. Built with `Hub::local_only`, so it
     /// dials no node of its own: the other hosts arrive through the server.
-    local: Arc<Hub>,
+    ///
+    /// Named `machine` rather than `local` because a field of that name reads,
+    /// at every use, as a host name in the `.local` domain — which is what
+    /// `scripts/check-privacy.sh` looks for. The guard is worth more than the
+    /// shorter field name.
+    machine: Arc<Hub>,
     server: Arc<RemoteHub>,
     /// This machine's node id, which is how the server names it. Cards and
     /// rows the server holds under this id are dropped from the merge.
@@ -51,16 +56,16 @@ pub struct SplitHub {
 impl SplitHub {
     pub fn connect(engine: Arc<Engine>, base: &str, token: &str) -> Arc<SplitHub> {
         let local_node_id = engine.node_id();
-        let local = Hub::local_only(Arc::clone(&engine));
+        let machine = Hub::local_only(Arc::clone(&engine));
         let server = RemoteHub::connect(base, token, engine);
         let (tx, _) = broadcast::channel(256);
         let hub = Arc::new(SplitHub {
-            local,
+            machine,
             server,
             local_node_id,
             tx,
         });
-        hub.forward(hub.local.subscribe(), "kari-split-local");
+        hub.forward(hub.machine.subscribe(), "kari-split-machine");
         hub.forward(hub.server.subscribe(), "kari-split-server");
         info!(
             "the board is this machine plus the server at {}",
@@ -100,7 +105,7 @@ impl SplitHub {
     /// The local hub always calls this machine `local`, whatever the caller
     /// said.
     fn on_local<T>(&self, f: impl FnOnce(&Arc<Hub>) -> T) -> T {
-        f(&self.local)
+        f(&self.machine)
     }
 }
 
@@ -147,7 +152,7 @@ impl HubApi for SplitHub {
 
     fn board(&self) -> HubBoard {
         // This machine first, and unconditionally. Everything below only adds.
-        let mut b = self.local.board();
+        let mut b = self.machine.board();
         let sb = match self.server.try_board() {
             Ok(sb) => sb,
             Err(e) => {
@@ -163,7 +168,7 @@ impl HubApi for SplitHub {
         // have, exactly as a remote card can, and maps the same way.
         if !sb.columns.is_empty() {
             if sb.columns != b.columns {
-                if let Err(e) = self.local.local_engine().set_columns(sb.columns.clone()) {
+                if let Err(e) = self.machine.local_engine().set_columns(sb.columns.clone()) {
                     warn!("the server's columns are not cached locally: {e}");
                 }
                 for c in b.cards.iter_mut() {
@@ -202,14 +207,14 @@ impl HubApi for SplitHub {
     }
 
     fn nodes(&self) -> Vec<NodeStatus> {
-        let mut out = self.local.nodes();
+        let mut out = self.machine.nodes();
         let mine = self.local_node_id.as_str();
         out.extend(self.server.nodes().into_iter().filter(|n| n.id != mine));
         out
     }
 
     fn refresh_all(&self) {
-        self.local.refresh_all();
+        self.machine.refresh_all();
         self.server.refresh_all();
     }
 
@@ -218,7 +223,7 @@ impl HubApi for SplitHub {
         if c.is_empty() {
             // The server is away. The copy in the local store is the set it
             // last published, which is closer than nothing.
-            return self.local.columns();
+            return self.machine.columns();
         }
         c
     }
@@ -340,7 +345,7 @@ impl HubApi for SplitHub {
     /// server cannot be reached: stopping the jobs in front of the user must
     /// not depend on a network.
     fn stop_all(&self) -> anyhow::Result<usize> {
-        let n = self.local.stop_all()?;
+        let n = self.machine.stop_all()?;
         match self.server.stop_all() {
             Ok(m) => Ok(n + m),
             Err(e) => {
@@ -386,7 +391,7 @@ impl HubApi for SplitHub {
     }
 
     fn set_automation_mode_all(&self, mode: AutomationMode) -> Vec<String> {
-        let mut refused = self.local.set_automation_mode_all(mode);
+        let mut refused = self.machine.set_automation_mode_all(mode);
         refused.extend(self.server.set_automation_mode_all(mode));
         refused
     }
@@ -503,7 +508,7 @@ impl HubApi for SplitHub {
     }
 
     fn local_engine(&self) -> &Arc<Engine> {
-        self.local.local_engine()
+        self.machine.local_engine()
     }
 }
 

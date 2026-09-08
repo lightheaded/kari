@@ -905,7 +905,41 @@ pub fn run() {
         .init();
 
     let engine = Engine::open().expect("open kari store");
+
+    // One engine per machine. A daemon watches this host while no window is
+    // open, and it steps down when one opens: the window is what the person
+    // reads, and two engines on one host fight over the hook port, the node id
+    // and the account's quota. See `kari_core::owner`.
+    let hooks_port = engine.settings().hooks_port;
+    let daemon = kari_core::owner::current();
+    let _owned =
+        kari_core::owner::take_when_free("kari", hooks_port, std::time::Duration::from_secs(12));
+    if let Some(d) = daemon {
+        tracing::info!("{} stepped down; taking over this machine", d.what);
+        // Its listener closes a moment after it drops the claim, and the API
+        // below binds the same port.
+        if !kari_core::owner::wait_for_port(hooks_port, std::time::Duration::from_secs(10)) {
+            tracing::warn!("port {hooks_port} is still held; the hook relay may not answer");
+        }
+    }
+
     engine.start_watchers();
+
+    // This machine is a node of its server while the window is open, the same
+    // way the daemon is one while it is closed. Without this the Mac is on its
+    // own board and on nobody else's: a phone and another desktop would each
+    // show every host but this one.
+    if let Some((url, token)) = kari_core::remote::server_config() {
+        match kari_core::hooks::token() {
+            Ok(local) => {
+                let e = Arc::clone(&engine);
+                tracing::info!("linking to the server at {url}");
+                tauri::async_runtime::spawn(kari_core::link::run(e, url, token, local));
+            }
+            Err(e) => tracing::warn!("no local token, so this machine does not link: {e}"),
+        }
+    }
+
     // Either the in-process hub or a client of a server, decided by this
     // device's configuration. Nothing below this line knows which.
     let hub: Arc<dyn HubApi> = kari_core::remote::open_hub(Arc::clone(&engine));

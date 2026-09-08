@@ -5,6 +5,7 @@
 //! an SSH port forward. The other subcommands install the Claude Code hooks and
 //! the status line wrapper on this host, and read the board of a running node.
 
+mod service;
 mod update;
 
 use clap::{Parser, Subcommand};
@@ -97,12 +98,34 @@ enum Cmd {
     },
     /// Print what this node says on /kari/health.
     Identity,
+    /// Run the node at login, and keep it running.
+    Service {
+        #[command(subcommand)]
+        cmd: ServiceCmd,
+    },
     /// Replace this binary with the newest release.
     Update {
         /// Say what would happen and change nothing.
         #[arg(long)]
         check: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum ServiceCmd {
+    /// Write the service file and start the node.
+    Install {
+        /// Link the node to this server, as `serve --server` does.
+        #[arg(long)]
+        server: Option<String>,
+        /// Let the node replace its own binary while it serves.
+        #[arg(long)]
+        auto_update: bool,
+    },
+    /// Stop the node and remove the service file.
+    Uninstall,
+    /// Say whether the service is installed and running.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -222,6 +245,21 @@ fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&engine.identity())?);
             Ok(())
         }
+        Cmd::Service { cmd } => {
+            let msg = match cmd {
+                ServiceCmd::Install {
+                    server,
+                    auto_update,
+                } => service::install(service::Options {
+                    server,
+                    auto_update,
+                })?,
+                ServiceCmd::Uninstall => service::uninstall()?,
+                ServiceCmd::Status => service::status()?,
+            };
+            println!("{msg}");
+            Ok(())
+        }
         Cmd::Update { check } => {
             let running = update::current();
             if check {
@@ -316,6 +354,25 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
         settings.hooks_port = addrs[0].port();
         changed = true;
     }
+
+    // One engine per machine, and the window wins. A daemon that started while
+    // the app was open would bind nothing, flicker the machine on every other
+    // client's board and plan against a budget it shares — see `owner`. So it
+    // waits here, for as long as the app is open, and serves nothing until the
+    // machine is its own.
+    let _owned = kari_core::owner::take_after_wait(kari_core::owner::DAEMON, addrs[0].port())?;
+    kari_core::owner::step_down_when_taken(kari_core::owner::DAEMON, addrs[0].port(), |h| {
+        tracing::info!(
+            "{} (pid {}) took the engine of this machine; stopping so it can serve",
+            h.what,
+            h.pid
+        );
+        // Exit rather than close the engine in place: it holds watchers, a
+        // port, a link and a planner. Whatever supervises this node starts it
+        // again, and it comes back waiting.
+        std::process::exit(0);
+    });
+
     if changed {
         engine.set_settings(settings)?;
     }

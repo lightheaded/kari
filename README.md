@@ -244,10 +244,39 @@ jobs, so put it on a private network or behind a VPN rather than on the internet
 It runs no Claude Code, holds no login and reads no transcript, so it suits a
 container; `flake.nix` builds one as `kari-server-image`.
 
-This is the first half. The server can see every node and serve their boards
-today. Moving the hub itself off the client — so the app and the phone talk only
-to the server, and a sleeping laptop still shows a board — is the next step. See
-"The server" in `DESIGN.md`.
+The app keeps its own board when it has a server. The sessions of the machine
+you are looking at come from the engine in the app, so they are there whether or
+not the server answers, and the server adds every other host to them. The
+columns come from the server, because there is one set for every client, and the
+last set it published is cached for the times it is away.
+
+Cards of an *absent* node are the part that is still missing: the server holds
+them, so they arrive while the server answers and go when it does not. See "The
+server" in `DESIGN.md`.
+
+## A daemon on every host
+
+kari holds the state of a session whether or not a window is open, so every
+host runs the node as a service of your user — the Mac you sit at included:
+
+```
+kari-node service install                       # run at login, and now
+kari-node service install --server http://…     # and link it to a server
+kari-node service status
+kari-node service uninstall
+```
+
+On macOS that is a `launchd` agent in `~/Library/LaunchAgents`, and its log is
+`~/.config/kari/node.log`. On Linux it is a `systemd --user` unit, and
+`journalctl --user -u kari-node` reads it. Windows has none of this yet: run
+`kari-node serve` from a scheduled task with an at-log-on trigger.
+
+**One engine runs on a host at a time, and the window wins.** Open the app and
+the daemon steps down within a few seconds; quit the app and the daemon takes
+the host back. Neither needs to be told: a file in `~/.config/kari` names the
+process that holds the engine, and the daemon reads it. Two engines on one host
+would bind one hook port, share one node id and plan against one login, so this
+is a rule rather than a preference. See "One engine per machine" in `DESIGN.md`.
 
 ### Quota belongs to the account
 
@@ -336,10 +365,11 @@ cargo run -p kari-core --example herdr_open -- /tmp   # open and close a herdr p
 cargo run -p kari-core --example node_api     # serve the local engine and call it as a node
 cargo run -p kari-core --example hub_node     # add a real node to the hub, read both boards, take the lease, remove it
 cargo run -p kari-core --example link_server  # link a real node to a real server and read its board over the link
+cargo run -p kari-core --example one_engine   # a daemon holds the engine, a window takes it, the daemon steps down
 cargo run -p kari-core --example permission_hold  # hold a permission prompt on a real node and answer it
 ```
 
-The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project. `hub_node`, `permission_hold` and `link_server` start a node — and `link_server` a server too — with their own home directories and remove them again; they need `cargo build -p kari-cli` first.
+The `plan`, `jobrun` and `herdr_open` examples create temporary cards, tabs or jobs and clean up after themselves. Give them a scratch directory, never a real project. `hub_node`, `permission_hold`, `link_server` and `one_engine` start a node — and `link_server` a server too — with their own home directories and remove them again; they need `cargo build -p kari-cli` first.
 
 `bun run demo` opens the UI in a browser with the dummy board from `docs/demo`. No Rust toolchain and no Claude Code state are needed for that.
 
