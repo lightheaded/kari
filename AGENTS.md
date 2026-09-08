@@ -58,12 +58,19 @@ the branch carried a commit from another pull request, the release page
 repeats a change that an earlier release already described.
 
 Release 0.7.3 shows the failure. Its page carried the whole body of an
-unrelated earlier change inside the section of the change being merged.
+unrelated earlier change inside the section of the change being merged, so
+the page read as one section where there were two.
+
+`scripts/release-notes.sh` now takes such a bullet list apart. The bullet
+that names the commit becomes its body, and a bullet that names another
+change in the same release is dropped, because that change writes its own
+section. That repairs the 0.7.3 shape, and it is all a script can do: when
+several bullets describe this one change, it keeps them all and warns,
+because only a person can write one description out of several.
 
 So when you squash a pull request, delete the body that GitHub offers and
-write the body of the change. One subject and one body, as above.
-`scripts/release-notes.sh` warns about a body that starts with a bullet, but
-only a person reading the preview can act on it.
+write the body of the change. One subject and one body, as above. Read the
+preview and act on the warning.
 
 ## A commit message is public
 

@@ -12,6 +12,8 @@
 # The `Release X.Y.Z` commit is not a change. Its body is the headline of the
 # release, and it is left out of the two lists below.
 #
+# A squash body is taken apart rather than printed as it stands: see unsquash.
+#
 # Preview the notes before you tag. Every commit body goes onto a public page,
 # so text that names one machine or one person must not be in a commit message
 # in the first place. The release workflow runs check-privacy.sh over the result.
@@ -50,7 +52,20 @@ fi
 # Useful in git history, not useful to somebody reading a release page.
 strip_trailers() {
   grep -vE '^(Co-[Aa]uthored-[Bb]y|Claude-Session|Signed-off-by|Signed-Off-By):' |
-    awk '{ if ($0 ~ /^[[:space:]]*$/) { blank++ } else { while (blank-- > 0) print ""; blank = 0; print } }'
+    awk '{ if ($0 ~ /^[[:space:]]*$/) { blank++ } else { while (blank-- > 0) print ""; blank = 0; print } }' |
+    # GitHub writes a `---------` rule above the trailers it adds to a squash
+    # commit. With the trailers gone the rule stands under nothing, and on the
+    # release page it draws a line across the section for no reason.
+    awk '{ line[NR] = $0 }
+         END {
+           last = NR
+           while (last > 0 && line[last] ~ /^[[:space:]]*$/) last--
+           if (last > 0 && line[last] ~ /^-{3,}[[:space:]]*$/) {
+             last--
+             while (last > 0 && line[last] ~ /^[[:space:]]*$/) last--
+           }
+           for (i = 1; i <= last; i++) print line[i]
+         }'
 }
 
 sha=$(git rev-parse --short "$ref")
@@ -69,18 +84,76 @@ changes=$(git log --no-merges --format='%H' "${range[@]}" | while read -r c; do
   git log -1 --format='%s' "$c" | grep -qE '^Release [0-9]' || echo "$c"
 done)
 
+# GitHub fills the body of a squash commit with `* <subject>` and that commit's
+# body, once for each commit it squashed. Two things then go wrong on the
+# release page. The description of the change sits under a bullet instead of
+# under its own heading, and a branch that carried a commit from an earlier pull
+# request repeats that change inside this one's section. v0.7.3 read as one
+# section instead of two for that reason.
+#
+# So the bullet list is taken apart. The bullet that names this commit loses its
+# marker and becomes the body. A bullet that names another commit in the same
+# release is dropped, because that commit writes its own section. Any other
+# bullet is kept as it stands, because a squash of commits that only ever
+# existed on the branch still needs all of them, and that case still gets the
+# warning: only a person can turn several bullets into one description.
+#
+# A subject is compared without a trailing `(#12)`, which GitHub adds to the
+# squash subject and not to the bullets.
+unsquash() {
+  awk -v own="$1" -v others="$2" -v short="$3" '
+    function norm(s) {
+      sub(/[[:space:]]*\(#[0-9]+\)[[:space:]]*$/, "", s)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    BEGIN {
+      own = norm(own)
+      n = split(others, o, "\n")
+      for (i = 1; i <= n; i++) if (o[i] != "") drop[norm(o[i])] = 1
+      count = 0
+    }
+    /^\* / { count++; subject[count] = norm(substr($0, 3)); next }
+    { if (count > 0) text[count] = text[count] $0 "\n" }
+    END {
+      kept = 0
+      for (i = 1; i <= count; i++) {
+        mine = (subject[i] == own)
+        if (!mine && (subject[i] in drop)) continue
+        keep[++kept] = i
+        own_block[kept] = mine
+      }
+      # Every bullet named another change in this release. That cannot describe
+      # this commit, so the body is left as it is and the warning stands.
+      if (kept == 0) { for (i = 1; i <= count; i++) { keep[++kept] = i; own_block[kept] = 0 } }
+      for (j = 1; j <= kept; j++) {
+        i = keep[j]
+        body = text[i]
+        sub(/^\n+/, "", body)
+        sub(/\n+$/, "", body)
+        if (j > 1) printf "\n"
+        if (own_block[j] && kept == 1) print body
+        else printf "* %s\n\n%s\n", subject[i], body
+      }
+      if (kept > 1 || !own_block[1])
+        print "release-notes: WARNING: " short " has a squash bullet list as its body, not prose. Reword it before you tag." > "/dev/stderr"
+    }
+  '
+}
+
+# Every subject in this release, so that a squash bullet naming one of the
+# others can be told from a bullet naming this change.
+subjects=$(for c in $changes; do git log -1 --format='%s' "$c"; done)
+
 tldr=""
 details=""
 for c in $changes; do
   subject=$(git log -1 --format='%s' "$c")
   body=$(git log -1 --format='%b' "$c" | strip_trailers)
-  # GitHub fills a squash body with `* <subject>` and that commit's body, once
-  # per squashed commit. It reads as a release note for the wrong change, and it
-  # repeats one that an earlier release already described. v0.7.3 carried a whole
-  # unrelated change inside another one's section this way. The body cannot be
-  # repaired here, because only a person knows which part describes this change.
+  # A body that opens with a bullet is a squash body that nobody reworded. A
+  # bullet list further down is ordinary prose and is left alone.
   case "$body" in
-    '* '*) echo "release-notes: WARNING: $(git log -1 --format='%h' "$c") has a squash bullet list as its body, not prose. Reword it before you tag." >&2 ;;
+    '* '*) body=$(printf '%s\n' "$body" | unsquash "$subject" "$subjects" "$(git log -1 --format='%h' "$c")") ;;
   esac
   tldr+="- $subject"$'\n'
   details+="### $subject"$'\n\n'
