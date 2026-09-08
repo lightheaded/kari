@@ -1572,6 +1572,7 @@ impl Engine {
             return Ok(JumpPlan {
                 cwd,
                 command: String::new(),
+                argv: Vec::new(),
                 herdr_pane: Some(h.pane_id.clone()),
                 message: format!("focused herdr pane {}", h.pane_id),
             });
@@ -1580,6 +1581,7 @@ impl Engine {
             return Ok(JumpPlan {
                 cwd,
                 command: launcher::attach_command(&job),
+                argv: launcher::attach_argv(&job),
                 herdr_pane: None,
                 message: format!("attached to background job {job}"),
             });
@@ -1603,6 +1605,7 @@ impl Engine {
                     return Ok(JumpPlan {
                         cwd,
                         command: String::new(),
+                        argv: Vec::new(),
                         herdr_pane: Some(p.pane_id.clone()),
                         message: format!("opened a herdr pane {}", p.pane_id),
                     });
@@ -1614,6 +1617,7 @@ impl Engine {
             return Ok(JumpPlan {
                 cwd,
                 command: launcher::resume_command(sid, model.as_deref()),
+                argv: launcher::resume_argv(sid, model.as_deref()),
                 herdr_pane: None,
                 message: format!("opened {}", short(sid)),
             });
@@ -1622,6 +1626,7 @@ impl Engine {
         Ok(JumpPlan {
             cwd: cwd.clone(),
             command: launcher::new_command(model.as_deref()),
+            argv: launcher::new_argv(model.as_deref()),
             herdr_pane: None,
             message: format!("opened a new session in {cwd}"),
         })
@@ -1635,8 +1640,19 @@ impl Engine {
             launcher::raise_terminal(&settings.terminal_app);
             return Ok(plan.message);
         }
-        launcher::open_in_terminal(&settings.terminal_app, &plan.cwd, &plan.command)?;
-        Ok(format!("{} in {}", plan.message, settings.terminal_app))
+        // Windows has no `sh` to parse `plan.command`, and its terminal is
+        // whatever the user set as the default console host, not one of the
+        // macOS applications `terminal_app` names.
+        #[cfg(windows)]
+        {
+            launcher::open_in_terminal_argv(&plan.cwd, &plan.argv)?;
+            Ok(plan.message)
+        }
+        #[cfg(not(windows))]
+        {
+            launcher::open_in_terminal(&settings.terminal_app, &plan.cwd, &plan.command)?;
+            Ok(format!("{} in {}", plan.message, settings.terminal_app))
+        }
     }
 
     // ---------------------------------------------------------------- node identity

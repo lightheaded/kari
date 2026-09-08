@@ -1220,6 +1220,12 @@ pub struct JumpPlan {
     /// Shell command to run there. Empty when a herdr pane was focused and no
     /// command is needed.
     pub command: String,
+    /// The same command as an argument list, for a host with no shell to parse
+    /// `command`. Empty exactly when `command` is. A node from before this
+    /// field sends none, which is why it defaults rather than failing to
+    /// deserialise: the hub falls back to `command` then, as it always did.
+    #[serde(default)]
+    pub argv: Vec<String>,
     /// The herdr pane the node focused, when one matched.
     pub herdr_pane: Option<String>,
     /// One line for the user.

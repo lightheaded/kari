@@ -126,6 +126,7 @@ fn run_shell(command: &str, input: &str) -> String {
         c.arg("-c").arg(command);
         c
     };
+    crate::proc::quiet(&mut c);
     let child = c
         .env("PATH", paths::child_path())
         .stdin(Stdio::piped())

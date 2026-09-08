@@ -1398,19 +1398,37 @@ impl Hub {
                 plan.command
             )
         };
-        let settings = self.engine.settings();
         let home = paths::home().to_string_lossy().into_owned();
-        let cmd = if plan.herdr_pane.is_some() {
-            // The node focused a herdr pane. herdr attaches to its own server
-            // over SSH, so the pane the node focused is the one on screen.
-            launcher::herdr_remote_command(host)?
-        } else if plan.command.is_empty() {
-            // Nothing to run and no pane: at least land in the project.
-            launcher::ssh_shell_command(host, &plan.cwd)
-        } else {
-            launcher::ssh_command(host, &plan.cwd, &plan.command)
-        };
-        launcher::open_in_terminal(&settings.terminal_app, &home, &cmd)?;
+        // Windows opens the local half as an argument list: there is no `sh`
+        // here to parse a command line. The remote half is `sh`-quoted either
+        // way, because the far end really does have a shell.
+        #[cfg(windows)]
+        {
+            let argv = if plan.herdr_pane.is_some() {
+                launcher::herdr_remote_argv(host)?
+            } else if plan.command.is_empty() {
+                launcher::ssh_shell_argv(host, &plan.cwd)
+            } else {
+                launcher::ssh_argv(host, &plan.cwd, &plan.command)
+            };
+            launcher::open_in_terminal_argv(&home, &argv)?;
+        }
+        #[cfg(not(windows))]
+        {
+            let settings = self.engine.settings();
+            let cmd = if plan.herdr_pane.is_some() {
+                // The node focused a herdr pane. herdr attaches to its own
+                // server over SSH, so the pane the node focused is the one on
+                // screen.
+                launcher::herdr_remote_command(host)?
+            } else if plan.command.is_empty() {
+                // Nothing to run and no pane: at least land in the project.
+                launcher::ssh_shell_command(host, &plan.cwd)
+            } else {
+                launcher::ssh_command(host, &plan.cwd, &plan.command)
+            };
+            launcher::open_in_terminal(&settings.terminal_app, &home, &cmd)?;
+        }
         let name = self.node_name_of(&rec, None);
         Ok(format!("{} on {name}", plan.message))
     }
