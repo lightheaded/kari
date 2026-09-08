@@ -27,6 +27,12 @@ else
   ref=HEAD
 fi
 
+# Peeled to the commit, because kari's tags are annotated and signed. A bare
+# `git rev-parse refs/tags/v0.7.3` answers with the tag OBJECT, so the header
+# named a hash that is not a commit and that `git show` cannot usefully take.
+# It read as correct, because it is a hash of the right length.
+ref=$(git rev-parse "$ref^{commit}")
+
 # The previous release tag, taken from the parent so that `$tag` cannot describe
 # itself. A tag can be unreachable for an ordinary reason, because a force push
 # can leave the last one off this history, so this degrades rather than breaks.
@@ -68,6 +74,14 @@ details=""
 for c in $changes; do
   subject=$(git log -1 --format='%s' "$c")
   body=$(git log -1 --format='%b' "$c" | strip_trailers)
+  # GitHub fills a squash body with `* <subject>` and that commit's body, once
+  # per squashed commit. It reads as a release note for the wrong change, and it
+  # repeats one that an earlier release already described. v0.7.3 carried a whole
+  # unrelated change inside another one's section this way. The body cannot be
+  # repaired here, because only a person knows which part describes this change.
+  case "$body" in
+    '* '*) echo "release-notes: WARNING: $(git log -1 --format='%h' "$c") has a squash bullet list as its body, not prose. Reword it before you tag." >&2 ;;
+  esac
   tldr+="- $subject"$'\n'
   details+="### $subject"$'\n\n'
   if [ -n "$body" ]; then
