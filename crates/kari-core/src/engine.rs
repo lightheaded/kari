@@ -360,8 +360,18 @@ impl Engine {
     /// the owner, so the board shows the task once. An older run of a card that moved
     /// on to a new job stays in the run log only.
     /// A job that kari did not start gets a session card of its own.
+    ///
+    /// Every job needs its own card, because the merge below deletes each other
+    /// session card that holds the job's session. Two jobs that share one owner
+    /// make that merge delete a card the board still needs. See
+    /// `run_log_still_owns`.
     fn link_jobs(&self, jobs: &[BgJob]) -> anyhow::Result<()> {
         let store = self.store.lock().unwrap();
+        Self::link_jobs_in(&store, jobs)
+    }
+
+    /// The caller holds the store lock.
+    fn link_jobs_in(store: &Store, jobs: &[BgJob]) -> anyhow::Result<()> {
         let cards = store.list_cards()?;
         let mut removed: HashSet<String> = HashSet::new();
         for j in jobs {
@@ -377,10 +387,11 @@ impl Engine {
                     cards
                         .iter()
                         .find(|c| c.id == id && !removed.contains(&c.id))
+                        .filter(|c| run_log_still_owns(c, jid))
                 }),
             };
             let Some(owner) = owner else {
-                Self::ensure_session_card_in(&store, sid, j.cwd.as_deref())?;
+                Self::ensure_session_card_in(store, sid, j.cwd.as_deref())?;
                 continue;
             };
             let mut owner = owner.clone();
@@ -2495,9 +2506,134 @@ fn summarize_input(tool: &str, input: &serde_json::Value) -> String {
     truncate(&one_line, 160)
 }
 
+/// True if the run log can still give job `jid` to this card.
+///
+/// The run log keeps every job a card ever ran. A card that started a newer job
+/// holds the id of that newer job, and the older job belongs to the run log
+/// alone. Without this rule the older job takes the card as its owner, the card
+/// keeps the session of the newer job, and the merge in `link_jobs` deletes the
+/// session card of the older job on every scan. The scan makes that card again,
+/// so the board loses the card about once a minute, together with the column
+/// the user put it in.
+fn run_log_still_owns(card: &Card, jid: &str) -> bool {
+    match card.bg_job_id.as_deref() {
+        Some(cur) => cur == jid,
+        None => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn card_with_job(job: Option<&str>) -> Card {
+        Card {
+            id: "c1".into(),
+            kind: CardKind::Task,
+            title: None,
+            session_id: None,
+            project_cwd: None,
+            priority: 0,
+            auto_run: false,
+            run_prompt: None,
+            permission_mode: None,
+            model: None,
+            estimate_weighted_tokens: None,
+            manual_column: None,
+            manual_lock_priority: None,
+            tags: vec![],
+            notes: None,
+            archived: false,
+            bg_job_id: job.map(|s| s.to_string()),
+            last_job_state: None,
+            last_job_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            done_at: None,
+        }
+    }
+
+    /// The board lost a card about once a minute. A task card ran job A, its
+    /// session ran out of context, and the card moved on to job B. Job A stayed
+    /// in the list with a session of its own. The run log still gave job A that
+    /// card, so the merge deleted the session card of job A. The next scan made
+    /// the card again, and the column the user chose was gone with the old card.
+    #[test]
+    fn an_old_job_keeps_the_card_the_user_marked_done() {
+        let dir = std::env::temp_dir().join(format!("kari-link-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("kari.db")).unwrap();
+
+        // The task card ran job "old" first, then moved on to job "new".
+        let mut task = card_with_job(Some("new"));
+        task.kind = CardKind::Task;
+        task.session_id = Some("session-of-new".into());
+        task.project_cwd = Some("/tmp/project".into());
+        store.upsert_card(&task).unwrap();
+        store
+            .log_job(&JobLogEntry {
+                at: Utc::now(),
+                job_id: "old".into(),
+                card_id: Some(task.id.clone()),
+                state: Some("blocked".into()),
+                detail: None,
+            })
+            .unwrap();
+
+        // Job "old" is still listed, blocked on a question, with its own session.
+        let old = BgJob {
+            id: Some("old".into()),
+            session_id: Some("session-of-old".into()),
+            cwd: Some("/tmp/project".into()),
+            kind: Some("background".into()),
+            state: Some("blocked".into()),
+            status: None,
+            waiting_for: None,
+            name: Some("a-long-running-task".into()),
+            pid: None,
+            started_at: None,
+        };
+
+        // The first scan gives job "old" a session card of its own.
+        Engine::link_jobs_in(&store, std::slice::from_ref(&old)).unwrap();
+        let card = store.card_by_session("session-of-old").unwrap().unwrap();
+
+        // The user drags that card to Done.
+        let mut done = card.clone();
+        done.manual_column = Some("done".into());
+        done.done_at = Some(Utc::now());
+        store.upsert_card(&done).unwrap();
+
+        // Three more scans must leave the card alone.
+        for _ in 0..3 {
+            Engine::link_jobs_in(&store, std::slice::from_ref(&old)).unwrap();
+        }
+        let after = store.card_by_session("session-of-old").unwrap().unwrap();
+        assert_eq!(after.id, card.id, "the card kept its id");
+        assert_eq!(
+            after.manual_column.as_deref(),
+            Some("done"),
+            "the card stayed in Done"
+        );
+        assert!(after.done_at.is_some());
+
+        // The task card kept its own session and its newer job.
+        let task_after = store.card_by_session("session-of-new").unwrap().unwrap();
+        assert_eq!(task_after.id, task.id);
+        assert_eq!(task_after.bg_job_id.as_deref(), Some("new"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_card_that_moved_on_keeps_its_old_job_in_the_run_log() {
+        // The card still runs this job, so the run log can give the job to it.
+        assert!(run_log_still_owns(&card_with_job(Some("old")), "old"));
+        // The card never ran a job of its own, so the run log decides.
+        assert!(run_log_still_owns(&card_with_job(None), "old"));
+        // The card moved on to a newer job. The older job gets its own card.
+        assert!(!run_log_still_owns(&card_with_job(Some("new")), "old"));
+    }
 
     #[test]
     fn input_summary_names_the_thing() {
