@@ -218,6 +218,24 @@ fn fold_user(f: &mut SessionFacts, v: &Value) {
     f.pending_tools.clear();
 }
 
+/// The drawer shows the last reply whole, so it is kept whole. `truncate` is
+/// wrong for it twice over: it clips at a few hundred characters, and it folds
+/// newlines into spaces, which flattens the markdown Claude writes.
+///
+/// The cap is a guard against a runaway reply reaching the board payload, not a
+/// display limit — it sits far above any answer a session ends on.
+const REPLY_MAX: usize = 8000;
+
+fn reply_text(s: &str) -> String {
+    let s = s.trim();
+    if s.chars().count() <= REPLY_MAX {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(REPLY_MAX - 1).collect();
+    out.push('\u{2026}');
+    out
+}
+
 fn fold_assistant(f: &mut SessionFacts, v: &Value) {
     if v.get("isSidechain").and_then(|b| b.as_bool()) == Some(true) {
         return;
@@ -245,7 +263,7 @@ fn fold_assistant(f: &mut SessionFacts, v: &Value) {
                 Some("text") => {
                     if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
                         if !t.trim().is_empty() {
-                            f.last_assistant_text = Some(truncate(t, 400));
+                            f.last_assistant_text = Some(reply_text(t));
                         }
                     }
                 }
@@ -401,5 +419,24 @@ pub fn tail_messages(path: &Path, n: usize, max_bytes: u64) -> anyhow::Result<Ve
             return Ok(out[start_idx..].to_vec());
         }
         window *= 4;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reply_keeps_the_markdown_shape() {
+        let md = "# Done\n\n- one\n- two\n\n```sh\ncargo test\n```";
+        assert_eq!(reply_text(&format!("  {md}\n\n")), md);
+    }
+
+    #[test]
+    fn reply_caps_a_runaway_answer() {
+        let long = "x".repeat(REPLY_MAX * 2);
+        let out = reply_text(&long);
+        assert_eq!(out.chars().count(), REPLY_MAX);
+        assert!(out.ends_with('\u{2026}'));
     }
 }

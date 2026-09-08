@@ -610,7 +610,7 @@
         "custom_title": null,
         "first_prompt": "Explain how the caching layer works and propose a simpler design.",
         "last_prompt": "Write the proposal as an ADR in docs/adr.",
-        "last_assistant_text": "I wrote docs/adr/0007-single-cache-tier.md. It removes the second tier and keeps the invalidation hooks. Tell me if you want the diagram in it.",
+        "last_assistant_text": "I wrote `docs/adr/0007-single-cache-tier.md`. It removes the second tier and keeps the invalidation hooks.\n\n## What changed\n\n- One tier, read through, written on miss.\n- The invalidation hooks stay where they are.\n- The second tier's metrics are gone; nothing read them.\n\nThe read path is now:\n\n```ts\nconst hit = await cache.get(key);\nreturn hit ?? (await load(key).then((v) => cache.set(key, v)));\n```\n\nTell me if you want the diagram in it.",
         "first_at": "2026-09-03T07:00:00.000Z",
         "last_at": "2026-09-03T09:54:00.000Z",
         "last_user_at": "2026-09-03T09:54:00.000Z",
