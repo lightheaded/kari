@@ -32,13 +32,17 @@ pub fn current() -> &'static str {
 
 /// The asset name suffix for this host, or `None` where no node is built.
 ///
-/// The release workflow builds two. A Mac runs the desktop app, which updates
-/// itself, and a node on a Mac is built by hand — so there is nothing to fetch
-/// and this says so rather than guessing at a name that is not there.
+/// A Mac is on this list now. It was not while a node was something only a
+/// headless host ran and the desktop app updated itself. The machine you sit at
+/// runs a node too, so that the host is watched while no window is open, and a
+/// node that could not fetch its own release would have to be built by hand on
+/// the one platform where nobody builds anything by hand.
 pub fn target() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
         ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
         _ => None,
     }
 }

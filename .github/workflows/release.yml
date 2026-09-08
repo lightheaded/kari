@@ -231,6 +231,50 @@ jobs:
           gh release upload "${{ github.ref_name }}" \
             "$name.tar.gz" "$name" "$name.sha256" --clobber
 
+  macos-node-binary:
+    # The headless node for a Mac. A Mac runs the desktop app, and it also runs
+    # a node: the app holds the engine while its window is open, and the node
+    # holds it the rest of the time. Both architectures, because the app ships
+    # for both and a node has to match the host it watches.
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: release-macos-node-${{ matrix.target }}
+
+      - name: Build the node
+        run: cargo build --release -p kari-cli --target ${{ matrix.target }}
+
+      - name: Pack and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name="kari-node-${{ github.ref_name }}-${{ matrix.target }}"
+          bin="target/${{ matrix.target }}/release/kari-node"
+          # Staged in a directory that is NOT "$name": the bare binary is
+          # published under exactly that name, because it is the asset the
+          # node's own updater asks for. See the Linux job.
+          mkdir -p "$name.dir/$name"
+          cp "$bin" LICENSE README.md "$name.dir/$name/"
+          tar czf "$name.tar.gz" -C "$name.dir" "$name"
+          cp "$bin" "$name"
+          shasum -a 256 "$name" > "$name.sha256"
+          gh release upload "${{ github.ref_name }}" \
+            "$name.tar.gz" "$name" "$name.sha256" --clobber
+
   windows-node-binary:
     # The same headless node for a Windows host. A zip rather than a tarball,
     # because Windows opens one without a tool.
@@ -351,6 +395,7 @@ jobs:
         build,
         windows-desktop,
         node-binary,
+        macos-node-binary,
         windows-node-binary,
         android-apk,
       ]

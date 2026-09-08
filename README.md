@@ -204,6 +204,8 @@ kari-node serve --auto-update   # and keep doing it while it serves
 
 `update` fetches the binary built for this host from the newest release, checks it against the checksum published beside it, and renames it over the running one. The running process keeps the old code either way, so the new version starts on the next run. `--auto-update` therefore stops the node once it has written a new binary, and the unit must bring it back: systemd needs `Restart=always`, because `Restart=on-failure` treats that clean exit as the end and leaves the host with no node. It checks a minute after start and every six hours after that (`--update-every-hours`).
 
+A Mac fetches its node from the release like every other platform. Every other host is installed by whatever manages it.
+
 This is off unless you ask for it. A node is installed by whatever manages its host, and that usually pins a version on purpose — a binary that changed itself under such a host would make the pin a lie. It also needs to be able to write to its own directory, which rules out a binary in the Nix store; there, update the host instead.
 
 ## A server, when the nodes cannot be reached
