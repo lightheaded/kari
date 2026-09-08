@@ -208,6 +208,31 @@ a { color: var(--accent); }
 .kv dd code { font: 11.5px var(--mono); background: var(--surface-2); padding: 1px 4px; border-radius: 3px; }
 .section h5 { margin: 0 0 6px; font: 600 11px/1.2 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
 .quote { background: var(--ground); border: 1px solid var(--line-soft); border-radius: 5px; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; max-height: 180px; overflow: auto; color: var(--ink-2); }
+/* A rendered reply, inside a .quote box. The markdown carries its own line
+   breaks, so pre-wrap would double every blank line; the box is taller than a
+   plain quote because a whole reply is the longest thing in the drawer, and it
+   scrolls inside itself so the panel keeps its shape. */
+.quote.md { white-space: normal; max-height: 420px; overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: 0 0 8px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+  margin: 12px 0 6px; font: 600 12.5px/1.3 var(--body); color: var(--ink); text-transform: none; letter-spacing: 0;
+}
+.md ul, .md ol { padding-left: 18px; }
+.md li { margin: 2px 0; }
+.md li > p { margin: 0; }
+.md code { font: 11.5px var(--mono); background: var(--surface-2); border-radius: 3px; padding: 1px 4px; }
+/* Code keeps its own lines and scrolls sideways rather than widening the drawer. */
+.md pre { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 4px; padding: 8px 10px; overflow-x: auto; }
+.md pre code { background: none; padding: 0; white-space: pre; }
+.md blockquote { border-left: 2px solid var(--line); padding-left: 8px; color: var(--ink-3); }
+.md hr { border: 0; border-top: 1px solid var(--line-soft); margin: 10px 0; }
+.md table { border-collapse: collapse; font-size: 12px; }
+.md th, .md td { border: 1px solid var(--line-soft); padding: 3px 6px; text-align: left; }
+.md th { color: var(--ink); font-weight: 600; }
+.md strong { color: var(--ink); }
+.md img { max-width: 100%; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label { font: 500 11px/1.2 var(--mono); color: var(--ink-3); letter-spacing: 0.04em; text-transform: uppercase; }
 .field input, .field textarea, .field select {

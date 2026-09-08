@@ -8,6 +8,7 @@ import { useCloseGuard } from "../dirty";
 import { UnsavedBar } from "./Modals";
 import type { Act } from "../toasts";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
+import { Markdown } from "./Markdown";
 
 interface Props {
   view: HubCard;
@@ -486,7 +487,7 @@ export function Drawer({
         {s?.last_assistant_text && (
           <div className="section">
             <h5>Last reply</h5>
-            <div className="quote">{s.last_assistant_text}</div>
+            <Markdown className="quote md" text={s.last_assistant_text} />
           </div>
         )}
         {s?.first_prompt && s.first_prompt !== s.last_prompt && (
