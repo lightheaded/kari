@@ -5,8 +5,52 @@ kari (Estonian: herd) turns Claude Code sessions into cards on a Kanban board.
 `CONTRIBUTING.md` holds the development commands, the checks and the release
 process. Read those first.
 
-This file holds the two rules that are easy to get wrong and expensive to
-correct after a push.
+This file holds what kari is, and the rules that are easy to get wrong and
+expensive to correct after a push.
+
+## What kari is, and what must stay true
+
+kari is a state store with a board on it. It is not a view of live
+connections. Every session kari has seen keeps its card and its last known
+state. A host that sleeps, that is off the network, or that has no window open
+keeps its cards on the board.
+
+Four rules follow. A change that breaks one is wrong, however good the rest of
+it is.
+
+1. **The sessions of this machine are on its board before any network
+   answers.** The app opens and the local cards are there. This needs no
+   server, no pairing and no reachable peer.
+2. **A new way to share state adds a source. It never replaces one.** A server
+   carries state between devices. It never becomes the only party that holds
+   the state. If the new path is down, the old path must still answer.
+3. **No node needs to reach another node.** State moves through the store on
+   each host, and through a server when one is configured. kari never needs
+   every machine to be reachable at one time.
+4. **A daemon watches each host, whether or not a window is open.** State
+   accrues while nobody looks at it. A window is a client of that daemon, and
+   never a second copy of it.
+
+kari must also work as soon as it is installed, with nothing configured. The
+server, the other nodes, the hooks and the status line are each optional. The
+default path is not a fallback from a better arrangement. It is the
+arrangement.
+
+### How these rules were broken once
+
+Version 3 moved the hub to a server, so that clients with no route to each
+other could read one board. The change also made the desktop app a pure client
+of that server: `open_hub` returned a remote hub, and the local engine left the
+board. A Mac with a server configured then showed no cards of its own, and a
+new session on that Mac appeared nowhere.
+
+Every step of that change had a reason, and together they broke rules 1 and 2.
+The reason in the commit message was that a fallback to the local hub would
+"quietly restore one-hub-per-client". That treats the local node as a fallback.
+The local node is the base.
+
+So before you centralize anything, name the rule above that the change touches.
+Then say how the local path still answers while the central part is down.
 
 ## The commit message is the release note
 
