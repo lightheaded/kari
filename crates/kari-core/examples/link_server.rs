@@ -357,10 +357,117 @@ fn main() -> anyhow::Result<()> {
         Ok(_) => anyhow::bail!("a client of a server should not hand out pairing codes"),
     }
 
-    drop(node);
+    // ---- a client that is also a node: the desktop app --------------------
+    //
+    // The other half of the arrangement, and the half version 3 shipped
+    // without. A machine that runs Claude Code keeps its own engine on the
+    // board and adds the server's nodes to it. Its own cards are there whether
+    // or not the server answers, because a session on this machine never
+    // depended on one.
+
+    // This engine scans what it is pointed at, so point it at an empty
+    // directory rather than at the home directory of whoever runs the example.
+    let desk_claude = std::env::temp_dir().join(format!("kari-link-example-desk-{port}"));
+    std::fs::create_dir_all(desk_claude.join("projects"))?;
+    let restore = std::env::var_os("CLAUDE_CONFIG_DIR");
+    // SAFETY: single-threaded example, and the variable is put back below.
+    unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", &desk_claude) };
+
+    kari_core::remote::set_server(&base, &token)?;
+    let desktop = kari_core::remote::open_hub(kari_core::Engine::open()?);
+    if !desktop.is_remote() {
+        anyhow::bail!("a desktop with a server did not take the server's board");
+    }
+
+    let mine = desktop.add_task(
+        kari_core::hub::LOCAL,
+        kari_core::NewTask {
+            title: "a card on this machine".into(),
+            project_cwd: None,
+            run_prompt: None,
+            auto_run: false,
+            priority: 0,
+            notes: None,
+            model: None,
+            column_id: None,
+        },
+    )?;
+
+    let b = desktop.board();
+    println!(
+        "\ndesktop board: {} node(s), {} card(s), {} column(s)",
+        b.nodes.len(),
+        b.cards.len(),
+        b.columns.len()
+    );
+    for n in &b.nodes {
+        println!("  {} ({})", n.name, n.id);
+    }
+    let has_mine = b
+        .cards
+        .iter()
+        .any(|c| c.view.card.id == mine.id && c.node_id == kari_core::hub::LOCAL);
+    if !has_mine {
+        anyhow::bail!("the desktop's own card is not on its board");
+    }
+    if !b.nodes.iter().any(|n| n.name == "example-node") {
+        anyhow::bail!("the desktop did not get the server's node");
+    }
+    if b.nodes.len() < 2 {
+        anyhow::bail!("this machine and the server's node are two rows, not one");
+    }
+    // The columns are still the server's: one set for every client.
+    if !b.columns[0].name.ends_with("(server)") {
+        anyhow::bail!(
+            "the desktop did not take the server's columns: {:?}",
+            b.columns[0].name
+        );
+    }
+    println!("its own card is on the board, beside the server's node");
+
+    // And now the part that matters. Take the server away.
     drop(server);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let off = desktop.board();
+        let still_mine = off
+            .cards
+            .iter()
+            .any(|c| c.view.card.id == mine.id && c.node_id == kari_core::hub::LOCAL);
+        if !still_mine {
+            anyhow::bail!("the local card left the board when the server did");
+        }
+        // The remote node goes, because the server held it. This machine stays.
+        if !off.nodes.iter().any(|n| n.name == "example-node") {
+            if off.columns.is_empty() || !off.columns[0].name.ends_with("(server)") {
+                anyhow::bail!(
+                    "the offline board lost the server's columns: {:?}",
+                    off.columns.first().map(|c| c.name.clone())
+                );
+            }
+            println!(
+                "server stopped: {} node(s), {} card(s), and the columns it published are cached",
+                off.nodes.len(),
+                off.cards.len()
+            );
+            break;
+        }
+        if Instant::now() > deadline {
+            anyhow::bail!("the board never noticed the server had gone");
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    match restore {
+        Some(v) => unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", v) },
+        None => unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") },
+    }
+    kari_core::remote::clear_server()?;
+
+    drop(node);
     let _ = std::fs::remove_dir_all(&client_home);
     let _ = std::fs::remove_dir_all(&enrol_home);
+    let _ = std::fs::remove_dir_all(&desk_claude);
     println!("\ndone");
     Ok(())
 }

@@ -99,20 +99,37 @@ pub struct Hub {
 impl Hub {
     /// A hub whose engine is also a node on the board: the desktop app.
     pub fn new(local: Arc<Engine>) -> Arc<Hub> {
-        Self::build(local, true, None)
+        Self::build(local, true, None, true)
+    }
+
+    /// A hub over this machine and nothing else: the local half of a desktop
+    /// that has a server.
+    ///
+    /// The roster in the store is not adopted, and that is the whole point.
+    /// Those records are the hosts this client used to dial itself, and with a
+    /// server the same hosts arrive through it. A hub that adopted them would
+    /// show every one of them twice and dial them from a laptop that has no
+    /// route to them.
+    pub fn local_only(local: Arc<Engine>) -> Arc<Hub> {
+        Self::build(local, true, None, false)
     }
 
     /// A hub whose engine is only its store: a device without Claude Code.
     pub fn without_local(store: Arc<Engine>) -> Arc<Hub> {
-        Self::build(store, false, None)
+        Self::build(store, false, None, true)
     }
 
     /// A hub whose nodes dialled in to it: the server.
     pub fn over_links(store: Arc<Engine>, links: Arc<dyn LinkSource>) -> Arc<Hub> {
-        Self::build(store, false, Some(links))
+        Self::build(store, false, Some(links), true)
     }
 
-    fn build(local: Arc<Engine>, with_local: bool, links: Option<Arc<dyn LinkSource>>) -> Arc<Hub> {
+    fn build(
+        local: Arc<Engine>,
+        with_local: bool,
+        links: Option<Arc<dyn LinkSource>>,
+        adopt_roster: bool,
+    ) -> Arc<Hub> {
         let (tx, _) = broadcast::channel(256);
         let hub_id = local.node_id();
         let hub_name = local.node_name();
@@ -165,8 +182,10 @@ impl Hub {
                 }
             })
             .expect("spawn");
-        for rec in local.list_nodes() {
-            hub.spawn_remote(rec);
+        if adopt_roster {
+            for rec in local.list_nodes() {
+                hub.spawn_remote(rec);
+            }
         }
         hub.start_lease_keeper();
         hub
@@ -941,7 +960,7 @@ impl Hub {
 
     /// A remote card keeps its column when the local board has it, else the
     /// column that accepts its state.
-    fn map_column(columns: &[Column], view: &CardView) -> String {
+    pub(crate) fn map_column(columns: &[Column], view: &CardView) -> String {
         if columns.iter().any(|c| c.id == view.column_id) {
             return view.column_id.clone();
         }

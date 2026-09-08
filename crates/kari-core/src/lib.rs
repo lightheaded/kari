@@ -23,6 +23,7 @@ pub mod quota;
 pub mod registry;
 pub mod remote;
 pub mod server;
+pub mod split;
 pub mod statusline;
 pub mod store;
 pub mod summary;

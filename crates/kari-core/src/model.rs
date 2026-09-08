@@ -65,7 +65,9 @@ impl DerivedState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// PartialEq so a hub can tell whether a column set it was handed differs from
+// the one it holds, and skip a write when it does not.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Column {
     pub id: String,
     pub name: String,

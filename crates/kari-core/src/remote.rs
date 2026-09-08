@@ -77,6 +77,17 @@ impl RemoteHub {
         self.get("/kari/health")
     }
 
+    /// The server's board, and the error when there is not one.
+    ///
+    /// `HubApi::board` has no error channel and answers with an empty board, so
+    /// a caller that must tell "the server has no nodes" from "the server did
+    /// not answer" needs this instead. `SplitHub` is that caller: it keeps its
+    /// own columns when the server is away, and the empty board cannot say
+    /// whether it is.
+    pub fn try_board(&self) -> anyhow::Result<HubBoard> {
+        self.get("/kari/v1/hub/board")
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
@@ -224,7 +235,7 @@ impl HubApi for RemoteHub {
     }
 
     fn board(&self) -> HubBoard {
-        self.or_empty("board", self.get("/kari/v1/hub/board"))
+        self.or_empty("board", self.try_board())
     }
 
     fn nodes(&self) -> Vec<NodeStatus> {
@@ -612,10 +623,14 @@ pub fn open_hub_without_local(engine: Arc<Engine>) -> Arc<dyn HubApi> {
 
 fn open_hub_inner(engine: Arc<Engine>, with_local: bool) -> Arc<dyn HubApi> {
     match server_config() {
+        // A machine that runs Claude Code keeps its own engine on the board and
+        // adds the server's nodes to it. What a server takes over is the other
+        // hosts and the columns, never the sessions in front of the user.
+        Some((base, token)) if with_local => crate::split::SplitHub::connect(engine, &base, &token),
+        // A device that runs no Claude Code has nothing of its own to show, so
+        // the server is the whole board: a phone.
         Some((base, token)) => {
             info!("the hub is the server at {base}");
-            // The local engine stays this device's store either way. What a
-            // server takes over is the board, not the settings.
             RemoteHub::connect(&base, &token, engine)
         }
         None if with_local => crate::hub::Hub::new(engine),
