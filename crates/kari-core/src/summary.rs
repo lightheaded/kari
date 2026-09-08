@@ -36,6 +36,31 @@ pub fn excerpt(transcript_path: &Path, max_messages: usize) -> anyhow::Result<St
     Ok(lines.join("\n"))
 }
 
+/// The one event that carries the answer.
+///
+/// `claude -p --output-format json` used to print a single result object. It
+/// now prints the whole event stream as an array — init, thinking, rate limit,
+/// assistant turns, and the result last. Reading the array as if it were that
+/// object is silently wrong rather than loudly: every `.get()` on an array
+/// returns `None`, so `result` reads as empty and the parse fails complaining
+/// that the summary is not JSON, with nothing after the colon.
+///
+/// A value that is already an object is returned untouched, so an older CLI
+/// keeps working. An array with no `result` event falls back to its last
+/// element, which is where a result would be.
+fn result_event(v: Value) -> Value {
+    let Some(events) = v.as_array() else {
+        return v;
+    };
+    events
+        .iter()
+        .rev()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("result"))
+        .or_else(|| events.last())
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 fn extract_json(s: &str) -> Option<Value> {
     let start = s.find('{')?;
     let end = s.rfind('}')?;
@@ -129,7 +154,8 @@ pub fn generate(facts: &SessionFacts, model: &str) -> anyhow::Result<Summary> {
         );
     }
     let outer: Value = serde_json::from_str(stdout.trim())
-        .or_else(|_| extract_json(&stdout).ok_or_else(|| anyhow::anyhow!("no JSON in output")))?;
+        .or_else(|_| extract_json(&stdout).ok_or_else(|| anyhow::anyhow!("no JSON in output")))
+        .map(result_event)?;
     if outer.get("is_error").and_then(|b| b.as_bool()) == Some(true) {
         anyhow::bail!(
             "claude -p reported an error: {}",
@@ -185,4 +211,56 @@ pub fn generate(facts: &SessionFacts, model: &str) -> anyhow::Result<Summary> {
             .map(|m| m.to_string())
             .or_else(|| Some(model.to_string())),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shape `claude -p --output-format json` prints today: the whole event
+    /// stream, result last. Trimmed, and every value invented.
+    const STREAM: &str = r#"[
+      {"type":"system","subtype":"init","model":"claude-haiku-4-5"},
+      {"type":"system","subtype":"thinking_tokens","tokens":0},
+      {"type":"rate_limit_event","seven_day":{"utilization":0.5}},
+      {"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}},
+      {"type":"result","is_error":false,"result":"{\"narrative\":\"ok\"}","model":"claude-haiku-4-5"}
+    ]"#;
+
+    #[test]
+    fn picks_the_result_out_of_the_event_stream() {
+        let v: Value = serde_json::from_str(STREAM).unwrap();
+        let got = result_event(v);
+        assert_eq!(got.get("type").unwrap(), "result");
+        assert_eq!(got.get("result").unwrap(), "{\"narrative\":\"ok\"}");
+    }
+
+    /// The older CLI printed the result object by itself. It still has to work.
+    #[test]
+    fn leaves_a_lone_result_object_alone() {
+        let v: Value = serde_json::from_str(r#"{"is_error":false,"result":"{}"}"#).unwrap();
+        assert_eq!(result_event(v.clone()), v);
+    }
+
+    /// No result event at all: the last element is where one would have been,
+    /// and is far more informative than an empty answer.
+    #[test]
+    fn falls_back_to_the_last_event() {
+        let v: Value =
+            serde_json::from_str(r#"[{"type":"system"},{"type":"assistant","n":2}]"#).unwrap();
+        assert_eq!(result_event(v).get("n").unwrap(), 2);
+    }
+
+    /// An error the CLI reported must still be seen as an error once the array
+    /// has been unwrapped — that check reads `is_error` off the result event.
+    #[test]
+    fn keeps_the_error_flag_reachable() {
+        let v: Value =
+            serde_json::from_str(r#"[{"type":"system"},{"type":"result","is_error":true}]"#)
+                .unwrap();
+        assert_eq!(
+            result_event(v).get("is_error").and_then(|b| b.as_bool()),
+            Some(true)
+        );
+    }
 }
