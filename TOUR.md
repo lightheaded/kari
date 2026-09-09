@@ -27,7 +27,7 @@ A card carries what you need to decide whether to open it.
 
 - The title. kari takes the custom title, else the AI title, else the first prompt.
 - A summary from Haiku when one exists, in two sentences.
-- Chips: the derived state, `task` for a card without a session, `exited` for a session without a process, `auto-run` for a task that may run unattended, the model, an estimate in percent of the 5-hour window, `bg working` or `bg done` for a background job, and the herdr pane.
+- Chips: the derived state, `task` for a card without a session, `exited` for a session without a process, `auto-run` for a task that may run unattended, a clock with the time of a booked run, the model, an estimate in percent of the 5-hour window, `bg working` or `bg done` for a background job, and the herdr pane.
 - An open question with its options, when the session waits for an answer.
 - The project name, the time since the last activity, and the weighted token count.
 
@@ -43,7 +43,7 @@ Drag a card inside its column to order it by hand. The drop places that card and
 
 ![The queue strip open, with the steps of both nodes](docs/screenshots/queue.png)
 
-The strip under the filter bar is a dry run of the planner. Collapsed, it says how many steps are up next and when the planner looks again. Open, it lists one line per step: the rank, the card, the cost as a percent of the 5-hour window, and the start time. A step outside the budget says so and is dimmed. If nothing can run at all, the strip gives the reason.
+The strip under the filter bar is a dry run of the planner, with the booked runs in front of it. Collapsed, it says how many steps are up next, how many runs are booked, and when the planner looks again. Open, it lists one line per step: the rank, the card, the cost as a percent of the 5-hour window, and the start time. A booked run carries a clock in place of its rank. A step outside the budget says so and is dimmed. If nothing can run at all, the strip gives the reason.
 
 The strip starts nothing. The plan panel keeps the buttons.
 
@@ -63,7 +63,8 @@ After a start, the panel lists the started jobs and offers "Stop these jobs".
 
 The drawer shows one card in full, and it is where you talk to the session.
 
-- The header: the title, the state with the reason kari chose it, and the actions. Click the title to rename the card. "Jump in" opens the session. "Done" moves the card to the Done column. "Summarize" asks Haiku for a fresh summary now. "Archive" hides the card. A task card also has "Delete". A running job has "Stop job".
+- The header: the title, the state with the reason kari chose it, and the actions. Click the title to rename the card. "Jump in" opens the session. "Schedule" books a run for later. "Done" moves the card to the Done column. "Summarize" asks Haiku for a fresh summary now. "Archive" hides the card. A task card also has "Delete". A running job has "Stop job".
+- Schedule: press it when the rate limit leaves no room now. The block offers the next reset of the 5-hour window, the cycle after that, the next reset of the weekly window, and a time you pick. Each button carries the time it would book. A booked card shows the time in the header and cancels from the same block. The booking ignores the automation mode, because you set the time.
 - Where it stands: the summary's narrative, and a line that says how far the work travelled: committed, pushed, PR open, merged, released, deployed, CI passed or failed. Then the next step. A background job adds its own account: its state, what it waits for, and the reply it suggests. One tap puts that reply in the prompt box.
 - Card: facts and fields in one list. Project, node, session, process, hooks, estimate, activity, tokens, models and PR links, then the fields you can change: priority, model, permission mode, "May run unattended", the scheduler prompt (or the body of a task), and notes. A field saves when you leave it. There is no Save button.
 - Run log: one line per state change of every background job that kari started for this card, and one line per prompt sent from here.

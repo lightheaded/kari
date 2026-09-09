@@ -41,7 +41,7 @@ jobs:
             echo "docs/screenshots/VERSION is $stamp, tag is ${{ github.ref_name }}. Run scripts/bump-version.sh, which retakes the screenshots."
             exit 1
           fi
-          for f in board board-dark plan drawer decision search new-task columns settings; do
+          for f in board board-dark plan drawer decision schedule search new-task columns settings; do
             test -s "docs/screenshots/$f.png" || { echo "docs/screenshots/$f.png is missing"; exit 1; }
           done
 

@@ -124,6 +124,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("last_job_state", "TEXT"),
         ("last_job_at", "TEXT"),
         ("model", "TEXT"),
+        ("scheduled", "TEXT"),
     ] {
         if !have.iter().any(|h| h == name) {
             conn.execute(&format!("ALTER TABLE cards ADD COLUMN {name} {decl}"), [])?;
@@ -294,10 +295,13 @@ impl Store {
             last_job_state: r.get(19)?,
             last_job_at: parse_ts(r.get(20)?),
             model: r.get(21)?,
+            scheduled: r
+                .get::<_, Option<String>>(22)?
+                .and_then(|j| serde_json::from_str(&j).ok()),
         })
     }
 
-    const CARD_COLS: &'static str = "id, kind, title, session_id, project_cwd, priority, auto_run, run_prompt, permission_mode, estimate, manual_column, manual_lock_priority, tags, notes, archived, bg_job_id, created_at, updated_at, done_at, last_job_state, last_job_at, model";
+    const CARD_COLS: &'static str = "id, kind, title, session_id, project_cwd, priority, auto_run, run_prompt, permission_mode, estimate, manual_column, manual_lock_priority, tags, notes, archived, bg_job_id, created_at, updated_at, done_at, last_job_state, last_job_at, model, scheduled";
 
     pub fn list_cards(&self) -> anyhow::Result<Vec<Card>> {
         let sql = format!("SELECT {} FROM cards", Self::CARD_COLS);
@@ -328,14 +332,14 @@ impl Store {
     pub fn upsert_card(&self, c: &Card) -> anyhow::Result<()> {
         self.conn.execute(
             &format!(
-                "INSERT INTO cards ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+                "INSERT INTO cards ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
                  ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, session_id=excluded.session_id,
                  project_cwd=excluded.project_cwd, priority=excluded.priority, auto_run=excluded.auto_run,
                  run_prompt=excluded.run_prompt, permission_mode=excluded.permission_mode, estimate=excluded.estimate,
                  manual_column=excluded.manual_column, manual_lock_priority=excluded.manual_lock_priority, tags=excluded.tags,
                  notes=excluded.notes, archived=excluded.archived, bg_job_id=excluded.bg_job_id, updated_at=excluded.updated_at,
                  done_at=excluded.done_at, last_job_state=excluded.last_job_state, last_job_at=excluded.last_job_at,
-                 model=excluded.model",
+                 model=excluded.model, scheduled=excluded.scheduled",
                 Self::CARD_COLS
             ),
             params![
@@ -361,6 +365,10 @@ impl Store {
                 c.last_job_state,
                 c.last_job_at.map(|d| d.to_rfc3339()),
                 c.model,
+                c.scheduled
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
             ],
         )?;
         Ok(())

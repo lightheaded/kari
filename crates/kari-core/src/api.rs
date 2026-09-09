@@ -271,6 +271,20 @@ async fn start_card(
     blocking(move || e.start_card(&id, prompt)).await
 }
 
+async fn schedule_card(
+    State(st): State<ApiState>,
+    Path(id): Path<String>,
+    Json(req): Json<ScheduleRequest>,
+) -> R<Card> {
+    let e = st.engine;
+    blocking(move || e.schedule_card(&id, req)).await
+}
+
+async fn cancel_schedule(State(st): State<ApiState>, Path(id): Path<String>) -> R<Card> {
+    let e = st.engine;
+    blocking(move || e.cancel_schedule(&id)).await
+}
+
 async fn stop_card(State(st): State<ApiState>, Path(id): Path<String>) -> R<()> {
     let e = st.engine;
     blocking(move || e.stop_card(&id)).await
@@ -464,6 +478,10 @@ pub fn router(engine: Arc<Engine>, token: String) -> Router {
         .route("/cards/{id}/stop", post(stop_card))
         .route("/cards/{id}/send", post(send_prompt))
         .route("/cards/{id}/conversation", get(conversation))
+        .route(
+            "/cards/{id}/schedule",
+            post(schedule_card).delete(cancel_schedule),
+        )
         .route("/cards/{id}/summarize", post(summarize_card))
         .route("/cards/{id}/jump", post(jump))
         .route("/cards/{id}/jobs", get(job_log))

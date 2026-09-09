@@ -1,4 +1,4 @@
-import type { NodeQueue } from "../types";
+import type { NodeQueue, QueueStep } from "../types";
 import { clock, fmtPct, untilTime } from "../util";
 
 interface Props {
@@ -19,6 +19,13 @@ function when(at: string | null, reason: string): string {
   return clock(at);
 }
 
+/** The number beside a step. A booked run carries a clock instead, so the
+ *  steps the planner would take still count from one. */
+function stepLabel(steps: QueueStep[], i: number): string {
+  if (steps[i].scheduled) return "⏱";
+  return String(steps.slice(0, i).filter((s) => !s.scheduled).length + 1);
+}
+
 /** A collapsible strip under the filter bar: what the planner would run next,
  *  in order, with what each step costs and when it would start. It starts
  *  nothing; the plan panel still holds the buttons. */
@@ -27,6 +34,7 @@ export function QueueStrip({ queues, showNode, open, onToggle, onSelectCard }: P
   if (live.length === 0) return null;
 
   const upNext = queues.reduce((n, q) => n + q.queue.steps.filter((s) => s.fits).length, 0);
+  const bookedCount = queues.reduce((n, q) => n + q.queue.steps.filter((s) => s.scheduled).length, 0);
   const soonest = queues
     .map((q) => q.queue.next_check_at)
     .filter(Boolean)
@@ -40,7 +48,8 @@ export function QueueStrip({ queues, showNode, open, onToggle, onSelectCard }: P
         <span className="caret">{open ? "⌄" : "›"}</span>
         <b>Queue</b>
         <span className="qsum">
-          {why ? why : `${upNext} up next`}
+          {why && bookedCount === 0 ? why : `${upNext} up next`}
+          {bookedCount > 0 ? ` · ${bookedCount} booked` : ""}
           {soonest && !why ? ` · next check ${untilTime(soonest) || "now"}` : ""}
         </span>
       </button>
@@ -59,8 +68,8 @@ export function QueueStrip({ queues, showNode, open, onToggle, onSelectCard }: P
               {q.queue.blocked && <div className="qblocked">{q.queue.blocked}</div>}
               <ol className="qsteps">
                 {q.queue.steps.map((s, i) => (
-                  <li key={s.card_id} className={s.fits ? "" : "no"}>
-                    <span className="n">{i + 1}</span>
+                  <li key={s.card_id} className={`${s.fits ? "" : "no"} ${s.scheduled ? "booked" : ""}`}>
+                    <span className="n">{stepLabel(q.queue.steps, i)}</span>
                     <button className="linkish" onClick={() => onSelectCard(q.node_id, s.card_id)} title="Open this card">
                       {s.title}
                     </button>

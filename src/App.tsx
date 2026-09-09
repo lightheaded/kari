@@ -404,6 +404,7 @@ export default function App() {
           settings={settings}
           nodes={nodes}
           projects={projectsByNode[selectedCard.node_id] ?? []}
+          quota={board?.quotas.find((q) => q.node_id === selectedCard.node_id)?.quota ?? null}
           showNode={manyNodes}
           offline={selectedOffline}
           onClose={() => setSelected(null)}

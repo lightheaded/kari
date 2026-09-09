@@ -227,9 +227,10 @@ Settings holds the mode of the local node on its own.
 
 ### The queue
 
-The queue is a dry run of the planner. It starts nothing and stores nothing:
-`planner::queue` answers from the board it is handed, and the answer travels
-with `BoardView`, so the strip needs no extra call.
+The queue is a dry run of the planner, with the booked runs in front of it. It
+starts nothing and stores nothing: `planner::queue` answers from the board it is
+handed, and the answer travels with `BoardView`, so the strip needs no extra
+call.
 
 Each step names the card, the cost as a percent of the 5-hour window, the state
 of the window after it, whether it fits the budget, and the start time. That
@@ -241,6 +242,56 @@ live already reads as "now".
 The strip also names why nothing can run at all: the mode is off, no quota
 sample arrived, every job slot is busy, the budget is too small, or no card is
 marked "may run unattended".
+
+### Booked runs
+
+A plan waits for a trigger. A booked run waits for a time. The two answer
+different questions, so they are separate: the planner asks "what fits the
+quota that is free", and a booking answers "start this card when the limit
+resets".
+
+`Card.scheduled` holds one `ScheduledRun`: the time, an optional one-off
+prompt, the words the user picked, and when it was booked. The card is the
+right home for it, because the card is the unit that a hub reads, that a node
+stores and that the board renders. A second table would need its own sync.
+
+The caller names a cycle, not a time. `ScheduleWhen` is `next_reset`,
+`following_cycle`, `weekly_reset` or `at`, and the node resolves it with
+`planner::resolve_schedule` from its own sample. The reset times belong to the
+Claude Code account that node is signed in to, so a phone that books a run on
+three nodes must not send one time to all three. The window that the sample
+names can have reset while the machine slept, so the resolver steps forward by
+one window at a time until the reset is ahead. Two minutes are added, because
+`resets_at` is a report and not a promise.
+
+`Engine::schedule_tick` runs on every 15-second poll. It reads the card rows
+first, and only builds the board when a booking is due, because the board costs
+more than the read and almost every tick has nothing to do. For each due
+booking `booking_action` answers `Start`, `Hold` or `Expire`:
+
+| State | Answer |
+|---|---|
+| The card runs already, or the user has the session open | `Hold` |
+| Every job slot is busy | `Hold` |
+| The booked time passed more than 24 hours ago | `Expire` |
+| Otherwise | `Start` |
+
+`Expire` beats everything else, or a card that stays busy would hold a booking
+from last week for ever. A host that slept through the reset still starts the
+card when it wakes; a host that slept for a day does not, because a run the
+user booked yesterday must not surprise them today.
+
+A booking is a manual start with a delay, so the automation mode, the budget
+and the ceiling do not gate it. Only the parallel cap does, and only by making
+the run wait. A start clears the booking. A start that fails clears it too, and
+says why: the same failure would repeat on every tick otherwise.
+
+The queue strip lists bookings before the planner's steps, with `scheduled` set
+on the step. Such a step is never blocked, and `QueuePlan::blocked` keeps
+speaking for the planner alone. A booking that starts after the 5-hour window
+resets meets an empty window, so the running total starts again there instead
+of adding to a percent that will be gone. A booked card leaves the candidate
+list, or the planner would start it early and the strip would name it twice.
 
 ### Proposals
 
@@ -470,6 +521,7 @@ and says so in Settings. Every other route needs the token in the
 | `PATCH`, `DELETE /kari/v1/cards/{id}` | `patch_card()`, `delete_card()` |
 | `POST /kari/v1/cards/restore` | `restore_card()`: the undo of a delete, with the whole card in the body |
 | `POST /kari/v1/cards/{id}/move`, `/start`, `/stop`, `/summarize`, `/jump` | the card actions |
+| `POST`, `DELETE /kari/v1/cards/{id}/schedule` | `schedule_card()`, `cancel_schedule()`: book a run for a time, or drop the booking |
 | `GET /kari/v1/cards/{id}/jobs` | `job_log()` |
 | `GET`, `PUT /kari/v1/columns`, `/settings` | columns and settings; `PUT /columns` needs the lease |
 | `GET`, `POST`, `DELETE /kari/v1/lease` | the column lease: read, claim or renew, release |
@@ -671,6 +723,7 @@ GET  /kari/v1/hub/quota          the meters, grouped by account
 GET  PUT /kari/v1/hub/columns    the columns the server owns
 POST /kari/v1/hub/nodes/{node}/cards
 POST /kari/v1/hub/nodes/{node}/cards/{card}/move|start|stop|jump|summarize
+POST DELETE /kari/v1/hub/nodes/{node}/cards/{card}/schedule
 POST /kari/v1/hub/nodes/{node}/permissions/{id}
 POST /kari/v1/hub/stop-all
 ```

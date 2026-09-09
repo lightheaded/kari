@@ -166,6 +166,7 @@ function card(id, kind, project, overrides = {}) {
     bg_job_id: null,
     last_job_state: null,
     last_job_at: null,
+    scheduled: null,
     created_at: days(2),
     updated_at: hours(1),
     done_at: null,
@@ -339,6 +340,14 @@ const localCards = [
       priority: 0,
       auto_run: true,
       run_prompt: "Add Playwright screenshot tests for the three checkout pages. Reuse the existing test helpers.",
+      // Booked for the reset of the 5-hour window on studio: 130 minutes
+      // away, plus the two-minute margin the node adds.
+      scheduled: {
+        at: ahead(132),
+        prompt: null,
+        reason: "when the 5-hour window resets",
+        created_at: min(25),
+      },
     }),
     title: "Add screenshot tests for the checkout flow",
     state: "ready",
@@ -772,10 +781,27 @@ const proposal = {
  *  `studio` has a plan open, so its steps wait for a click. `lab` waits for the
  *  weekly trigger, and its last card does not fit the budget. */
 function queueOf(nodeCards, usedPct, budgetPct, trigger, openProposal) {
-  const ready = nodeCards.filter((c) => c.state === "ready" || c.state === "backlog").slice(0, 4);
+  const all = nodeCards.filter((c) => c.state === "ready" || c.state === "backlog");
+  // A booked run comes first and ignores the budget: the user set its time.
+  const booked = all.filter((c) => c.card.scheduled);
+  const ready = all.filter((c) => !c.card.scheduled).slice(0, 4);
   let total = 0;
   return {
-    steps: ready.map((c) => {
+    steps: booked
+      .map((c) => ({
+        card_id: c.card.id,
+        title: c.title,
+        project_name: c.project_name,
+        model: c.card.model,
+        estimate: c.estimate ?? estimate(2_000_000, "project", 2),
+        window_after_pct: c.estimate?.pct_five_hour ?? 4,
+        fits: true,
+        starts_at: c.card.scheduled.at,
+        reason: c.card.scheduled.reason,
+        scheduled: true,
+      }))
+      .concat(
+    ready.map((c) => {
       const cost = c.estimate?.pct_five_hour ?? 4;
       const fits = total + cost <= budgetPct;
       if (fits) total += cost;
@@ -789,8 +815,10 @@ function queueOf(nodeCards, usedPct, budgetPct, trigger, openProposal) {
         fits,
         starts_at: fits ? (openProposal ? min(0) : trigger) : null,
         reason: fits ? "now" : "does not fit the budget",
+        scheduled: false,
       };
     }),
+      ),
     budget_pct: budgetPct,
     used_pct: usedPct,
     next_check_at: ahead(1),

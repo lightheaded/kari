@@ -18,6 +18,7 @@ import type {
   Project,
   Proposal,
   QuotaSample,
+  ScheduleWhen,
   Settings,
   Summary,
 } from "./types";
@@ -198,6 +199,25 @@ export const api = {
           if (!c) throw new Error("no transcript yet");
           return { ...c, messages: c.messages.slice(-limit) };
         }),
+  /** Book a run of a card. The node turns `when` into a time of its own, so
+   *  `at` is only sent with the choice "at". */
+  scheduleCard: (
+    nodeId: string,
+    cardId: string,
+    when: ScheduleWhen,
+    opts?: { at?: string; prompt?: string },
+  ) =>
+    invoke<Card>("schedule_card", {
+      nodeId,
+      cardId,
+      req: {
+        when,
+        ...(when === "at" ? { at: opts?.at } : {}),
+        prompt: opts?.prompt ?? null,
+      },
+    }),
+  cancelSchedule: (nodeId: string, cardId: string) =>
+    invoke<Card>("cancel_schedule", { nodeId, cardId }),
   stopAll: () => invoke<number>("stop_all"),
   quotaHistory: (nodeId: string, limit: number) =>
     invoke<QuotaSample[]>("quota_history", { nodeId, limit }),

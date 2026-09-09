@@ -83,6 +83,8 @@ export interface QueueStep {
   fits: boolean;
   starts_at: string | null;
   reason: string;
+  /** True when the user set the time. Such a step ignores the budget. */
+  scheduled?: boolean;
 }
 export interface QueuePlan {
   steps: QueueStep[];
@@ -135,10 +137,25 @@ export interface Card {
   bg_job_id: string | null;
   last_job_state: string | null;
   last_job_at: string | null;
+  /** A run the user booked for a time. Null means that no run waits. */
+  scheduled: ScheduledRun | null;
   created_at: string;
   updated_at: string;
   done_at: string | null;
 }
+
+/** A run that waits for a time instead of a trigger. */
+export interface ScheduledRun {
+  at: string;
+  /** A one-off prompt for this run. Null sends the prompt of the card. */
+  prompt: string | null;
+  /** What the user picked, in words: "when the 5-hour window resets". */
+  reason: string;
+  created_at: string;
+}
+
+/** The cycle a caller names. The node turns it into a time of its own. */
+export type ScheduleWhen = "next_reset" | "following_cycle" | "weekly_reset" | "at";
 
 export interface PendingQuestion {
   question: string;

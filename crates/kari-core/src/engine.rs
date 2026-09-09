@@ -310,6 +310,7 @@ impl Engine {
             bg_job_id: None,
             last_job_state: None,
             last_job_at: None,
+            scheduled: None,
             created_at: now,
             updated_at: now,
             done_at: None,
@@ -1191,6 +1192,7 @@ impl Engine {
         let ctx = Self::planner_context(view, now);
         let open = view.proposal.as_ref().is_some_and(|p| p.state == "open");
         planner::queue(
+            Self::booked(view),
             Self::candidates(view),
             &ctx,
             settings,
@@ -1328,6 +1330,7 @@ impl Engine {
             bg_job_id: None,
             last_job_state: None,
             last_job_at: None,
+            scheduled: None,
             created_at: now,
             updated_at: now,
             done_at: None,
@@ -1388,6 +1391,11 @@ impl Engine {
         }
         if let Some(v) = p.archived {
             c.archived = v;
+            // An archived card leaves the board, so nothing would ever start
+            // its booked run or show that one waits. Drop it with the card.
+            if v {
+                c.scheduled = None;
+            }
         }
         if let Some(v) = p.estimate_weighted_tokens {
             c.estimate_weighted_tokens = Some(v);
@@ -2038,6 +2046,184 @@ impl Engine {
         )
     }
 
+    /// Book a run of one card for a time.
+    ///
+    /// The caller names a cycle, and this node turns it into a time from its
+    /// own rate-limit sample. A booked run is a manual start with a delay: the
+    /// automation mode, the budget and the planner do not gate it, because the
+    /// user asked for this card at this time.
+    pub fn schedule_card(&self, card_id: &str, req: ScheduleRequest) -> anyhow::Result<Card> {
+        let now = Utc::now();
+        let quota = self.snap.read().unwrap().quota.clone();
+        let (at, reason) = planner::resolve_schedule(req.when, quota.as_ref(), now)?;
+        let store = self.store.lock().unwrap();
+        let Some(mut c) = store.get_card(card_id)? else {
+            anyhow::bail!("card not found")
+        };
+        if c.archived {
+            anyhow::bail!("this card is archived");
+        }
+        let prompt = req.prompt.filter(|p| !p.trim().is_empty());
+        // A card with neither a prompt of its own nor a one-off prompt has
+        // nothing to send. Say so now, not silently at the reset.
+        if prompt.is_none()
+            && compose_prompt(c.kind, c.title.as_deref(), c.run_prompt.as_deref()).is_none()
+        {
+            anyhow::bail!("this card has no prompt to send");
+        }
+        c.scheduled = Some(ScheduledRun {
+            at,
+            prompt,
+            reason,
+            created_at: now,
+        });
+        c.updated_at = now;
+        store.upsert_card(&c)?;
+        drop(store);
+        self.emit_changed();
+        Ok(c)
+    }
+
+    /// Drop the booked run of one card. A card that holds none is left alone.
+    pub fn cancel_schedule(&self, card_id: &str) -> anyhow::Result<Card> {
+        let store = self.store.lock().unwrap();
+        let Some(mut c) = store.get_card(card_id)? else {
+            anyhow::bail!("card not found")
+        };
+        if c.scheduled.is_none() {
+            return Ok(c);
+        }
+        c.scheduled = None;
+        c.updated_at = Utc::now();
+        store.upsert_card(&c)?;
+        drop(store);
+        self.emit_changed();
+        Ok(c)
+    }
+
+    /// Start the booked runs whose time came. Runs on the poll timer.
+    ///
+    /// Only the node that holds the card runs this, so two hubs looking at one
+    /// board cannot start the same run twice.
+    pub fn schedule_tick(self: &Arc<Self>) {
+        let now = Utc::now();
+        // The cheap question first. The board costs more to build than a read
+        // of the card rows, and almost every tick has nothing to start.
+        let any_due = self
+            .store
+            .lock()
+            .unwrap()
+            .list_cards()
+            .map(|cards| {
+                cards
+                    .iter()
+                    .any(|c| !c.archived && c.scheduled.as_ref().is_some_and(|r| r.at <= now))
+            })
+            .unwrap_or(false);
+        if !any_due {
+            return;
+        }
+        let board = self.board();
+        let settings = self.settings();
+        let ctx = Self::planner_context(&board, now);
+        let mut free = settings.max_parallel_bg.saturating_sub(ctx.running_jobs);
+        let mut due: Vec<&CardView> = board
+            .cards
+            .iter()
+            .filter(|cv| cv.card.scheduled.as_ref().is_some_and(|r| r.at <= now))
+            .collect();
+        due.sort_by_key(|cv| cv.card.scheduled.as_ref().map(|r| r.at));
+        for cv in due {
+            let Some(run) = cv.card.scheduled.clone() else {
+                continue;
+            };
+            let busy = cv.live.is_some()
+                || matches!(
+                    cv.bg_job.as_ref().and_then(|j| j.state.as_deref()),
+                    Some("working") | Some("blocked")
+                );
+            match booking_action(run.at, now, busy, free) {
+                Booking::Hold => continue,
+                Booking::Expire => {
+                    self.drop_schedule(
+                        &cv.card.id,
+                        &format!(
+                            "{}: the booked time passed more than {SCHEDULE_EXPIRY_HOURS} hours ago",
+                            cv.title
+                        ),
+                        "kari did not start it. Book it again if you still want it.",
+                    );
+                    continue;
+                }
+                Booking::Start => {}
+            }
+            match self.start_card(&cv.card.id, run.prompt.clone()) {
+                Ok(_) => {
+                    free -= 1;
+                    // start_card wrote the card again, so the booking is read
+                    // back and cleared from the row that holds the job id.
+                    self.drop_schedule(
+                        &cv.card.id,
+                        &format!("Started {}", cv.title),
+                        &format!("This run was booked {}.", run.reason),
+                    );
+                }
+                Err(e) => {
+                    // A run that cannot start will not start on the next tick
+                    // either. Drop the booking and say why, once.
+                    self.drop_schedule(
+                        &cv.card.id,
+                        &format!("{} did not start", cv.title),
+                        &e.to_string(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Clear the booking of a card and tell the user what happened to it.
+    fn drop_schedule(&self, card_id: &str, title: &str, body: &str) {
+        {
+            let store = self.store.lock().unwrap();
+            if let Ok(Some(mut c)) = store.get_card(card_id) {
+                if c.scheduled.is_some() {
+                    c.scheduled = None;
+                    c.updated_at = Utc::now();
+                    let _ = store.upsert_card(&c);
+                }
+            }
+        }
+        let _ = self.tx.send(Event::Notice {
+            title: title.to_string(),
+            body: body.to_string(),
+            card_id: Some(card_id.to_string()),
+        });
+        self.emit_changed();
+    }
+
+    /// The runs the user booked, for the queue strip.
+    fn booked(board: &BoardView) -> Vec<planner::Booked> {
+        board
+            .cards
+            .iter()
+            .filter(|cv| !cv.card.archived)
+            .filter_map(|cv| {
+                let run = cv.card.scheduled.as_ref()?;
+                Some(planner::Booked {
+                    card_id: cv.card.id.clone(),
+                    title: cv.title.clone(),
+                    project_name: cv.project_name.clone(),
+                    model: cv.card.model.clone(),
+                    at: run.at,
+                    reason: run.reason.clone(),
+                    estimate: cv.estimate.clone().unwrap_or_else(|| {
+                        estimate::estimate_for(&cv.card, &HashMap::new(), &board.calibration)
+                    }),
+                })
+            })
+            .collect()
+    }
+
     pub fn stop_card(&self, card_id: &str) -> anyhow::Result<()> {
         let board = self.board();
         let Some(cv) = board.cards.iter().find(|c| c.card.id == card_id) else {
@@ -2083,6 +2269,11 @@ impl Engine {
             .filter(|cv| {
                 let c = &cv.card;
                 if !c.auto_run || c.archived || c.done_at.is_some() {
+                    return false;
+                }
+                // A card the user booked for a time belongs to that booking.
+                // The planner must not start it earlier and list it twice.
+                if c.scheduled.is_some() {
                     return false;
                 }
                 // Never take over a session the user has open, or a job already running.
@@ -2628,6 +2819,9 @@ impl Engine {
                         me.detect_transitions();
                         me.emit_changed();
                     }
+                    // Every tick, because a booked run must start near its
+                    // time, and the check only reads cards.
+                    me.schedule_tick();
                     if tick.is_multiple_of(4) {
                         me.proposal_tick();
                         me.notice_tick();
@@ -2636,6 +2830,33 @@ impl Engine {
             })
             .expect("spawn");
     }
+}
+
+/// What the tick does with one booked run whose time came.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Booking {
+    /// Start it now.
+    Start,
+    /// Not yet: look again on the next tick.
+    Hold,
+    /// Too late to start. Drop it and tell the user.
+    Expire,
+}
+
+/// Decide what happens to one booked run.
+///
+/// A host that slept through the reset still starts the card when it wakes,
+/// because the user asked for the run and the quota is there. A host that
+/// slept for a day does not: a run booked yesterday must not surprise the user
+/// today. The same limit ends a run that a busy card held back all night.
+fn booking_action(at: DateTime<Utc>, now: DateTime<Utc>, busy: bool, free: u32) -> Booking {
+    if now - at > Duration::hours(SCHEDULE_EXPIRY_HOURS) {
+        return Booking::Expire;
+    }
+    if busy || free == 0 {
+        return Booking::Hold;
+    }
+    Booking::Start
 }
 
 /// One line about a tool call, for a notification: the command, the file, or
@@ -2730,6 +2951,7 @@ mod tests {
             bg_job_id: job.map(|s| s.to_string()),
             last_job_state: None,
             last_job_at: None,
+            scheduled: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             done_at: None,
@@ -2928,6 +3150,26 @@ mod tests {
         let v = serde_json::json!({ "file_path": "/tmp/x.rs", "old_string": "a" });
         assert_eq!(summarize_input("Edit", &v), "/tmp/x.rs");
         assert_eq!(summarize_input("Other", &serde_json::Value::Null), "");
+    }
+
+    #[test]
+    fn a_booked_run_starts_holds_or_expires() {
+        let now = Utc::now();
+        let due = now - Duration::minutes(1);
+        assert_eq!(booking_action(due, now, false, 2), Booking::Start);
+        // The card is running already, or the user has the session open.
+        assert_eq!(booking_action(due, now, true, 2), Booking::Hold);
+        // Every job slot is taken, so the run waits for one.
+        assert_eq!(booking_action(due, now, false, 0), Booking::Hold);
+        // The host slept past the window the user booked.
+        let old = now - Duration::hours(SCHEDULE_EXPIRY_HOURS + 1);
+        assert_eq!(booking_action(old, now, false, 2), Booking::Expire);
+        // An expired run is dropped even while the card is busy, or a busy
+        // card would hold a booking from last week for ever.
+        assert_eq!(booking_action(old, now, true, 0), Booking::Expire);
+        // A host asleep for four hours still runs what it missed.
+        let missed = now - Duration::hours(4);
+        assert_eq!(booking_action(missed, now, false, 1), Booking::Start);
     }
 
     /// The one test that opens an engine: `open_at` fixes the kari directory

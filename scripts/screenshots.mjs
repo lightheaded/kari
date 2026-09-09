@@ -117,6 +117,14 @@ async function main() {
     await shot(page, "decision");
     await page.keyboard.press("Escape");
 
+    // The schedule block: booking a run for a cycle of the rate-limit window.
+    await page.getByText("Add screenshot tests for the checkout flow", { exact: true }).click();
+    await page.locator(".drawer").waitFor();
+    await page.locator(".drawer").getByRole("button", { name: /Booked/ }).click();
+    await page.locator(".sched-opts .btn").first().waitFor();
+    await shot(page, "schedule");
+    await page.keyboard.press("Escape");
+
     // A card click scrolls the board. Start the remaining views from the left edge.
     const scrollHome = () => page.evaluate(() => document.querySelector(".board")?.scrollTo(0, 0));
     await scrollHome();

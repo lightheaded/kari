@@ -200,6 +200,23 @@ a { color: var(--accent); }
 .drawer header { padding: 16px 18px 12px; border-bottom: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 8px; }
 .drawer header h2 { margin: 0; font: 600 17px/1.3 var(--display); letter-spacing: -0.01em; }
 .drawer header .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The schedule block: when to start this card, and what is booked already. */
+.drawer header .sched {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 5px;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+}
+.drawer header .sched .hint { font: 11.5px/1.5 var(--body); }
+.sched-now { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.sched-now b { font: 600 12px/1.4 var(--mono); color: var(--accent); }
+.sched-now .hint { font: 11px/1.5 var(--mono); flex: 1 1 120px; }
+.sched-opts { display: flex; flex-direction: column; gap: 4px; }
+.sched-opts .btn { justify-content: space-between; width: 100%; text-align: left; }
+.sched-opts .btn .at { font: 11px/1.4 var(--mono); color: var(--ink-3); margin-left: 12px; }
+.sched-at { display: flex; gap: 6px; align-items: center; }
+.sched-at input { flex: 1 1 auto; min-width: 0; }
+.chip.booked { background: var(--accent-soft); color: var(--accent); }
+.qsteps li.booked .n { color: var(--accent); }
+
 .drawer .body { flex: 1 1 auto; min-height: 0; padding: 14px 18px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
 .drawer .close { position: absolute; top: 10px; right: 10px; }
 /* The title is the field: a click turns it into an input in the same place. */

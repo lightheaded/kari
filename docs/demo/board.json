@@ -159,6 +159,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-08-29T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -210,6 +211,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-08-31T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -261,6 +263,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-01T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -312,6 +315,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-01T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -363,6 +367,12 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": {
+          "at": "2026-09-03T12:12:00.000Z",
+          "prompt": null,
+          "reason": "when the 5-hour window resets",
+          "created_at": "2026-09-03T09:35:00.000Z"
+        },
         "created_at": "2026-09-01T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -414,6 +424,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-03T08:00:00.000Z",
         "updated_at": "2026-09-03T09:59:00.000Z",
         "done_at": null
@@ -532,6 +543,7 @@
         "bg_job_id": "job_7f3a2c",
         "last_job_state": "working",
         "last_job_at": "2026-09-03T09:22:00.000Z",
+        "scheduled": null,
         "created_at": "2026-08-30T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -594,6 +606,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-03T07:00:00.000Z",
         "updated_at": "2026-09-03T09:54:00.000Z",
         "done_at": null
@@ -701,6 +714,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-03T09:00:00.000Z",
         "updated_at": "2026-09-03T09:48:00.000Z",
         "done_at": null
@@ -811,6 +825,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-03T09:10:00.000Z",
         "updated_at": "2026-09-03T09:58:00.000Z",
         "done_at": null
@@ -906,6 +921,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-02T10:00:00.000Z",
         "updated_at": "2026-09-03T05:00:00.000Z",
         "done_at": null
@@ -994,6 +1010,7 @@
         "bg_job_id": "job_2b9e41",
         "last_job_state": "done",
         "last_job_at": "2026-09-03T09:35:00.000Z",
+        "scheduled": null,
         "created_at": "2026-09-01T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -1105,6 +1122,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-08-31T10:00:00.000Z",
         "updated_at": "2026-09-02T10:00:00.000Z",
         "done_at": "2026-09-02T10:00:00.000Z"
@@ -1179,6 +1197,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-08-28T10:00:00.000Z",
         "updated_at": "2026-08-30T10:00:00.000Z",
         "done_at": "2026-09-02T10:00:00.000Z"
@@ -1253,6 +1272,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-08-30T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -1304,6 +1324,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-02T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -1355,6 +1376,7 @@
         "bg_job_id": null,
         "last_job_state": null,
         "last_job_at": null,
+        "scheduled": null,
         "created_at": "2026-09-03T06:00:00.000Z",
         "updated_at": "2026-09-03T09:58:00.000Z",
         "done_at": null
@@ -1452,6 +1474,7 @@
         "bg_job_id": "job_5c1d80",
         "last_job_state": "done",
         "last_job_at": "2026-09-03T09:42:00.000Z",
+        "scheduled": null,
         "created_at": "2026-09-01T10:00:00.000Z",
         "updated_at": "2026-09-03T09:00:00.000Z",
         "done_at": null
@@ -1673,6 +1696,27 @@
       "queue": {
         "steps": [
           {
+            "card_id": "task_checkout_tests",
+            "title": "Add screenshot tests for the checkout flow",
+            "project_name": "storefront-web",
+            "model": null,
+            "estimate": {
+              "weighted_tokens": 2600000,
+              "low": 1560000,
+              "high": 4420000,
+              "pct_five_hour": 4.9399999999999995,
+              "pct_low": 2.964,
+              "pct_high": 8.398,
+              "source": "project",
+              "sessions": 6
+            },
+            "window_after_pct": 4.9399999999999995,
+            "fits": true,
+            "starts_at": "2026-09-03T12:12:00.000Z",
+            "reason": "when the 5-hour window resets",
+            "scheduled": true
+          },
+          {
             "card_id": "task_rate_limit",
             "title": "Add rate limiting to the public API",
             "project_name": "atlas-api",
@@ -1690,7 +1734,8 @@
             "window_after_pct": 41.99,
             "fits": true,
             "starts_at": "2026-09-03T10:00:00.000Z",
-            "reason": "now"
+            "reason": "now",
+            "scheduled": false
           },
           {
             "card_id": "task_migration_guide",
@@ -1710,7 +1755,8 @@
             "window_after_pct": 44.46,
             "fits": true,
             "starts_at": "2026-09-03T10:00:00.000Z",
-            "reason": "now"
+            "reason": "now",
+            "scheduled": false
           },
           {
             "card_id": "task_deps",
@@ -1730,7 +1776,8 @@
             "window_after_pct": 50.92,
             "fits": true,
             "starts_at": "2026-09-03T10:00:00.000Z",
-            "reason": "now"
+            "reason": "now",
+            "scheduled": false
           },
           {
             "card_id": "task_payment_review",
@@ -1750,7 +1797,8 @@
             "window_after_pct": 50.92,
             "fits": false,
             "starts_at": null,
-            "reason": "does not fit the budget"
+            "reason": "does not fit the budget",
+            "scheduled": false
           }
         ],
         "budget_pct": 17,
@@ -1786,7 +1834,8 @@
             "window_after_pct": 15.71,
             "fits": true,
             "starts_at": "2026-09-04T00:00:00.000Z",
-            "reason": "now"
+            "reason": "now",
+            "scheduled": false
           },
           {
             "card_id": "task_retrain",
@@ -1806,7 +1855,8 @@
             "window_after_pct": 21.03,
             "fits": true,
             "starts_at": "2026-09-04T00:00:00.000Z",
-            "reason": "now"
+            "reason": "now",
+            "scheduled": false
           }
         ],
         "budget_pct": 41,
