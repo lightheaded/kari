@@ -1246,8 +1246,12 @@ impl Engine {
         } else {
             None
         };
-        // A manual move settles the outcome of the last job.
-        if col.accepts.contains(&DerivedState::Done) || col.accepts.contains(&DerivedState::Backlog)
+        // A manual move settles the outcome of the last job. Ready is on the
+        // list because the planner never takes a card whose run ended. A card
+        // the user puts back on Ready must be able to run again.
+        if col.accepts.contains(&DerivedState::Done)
+            || col.accepts.contains(&DerivedState::Backlog)
+            || col.accepts.contains(&DerivedState::Ready)
         {
             card.last_job_state = None;
             card.last_job_at = None;
@@ -2092,12 +2096,31 @@ impl Engine {
                 if !has_prompt {
                     return false;
                 }
+                // A run that ended waits for a person, whatever it did. The
+                // board puts such a card in Review when the run finished, and
+                // in My turn when the run failed or stopped. The planner must
+                // not take it again. An accepted plan stops being live 30
+                // minutes after it starts, the weekly trigger stays true for
+                // 36 hours, and the same card is still the top candidate, so
+                // the card runs twice an hour for as long as the trigger
+                // holds. One card ran 11 times on 2026-09-09, and every run
+                // forked its session and left a card of its own on the board.
+                //
+                // A move to Ready, to Backlog or to Done settles the outcome
+                // of the last run and lets the card run again.
+                if matches!(
+                    c.last_job_state.as_deref(),
+                    Some("done") | Some("failed") | Some("stopped")
+                ) {
+                    return false;
+                }
                 // A card that waits for the user is theirs, not the planner's.
                 !matches!(
                     cv.state,
                     DerivedState::NeedsDecision
                         | DerivedState::NeedsApproval
                         | DerivedState::Working
+                        | DerivedState::Validate
                         | DerivedState::Done
                 )
             })
@@ -2830,6 +2853,59 @@ mod tests {
         assert!(run_log_still_owns(&card_with_job(None), "old"));
         // The card moved on to a newer job. The older job gets its own card.
         assert!(!run_log_still_owns(&card_with_job(Some("new")), "old"));
+    }
+
+    /// One card ran 11 times in one day. Autopilot started it, the run
+    /// finished, the accepted plan stopped being live 30 minutes later, and the
+    /// weekly trigger was still true with the same card at the top of the list.
+    /// Every run forked the session and left a card of its own on the board.
+    #[test]
+    fn the_planner_leaves_a_card_whose_run_ended() {
+        let ready = |state: DerivedState, last: Option<&str>| {
+            let mut c = card_with_job(Some("job1"));
+            c.auto_run = true;
+            c.title = Some("do the thing".into());
+            c.project_cwd = Some("/tmp/project".into());
+            c.last_job_state = last.map(|s| s.to_string());
+            c.last_job_at = last.map(|_| Utc::now());
+            let mut cv = view_with_pane(None);
+            cv.card = c;
+            cv.herdr = None;
+            cv.state = state;
+            BoardView {
+                columns: vec![],
+                cards: vec![cv],
+                quota: None,
+                generated_at: Utc::now(),
+                scanning: false,
+                herdr_connected: false,
+                hooks_installed: false,
+                hooks_port: 0,
+                calibration: Calibration::default(),
+                proposal: None,
+                away_mode: false,
+                queue: None,
+                automation_mode: "auto".into(),
+            }
+        };
+
+        // A card that never ran is the planner's to take.
+        assert_eq!(
+            Engine::candidates(&ready(DerivedState::Ready, None)).len(),
+            1
+        );
+
+        // Every outcome of a run waits for a person.
+        for state in ["done", "failed", "stopped"] {
+            let board = ready(DerivedState::Ready, Some(state));
+            assert!(
+                Engine::candidates(&board).is_empty(),
+                "a card whose run is {state} must not run again by itself"
+            );
+        }
+
+        // The board puts a finished run in Review, whatever the card remembers.
+        assert!(Engine::candidates(&ready(DerivedState::Validate, None)).is_empty());
     }
 
     #[test]
