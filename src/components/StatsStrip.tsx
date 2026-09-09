@@ -2,18 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import type { AccountQuota, NodeStatus, QuotaWindow } from "../types";
 import { fmtPct, nodeDot, relTime, untilTime } from "../util";
 
+/** One window of one account. Every part keeps its box when it has nothing to
+ *  show, so the bars of two rows stand in one column. */
 function Meter({ label, w }: { label: string; w: QuotaWindow | null }) {
-  if (!w) return <span className="mnone">{label} —</span>;
-  const pct = Math.max(0, Math.min(100, w.used_percentage));
+  const pct = w ? Math.max(0, Math.min(100, w.used_percentage)) : 0;
   const cls = pct >= 90 ? "hot" : pct >= 70 ? "warn" : "";
   return (
-    <span className="m" title={w.resets_at ? `${label}: resets in ${untilTime(w.resets_at)}` : label}>
+    <span className="m" title={w?.resets_at ? `${label}: resets in ${untilTime(w.resets_at)}` : label}>
       <span className="mk">{label}</span>
-      <span className="bar">
-        <i className={cls} style={{ width: `${pct}%` }} />
-      </span>
-      <b>{pct.toFixed(0)}%</b>
-      {w.resets_at && <span className="mr">{untilTime(w.resets_at)}</span>}
+      <span className="bar">{w && <i className={cls} style={{ width: `${pct}%` }} />}</span>
+      <b>{w ? `${pct.toFixed(0)}%` : "—"}</b>
+      <span className="mr">{w?.resets_at ? untilTime(w.resets_at) : ""}</span>
     </span>
   );
 }
@@ -167,8 +166,9 @@ interface Props {
  *  quota that is already spent. Filtering the board stays with the node chips
  *  below, which can name one machine — a row here covers several.
  *
- *  Above four rows they go two to a line, and the strip scrolls after that, so
- *  the top bar itself never grows. */
+ *  Every row of a line shares one grid, so the bars stand in a column whatever
+ *  the names beside them are. Above four rows they go two to a line, and the
+ *  strip scrolls after that, so the top bar itself never grows. */
 export function StatsStrip({ accounts, nodes, onFill, onHelp, onRename, onRefresh, refreshing }: Props) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const rows: AccountQuota[] =
@@ -186,22 +186,31 @@ export function StatsStrip({ accounts, nodes, onFill, onHelp, onRename, onRefres
             calibration: null,
           },
         ];
+  // Above four rows the strip goes two to a line. Each line of rows is a grid
+  // of its own, and the rows in it share the tracks, so a long name or a long
+  // list of machines moves the whole column and never one bar.
+  const half = Math.ceil(rows.length / 2);
+  const groups = rows.length > 4 ? [rows.slice(0, half), rows.slice(half)] : [rows];
   return (
-    <div className={`stats ${rows.length > 4 ? "wide" : ""}`}>
-      {rows.map((row) => (
-        <Row
-          key={row.key}
-          row={row}
-          byId={byId}
-          showNodes={nodes.length > 1}
-          onFill={() => onFill(row.node_ids[0])}
-          onHelp={onHelp}
-          onRename={(alias) => onRename(row.key, alias)}
-          // The login token lives on this machine only, so the endpoint is
-          // reachable only for an account this machine is itself signed in to.
-          onRefresh={row.node_ids.some((id) => byId.get(id)?.kind === "local") ? onRefresh : undefined}
-          refreshing={refreshing}
-        />
+    <div className="stats">
+      {groups.map((group, i) => (
+        <div className="scol" key={i}>
+          {group.map((row) => (
+            <Row
+              key={row.key}
+              row={row}
+              byId={byId}
+              showNodes={nodes.length > 1}
+              onFill={() => onFill(row.node_ids[0])}
+              onHelp={onHelp}
+              onRename={(alias) => onRename(row.key, alias)}
+              // The login token lives on this machine only, so the endpoint is
+              // reachable only for an account this machine is itself signed in to.
+              onRefresh={row.node_ids.some((id) => byId.get(id)?.kind === "local") ? onRefresh : undefined}
+              refreshing={refreshing}
+            />
+          ))}
+        </div>
       ))}
     </div>
   );

@@ -17,7 +17,7 @@ import {
   STATE_LABEL,
 } from "../types";
 import { nodeDot, noAutoFill, proseField, relTime } from "../util";
-import { useAutoGrow } from "../hooks";
+import { useAutoGrow, useSticky } from "../hooks";
 import type { CloseGuard } from "../dirty";
 import { useCloseGuard } from "../dirty";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
@@ -115,6 +115,16 @@ interface AddTaskProps {
   onSubmit: (nodeId: string, t: NewTask) => void;
 }
 
+/** Whether "May run unattended" starts checked. A card added to a column must
+ *  land in that column, and a task derives Ready or Backlog from this box
+ *  alone. So a column that takes one of the two states and not the other
+ *  decides. Every other column, and the top bar, keep the last answer. */
+function autoRunDefault(target: Column | undefined, last: boolean): boolean {
+  const ready = target?.accepts.includes("ready") ?? false;
+  const backlog = target?.accepts.includes("backlog") ?? false;
+  return ready === backlog ? last : ready;
+}
+
 export function AddTaskModal({
   nodes,
   defaultNode,
@@ -140,9 +150,9 @@ export function AddTaskModal({
   const [custom, setCustom] = useState("");
   const [prompt, setPrompt] = useState("");
   const target = columns.find((c) => c.id === columnId);
-  const [autoRun, setAutoRun] = useState(
-    target?.accepts.includes("ready") ?? false,
-  );
+  /** "May run unattended", as the user last left it. */
+  const [lastAutoRun, setLastAutoRun] = useSticky("kari.add.autoRun", false);
+  const [autoRun, setAutoRun] = useState(() => autoRunDefault(target, lastAutoRun));
   const [priority, setPriority] = useState(0);
   const [notes, setNotes] = useState("");
   const [model, setModel] = useState("");
@@ -305,7 +315,12 @@ export function AddTaskModal({
         <input
           type="checkbox"
           checked={autoRun}
-          onChange={(e) => setAutoRun(e.target.checked)}
+          onChange={(e) => {
+            setAutoRun(e.target.checked);
+            // Only a click is remembered. A default that a column set is that
+            // column's rule, and not an answer the user gave.
+            setLastAutoRun(e.target.checked);
+          }}
         />
         <span>May run unattended</span>
       </label>

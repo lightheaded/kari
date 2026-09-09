@@ -463,20 +463,33 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
 
 /* ---------------------------------------------------------------- stats strip
 
-One row per node under the top bar: both windows, both reset times, and Fill.
-The top bar itself never grows with the node count. */
+One row per account under the top bar: both windows, both reset times, and
+Fill. The rows of a line share one grid, so the bars stand in a column whatever
+the names are. The top bar itself never grows with the node count. */
 .stats {
-  display: flex; flex-direction: column; gap: 2px; padding: 6px 14px;
+  display: flex; gap: 24px; padding: 6px 14px;
   background: var(--surface); border-bottom: 1px solid var(--line-soft);
   max-height: 132px; overflow-y: auto;
 }
-.stats.wide { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 20px; }
-.srow { display: flex; align-items: center; gap: 10px; min-width: 0; border-radius: 4px; padding: 1px 4px; }
+/* One grid per line of rows. Every row of the line shares the tracks, so the
+   widest name sets the column and each bar starts where the bar above it
+   starts. Every slot has a place, whether or not the row fills it. */
+.scol {
+  flex: 1 1 0; min-width: 0;
+  display: grid; align-items: center; align-content: start; gap: 2px 10px;
+  grid-template-columns: max-content max-content max-content max-content max-content 1fr;
+}
+.srow { display: contents; }
+.srow > .aname { grid-column: 1; }
+.srow > .anodes { grid-column: 2; }
+.srow > .smeters, .srow > .snone { grid-column: 3; }
+.srow > .stale { grid-column: 4; }
+.srow > .sfill { grid-column: 5; }
 /* The account's name, and the field that renames it. Same box either way, so
    the row does not jump when the field opens. */
 .aname {
   /* One fixed width for the label and the field, so opening the field does not
-     shift the row and the meters stay in a column down the strip. */
+     shift the row. */
   display: inline-flex; align-items: center; flex: 0 0 104px; width: 104px;
   border: 1px solid transparent; background: none; padding: 1px 4px; border-radius: 3px;
   font: 500 11.5px/1.4 var(--mono); color: var(--ink);
@@ -484,8 +497,8 @@ The top bar itself never grows with the node count. */
 }
 .aname:hover { background: var(--surface-2); }
 .aname.edit { border-color: var(--accent); background: var(--surface-2); outline: none; }
-/* The machines that spend this account's quota. A minimum width, so the meters
-   line up down the strip however many machines a row names. */
+/* The machines that spend this account's quota. The grid track holds the
+   longest list, so the meters line up however many machines a row names. */
 .anodes { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 108px; }
 .anode {
   display: inline-flex; align-items: center; gap: 4px;
@@ -495,16 +508,15 @@ The top bar itself never grows with the node count. */
 .anode .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
 .smeters { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .m { display: inline-flex; align-items: center; gap: 6px; font: 11px/1.4 var(--mono); color: var(--ink-3); }
-.m .mk { color: var(--ink-3); flex: 0 0 auto; }
+.m .mk { color: var(--ink-3); flex: 0 0 20px; }
 .m .bar { width: 78px; height: 6px; flex: 0 0 auto; }
-.m b { color: var(--ink); font-weight: 500; min-width: 30px; text-align: right; }
-.m .mr { color: var(--ink-3); min-width: 46px; }
-.mnone { font: 11px/1.4 var(--mono); color: var(--ink-3); }
+.m b { color: var(--ink); font-weight: 500; flex: 0 0 30px; text-align: right; }
+/* The reset time keeps its box while the window has none, so the meter beside
+   it does not move. */
+.m .mr { color: var(--ink-3); flex: 0 0 46px; }
 .snone { border: none; background: none; padding: 0; font: 11px/1.4 var(--mono); color: var(--ink-3); text-align: left; }
 .snone:hover { color: var(--amber); }
-.srow .sfill { flex: 0 0 auto; }
-/* The row stops at its content, so Fill sits beside the meters. */
-.stats:not(.wide) .srow { align-self: flex-start; }
+.srow .sfill { justify-self: start; }
 
 /* --------------------------------------------------------- automation switch */
 .autoswitch { display: inline-flex; align-items: center; gap: 0; }
