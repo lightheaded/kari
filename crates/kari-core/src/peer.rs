@@ -661,8 +661,12 @@ fn wait_for_receipt(
                 }
                 let _ = stream.set_nonblocking(false);
                 let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
-                let mut text = String::new();
-                let _ = stream.take(64 * 1024).read_to_string(&mut text);
+                // Bytes, not a string: `read_to_string` throws away what it
+                // read when the read ends in a timeout, and the receipt would
+                // go with it. `read_to_end` keeps it.
+                let mut buf = Vec::new();
+                let _ = stream.take(64 * 1024).read_to_end(&mut buf);
+                let text = String::from_utf8_lossy(&buf);
                 for line in text.lines().filter(|l| !l.trim().is_empty()) {
                     if let Some(outcome) = read_receipt(line, msg_id) {
                         return outcome;
