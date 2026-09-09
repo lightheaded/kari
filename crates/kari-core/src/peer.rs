@@ -28,7 +28,7 @@
 //!
 //! The second gate is the model. A peer message is not the user's approval,
 //! and the receiver is told to refuse a peer that claims otherwise. No sender
-//! can pass that gate, and none should.
+//! passes that gate, and the gate is correct.
 //!
 //! The outcome of the first gate comes back as a receipt, on a new connection
 //! to the address the frame names in `from`. A sender with no address of its
