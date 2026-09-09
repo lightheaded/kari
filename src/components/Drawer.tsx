@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import type { CardPatch, Column, Conversation, HubCard, JobLogEntry, NodeStatus, Project, Settings } from "../types";
+import type { CardPatch, Column, HubCard, JobLogEntry, NodeStatus, Project, Settings } from "../types";
 import { RUN_MODELS, STATE_LABEL } from "../types";
 import { clock, fmtM, fmtPct, noAutoFill, proseField, relTime, shortId, weighted } from "../util";
 import { useAutoGrow } from "../hooks";
@@ -9,6 +9,7 @@ import { UnsavedBar } from "./Modals";
 import type { Act } from "../toasts";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
 import { Markdown } from "./Markdown";
+import { ConversationList, popOutConversation, useConversation } from "./Conversation";
 
 interface Props {
   view: HubCard;
@@ -34,9 +35,6 @@ const MODES = ["", "bypassPermissions", "acceptEdits", "auto", "plan", "default"
 
 /** The picker value that asks for a typed path. No project directory uses it. */
 const OTHER = "__custom";
-
-/** How many turns the conversation view asks for first. "Load everything" asks for the rest. */
-const TURNS_FIRST = 300;
 
 /** A text field that keeps its own draft and saves on blur.
  *  The saved value comes from the card; the draft follows it until the user
@@ -116,20 +114,6 @@ function TitleEdit({
   );
 }
 
-/** One turn of the conversation. A reply renders as markdown, a prompt as it was typed. */
-function Turn({ role, text, at, hit }: { role: string; text: string; at: string | null; hit?: boolean }) {
-  const who = role === "assistant" ? "Claude" : role === "peer" ? "sent in" : "you";
-  return (
-    <li className={`turn ${role} ${hit ? "hit" : ""}`}>
-      <div className="who">
-        <span>{who}</span>
-        {at && <span className="when">{clock(at)}</span>}
-      </div>
-      {role === "assistant" ? <Markdown className="quote md" text={text} /> : <div className="quote">{text}</div>}
-    </li>
-  );
-}
-
 export function Drawer({
   view,
   columns,
@@ -168,14 +152,10 @@ export function Drawer({
   const promptGrow = useAutoGrow("drawer.prompt", prompt.draft, 34, 520);
   const notesGrow = useAutoGrow("drawer.notes", notes.draft, 34, 400);
   const draftGrow = useAutoGrow("drawer.compose", draft, 34, 300);
-  const composeRef = useRef<HTMLTextAreaElement | null>(null);
 
-  /** The conversation, once asked for. */
-  const [conv, setConv] = useState<Conversation | null>(null);
+  /** Whether the whole conversation is on show, or only the last exchange. */
   const [convOpen, setConvOpen] = useState(false);
-  const [convBusy, setConvBusy] = useState(false);
-  const [convErr, setConvErr] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const { conv, busy: convBusy, err: convErr, load: loadConv } = useConversation(node, c.id, convOpen && !!c.session_id, view.last_activity_at);
 
   useEffect(() => {
     setCwd(c.project_cwd ?? "");
@@ -185,9 +165,7 @@ export function Drawer({
   // A new card closes the conversation and empties the composer: the draft
   // was for the card before.
   useEffect(() => {
-    setConv(null);
     setConvOpen(false);
-    setQuery("");
     setDraft("");
   }, [c.id]);
 
@@ -214,32 +192,6 @@ export function Drawer({
       live = false;
     };
   }, [node, c.id, c.updated_at]);
-
-  const loadConv = useCallback(
-    (limit: number) => {
-      setConvBusy(true);
-      setConvErr(null);
-      api
-        .conversation(node, c.id, limit)
-        .then((cv) => {
-          setConv(cv);
-          setConvBusy(false);
-        })
-        .catch((e) => {
-          setConvErr(String(e));
-          setConvBusy(false);
-        });
-    },
-    [node, c.id],
-  );
-
-  // The open conversation follows the session: a new turn arrives, the list grows.
-  const lastAt = view.last_activity_at;
-  useEffect(() => {
-    if (!convOpen || !c.session_id) return;
-    loadConv(conv && conv.messages.length > TURNS_FIRST ? 100000 : TURNS_FIRST);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convOpen, c.session_id, lastAt, loadConv]);
 
   // The projects to choose from, and the path the card gets on save. The board
   // names the projects that have a card, until the node lists them all.
@@ -330,22 +282,14 @@ export function Drawer({
     const fn = text ? () => api.sendPrompt(node, c.id, text) : () => api.startCard(node, c.id);
     setDraft("");
     void onAction(fn, text ? "Sent" : "Started in background", undefined, picked).then(() => {
-      if (convOpen) loadConv(conv && conv.messages.length > TURNS_FIRST ? 100000 : TURNS_FIRST);
+      if (convOpen) loadConv();
     });
   };
 
   const putInComposer = (text: string) => {
     setDraft(text);
-    composeRef.current?.focus();
+    draftGrow.ref.current?.focus();
   };
-
-  /** The turns that match the search, oldest first. */
-  const turns = useMemo(() => {
-    const all = conv?.messages ?? [];
-    const needle = query.trim().toLowerCase();
-    if (!needle) return all.map((m) => ({ ...m, hit: false }));
-    return all.filter((m) => m.text.toLowerCase().includes(needle)).map((m) => ({ ...m, hit: true }));
-  }, [conv, query]);
 
   return (
     <aside className="drawer" onInput={guard.asking ? guard.keep : undefined}>
@@ -586,10 +530,7 @@ export function Drawer({
                       )}
                     </>
                   ) : (
-                    <>
-                      {view.node_name}
-                      <div className="hint">This card follows a session on that node, so it cannot move.</div>
-                    </>
+                    <span title="This card follows a session on that node, so it cannot move.">{view.node_name}</span>
                   )}
                 </dd>
               </>
@@ -795,6 +736,16 @@ export function Drawer({
               >
                 {convOpen ? "Latest only" : "Show all"}
               </button>
+              {!mobile && (
+                <button
+                  className="btn ghost sm"
+                  onClick={() => void popOutConversation(node, c.id, view.title)}
+                  title="Open the conversation in its own window"
+                  aria-label="Open the conversation in its own window"
+                >
+                  ⧉
+                </button>
+              )}
             </h5>
             {!convOpen && (
               <>
@@ -818,40 +769,7 @@ export function Drawer({
                 )}
               </>
             )}
-            {convOpen && (
-              <>
-                <input
-                  {...noAutoFill}
-                  className="convsearch"
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search the conversation"
-                  aria-label="Search the conversation"
-                />
-                {convErr && <div className="nodeerr">{convErr}</div>}
-                {conv && (
-                  <div className="hint">
-                    {query.trim() ? `${turns.length} of ${conv.messages.length} turns match` : `${conv.messages.length} of ${conv.total} turns shown`}
-                    {conv.total > conv.messages.length && (
-                      <>
-                        {" · "}
-                        <button className="linkbtn" disabled={convBusy} onClick={() => loadConv(100000)}>
-                          load everything
-                        </button>
-                      </>
-                    )}
-                    {convBusy ? " · loading…" : ""}
-                  </div>
-                )}
-                {!conv && convBusy && <div className="hint">Reading the transcript…</div>}
-                <ul className="turns">
-                  {turns.map((m, i) => (
-                    <Turn key={`${m.at ?? ""}-${i}`} role={m.role} text={m.text} at={m.at} hit={m.hit} />
-                  ))}
-                </ul>
-              </>
-            )}
+            {convOpen && <ConversationList conv={conv} busy={convBusy} err={convErr} onLoadAll={() => loadConv(true)} />}
           </div>
         )}
       </div>
@@ -859,10 +777,6 @@ export function Drawer({
         <textarea
           {...proseField}
           {...draftGrow}
-          ref={(el) => {
-            composeRef.current = el;
-            draftGrow.ref.current = el;
-          }}
           value={draft}
           disabled={offline || jobBusy}
           onChange={(e) => setDraft(e.target.value)}

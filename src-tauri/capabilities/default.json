@@ -3,13 +3,17 @@
   "identifier": "default",
   "description": "kari main window",
   "windows": [
-    "main"
+    "main",
+    "conversation-*"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     "notification:default",
     "shell:allow-open",
-    "opener:default"
+    "opener:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-title"
   ]
 }

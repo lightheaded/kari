@@ -691,3 +691,12 @@ What the planner would run next, in order. It starts nothing. */
 .chip.node.act { border: 1px solid var(--line-soft); cursor: pointer; }
 .chip.node.act:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .field textarea { min-height: 34px; resize: vertical; overflow-y: auto; }
+
+/* A window that holds one conversation. Same parts as the drawer, full width. */
+.popout { height: 100%; display: flex; flex-direction: column; background: var(--surface); }
+.popout header { padding: 14px 18px 10px; border-bottom: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 4px; }
+.popout header h2 { margin: 0; font: 600 17px/1.3 var(--display); letter-spacing: -0.01em; }
+.popout .body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 18px 20px; display: flex; flex-direction: column; gap: 6px; }
+.popout .turn .quote.md { max-height: none; }
+.popout .composer { padding-bottom: 14px; }
+.composerrow .hint.err { color: var(--rust); }
