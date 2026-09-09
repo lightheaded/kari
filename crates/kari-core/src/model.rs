@@ -328,6 +328,15 @@ pub struct BgJob {
     pub name: Option<String>,
     pub pid: Option<u32>,
     pub started_at: Option<DateTime<Utc>>,
+    /// The job's own one-line account of where it stands, from its state file.
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// What a blocked job waits for, in its own words.
+    #[serde(default)]
+    pub needs: Option<String>,
+    /// The answer the job proposes to what it waits for. One click sends it.
+    #[serde(default)]
+    pub suggested_reply: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -906,6 +915,27 @@ pub struct Summary {
     /// The session's last activity time when the summary was made.
     pub based_on_at: Option<DateTime<Utc>>,
     pub model: Option<String>,
+    /// How far the work travelled: committed, pushed, a PR open, merged,
+    /// released, deployed, CI green or red. Null when the transcript does not say.
+    #[serde(default)]
+    pub delivery: Option<String>,
+}
+
+/// One turn of a transcript, as the conversation view shows it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptMessage {
+    /// `user`, `assistant`, or `peer` for a prompt another process sent in.
+    pub role: String,
+    pub text: String,
+    pub at: Option<DateTime<Utc>>,
+}
+
+/// The conversation of one session: the last `messages.len()` turns of `total`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Conversation {
+    pub session_id: String,
+    pub total: usize,
+    pub messages: Vec<TranscriptMessage>,
 }
 
 // ---------------------------------------------------------------- nodes

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { Act } from "../toasts";
 import { api } from "../api";
 import type { Column, HubCard } from "../types";
 import { STATE_LABEL } from "../types";
@@ -12,7 +13,7 @@ interface Props {
   /** Show the answer buttons and the done button on the card itself. */
   actions: boolean;
   onOpen: () => void;
-  onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
+  onAction: Act;
 }
 
 /** One line about a tool call: the command, the file, the URL, or the first words. */
@@ -35,23 +36,18 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
   const tone = STATE_TONE[view.state];
   const q = s?.pending_tools.find((t) => t.name === "AskUserQuestion")?.questions[0];
   const bg = view.bg_job;
-  const liveInTerminal = !!view.live?.alive && !bg;
+  const running = !!view.live?.alive;
   const [reply, setReply] = useState<string | null>(null);
-  const [pending, setPending] = useState<string | null>(null);
   const doneCol = columns.find((k) => k.accepts.includes("done"));
-  const canReply = !!(c.project_cwd ?? s?.cwd) && bg?.state !== "working";
+  // A running session takes a reply into its own queue. Anything else needs a
+  // directory to start a background job in, and waits while one already runs.
+  const canReply = running || (!!(c.project_cwd ?? s?.cwd) && bg?.state !== "working");
   const perm = view.permission ?? null;
   const permText = perm ? describeInput(perm.tool_name, perm.tool_input) : "";
 
-  /** A live terminal session gets a warning first: a second process writes into the same transcript. */
   const send = (text: string) => {
-    if (liveInTerminal && pending !== text) {
-      setPending(text);
-      return;
-    }
-    setPending(null);
     setReply(null);
-    onAction(() => api.startCard(node, c.id, text), "Sent to the agent");
+    onAction(() => api.sendPrompt(node, c.id, text), "Sent", undefined, { node, id: c.id });
   };
 
   return (
@@ -131,19 +127,6 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
         </div>
       )}
 
-      {pending !== null && (
-        <div className="mwarn">
-          This session is open in a terminal on {view.node_name}. A reply from here continues it as a background job, and both write into one transcript.
-          <div className="macts">
-            <button className="btn danger sm" onClick={() => send(pending)}>
-              Reply anyway
-            </button>
-            <button className="btn ghost sm" onClick={() => setPending(null)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
 
       {view.state === "needs_approval" && actions && !bg && !perm && (
         <div className="mhint">A permission prompt waits in the terminal. Turn on Away mode for {view.node_name} in Nodes to answer the next one here.</div>

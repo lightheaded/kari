@@ -328,6 +328,22 @@ impl HubApi for RemoteHub {
         )
     }
 
+    fn send_prompt(&self, node: &str, card: &str, text: &str) -> anyhow::Result<String> {
+        let b: TextBody = self.post(
+            &format!("/kari/v1/hub/nodes/{node}/cards/{card}/send"),
+            v(TextBody {
+                text: text.to_string(),
+            }),
+        )?;
+        Ok(b.text)
+    }
+
+    fn conversation(&self, node: &str, card: &str, limit: usize) -> anyhow::Result<Conversation> {
+        self.get(&format!(
+            "/kari/v1/hub/nodes/{node}/cards/{card}/conversation?limit={limit}"
+        ))
+    }
+
     fn stop_all(&self) -> anyhow::Result<usize> {
         let b: CountBody = self.post("/kari/v1/hub/stop-all", None)?;
         Ok(b.count)

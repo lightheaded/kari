@@ -100,6 +100,11 @@ struct StartBody {
     prompt: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct TextBody {
+    text: String,
+}
+
 #[derive(Deserialize, Default)]
 struct AcceptBody {
     card_ids: Option<Vec<String>>,
@@ -271,6 +276,24 @@ async fn stop_card(State(st): State<ApiState>, Path(id): Path<String>) -> R<()> 
     blocking(move || e.stop_card(&id)).await
 }
 
+async fn send_prompt(
+    State(st): State<ApiState>,
+    Path(id): Path<String>,
+    Json(b): Json<TextBody>,
+) -> R<String> {
+    let e = st.engine;
+    blocking(move || e.send_prompt(&id, &b.text)).await
+}
+
+async fn conversation(
+    State(st): State<ApiState>,
+    Path(id): Path<String>,
+    Query(q): Query<Limit>,
+) -> R<Conversation> {
+    let e = st.engine;
+    blocking(move || e.conversation(&id, q.limit.unwrap_or(300))).await
+}
+
 async fn summarize_card(State(st): State<ApiState>, Path(id): Path<String>) -> R<Summary> {
     let e = st.engine;
     blocking(move || e.summarize_card(&id)).await
@@ -439,6 +462,8 @@ pub fn router(engine: Arc<Engine>, token: String) -> Router {
         .route("/cards/{id}/move", post(move_card))
         .route("/cards/{id}/start", post(start_card))
         .route("/cards/{id}/stop", post(stop_card))
+        .route("/cards/{id}/send", post(send_prompt))
+        .route("/cards/{id}/conversation", get(conversation))
         .route("/cards/{id}/summarize", post(summarize_card))
         .route("/cards/{id}/jump", post(jump))
         .route("/cards/{id}/jobs", get(job_log))

@@ -7,6 +7,7 @@ import type {
   Card,
   CardPatch,
   Column,
+  Conversation,
   HubBoard,
   JobLogEntry,
   LocalAddress,
@@ -184,6 +185,19 @@ export const api = {
     invoke<string>("start_card", { nodeId, cardId, prompt: prompt ?? null }),
   stopCard: (nodeId: string, cardId: string) =>
     invoke<void>("stop_card", { nodeId, cardId }),
+  /** Give the card its next prompt. A running session takes it into its own
+   *  queue; anything else starts as a background job. The string says which. */
+  sendPrompt: (nodeId: string, cardId: string, text: string) =>
+    invoke<string>("send_prompt", { nodeId, cardId, text }),
+  /** The prompts and replies of the card's session, the last `limit` of them. */
+  conversation: (nodeId: string, cardId: string, limit = 300) =>
+    inTauri
+      ? invoke<Conversation>("conversation", { nodeId, cardId, limit })
+      : devFixture<Record<string, Conversation>>("conversation", {}).then((m) => {
+          const c = m[cardId];
+          if (!c) throw new Error("no transcript yet");
+          return { ...c, messages: c.messages.slice(-limit) };
+        }),
   stopAll: () => invoke<number>("stop_all"),
   quotaHistory: (nodeId: string, limit: number) =>
     invoke<QuotaSample[]>("quota_history", { nodeId, limit }),

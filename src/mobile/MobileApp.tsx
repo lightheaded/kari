@@ -107,16 +107,16 @@ export default function MobileApp() {
   }, [load, loadSettings, toast]);
 
   const run = useCallback(
-    async <T,>(fn: () => Promise<T>, ok?: string, undo?: Undo | ((r: T) => Undo | null)) => {
+    async <T,>(fn: () => Promise<T>, ok?: string, undo?: Undo | ((r: T) => Undo | null), card?: Picked | null) => {
       try {
         const r = await fn();
         if (ok) {
           const u = typeof undo === "function" ? undo(r) : undo;
-          toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined });
+          toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined, card: card ?? undefined });
         }
         await load();
       } catch (e) {
-        toast(String(e), { err: true });
+        toast(String(e), { err: true, card: card ?? undefined });
       }
     },
     [load, toast],

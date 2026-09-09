@@ -341,6 +341,20 @@ impl HubApi for SplitHub {
         self.server.stop_card(node, card)
     }
 
+    fn send_prompt(&self, node: &str, card: &str, text: &str) -> anyhow::Result<String> {
+        if self.is_local(node) {
+            return self.on_local(|h| h.send_prompt(LOCAL, card, text));
+        }
+        self.server.send_prompt(node, card, text)
+    }
+
+    fn conversation(&self, node: &str, card: &str, limit: usize) -> anyhow::Result<Conversation> {
+        if self.is_local(node) {
+            return self.on_local(|h| h.conversation(LOCAL, card, limit));
+        }
+        self.server.conversation(node, card, limit)
+    }
+
     /// The kill switch. This machine first, and its count stands even when the
     /// server cannot be reached: stopping the jobs in front of the user must
     /// not depend on a network.

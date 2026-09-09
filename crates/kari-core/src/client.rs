@@ -375,6 +375,26 @@ impl ApiClient {
         self.post(&format!("/kari/v1/cards/{id}/stop"), None)
     }
 
+    /// The route arrived with version 0.10.0. An older node answers 404, and
+    /// the message says what to do about it.
+    pub fn send_prompt(&self, id: &str, text: &str) -> anyhow::Result<String> {
+        self.post(
+            &format!("/kari/v1/cards/{id}/send"),
+            Some(serde_json::json!({ "text": text })),
+        )
+        .map_err(|e| {
+            if e.to_string().contains("404") {
+                anyhow::anyhow!("this node runs a kari that cannot take a prompt; update it")
+            } else {
+                e
+            }
+        })
+    }
+
+    pub fn conversation(&self, id: &str, limit: usize) -> anyhow::Result<Conversation> {
+        self.get(&format!("/kari/v1/cards/{id}/conversation?limit={limit}"))
+    }
+
     pub fn summarize_card(&self, id: &str) -> anyhow::Result<Summary> {
         self.post(&format!("/kari/v1/cards/{id}/summarize"), None)
     }

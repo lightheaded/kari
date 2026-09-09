@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { Act } from "../toasts";
 import { api } from "../api";
 import type { DerivedState, HubBoard } from "../types";
 import { QuotaBar } from "../components/QuotaBar";
@@ -12,7 +13,7 @@ const NEEDS_YOU: DerivedState[] = ["needs_approval", "needs_decision", "my_turn"
 interface Props {
   board: HubBoard;
   onOpen: (node: string, id: string) => void;
-  onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
+  onAction: Act;
 }
 
 /** What waits for the user: the quota per node, the open plans, then every card that needs a person. */

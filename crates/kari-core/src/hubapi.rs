@@ -74,6 +74,11 @@ pub trait HubApi: Send + Sync + 'static {
 
     fn start_card(&self, node: &str, card: &str, prompt: Option<String>) -> anyhow::Result<String>;
     fn stop_card(&self, node: &str, card: &str) -> anyhow::Result<()>;
+    /// Give the card its next prompt: into the running session when there is
+    /// one, else as a background job. The string says which.
+    fn send_prompt(&self, node: &str, card: &str, text: &str) -> anyhow::Result<String>;
+    /// The prompts and replies of the card's session, the last `limit` of them.
+    fn conversation(&self, node: &str, card: &str, limit: usize) -> anyhow::Result<Conversation>;
     fn stop_all(&self) -> anyhow::Result<usize>;
     fn summarize_card(&self, node: &str, card: &str) -> anyhow::Result<Summary>;
     fn job_log(&self, node: &str, card: &str, limit: usize) -> Vec<JobLogEntry>;
@@ -206,6 +211,12 @@ impl HubApi for crate::hub::Hub {
     }
     fn stop_card(&self, node: &str, card: &str) -> anyhow::Result<()> {
         crate::hub::Hub::stop_card(self, node, card)
+    }
+    fn send_prompt(&self, node: &str, card: &str, text: &str) -> anyhow::Result<String> {
+        crate::hub::Hub::send_prompt(self, node, card, text)
+    }
+    fn conversation(&self, node: &str, card: &str, limit: usize) -> anyhow::Result<Conversation> {
+        crate::hub::Hub::conversation(self, node, card, limit)
     }
     fn stop_all(&self) -> anyhow::Result<usize> {
         crate::hub::Hub::stop_all(self)

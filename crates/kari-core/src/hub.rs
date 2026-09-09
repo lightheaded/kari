@@ -1301,6 +1301,27 @@ impl Hub {
         self.on_node(node, |e| e.stop_card(card), |c| c.stop_card(card))
     }
 
+    pub fn send_prompt(&self, node: &str, card: &str, text: &str) -> anyhow::Result<String> {
+        self.on_node(
+            node,
+            |e| e.send_prompt(card, text),
+            |c| c.send_prompt(card, text),
+        )
+    }
+
+    pub fn conversation(
+        &self,
+        node: &str,
+        card: &str,
+        limit: usize,
+    ) -> anyhow::Result<Conversation> {
+        if node == LOCAL && self.with_local {
+            return self.engine.conversation(card, limit);
+        }
+        let (c, _) = self.client_of(node)?;
+        c.conversation(card, limit)
+    }
+
     /// Answer a permission prompt a node holds: `allow` or `deny`.
     pub fn answer_permission(&self, node: &str, id: &str, behavior: &str) -> anyhow::Result<()> {
         self.on_node(

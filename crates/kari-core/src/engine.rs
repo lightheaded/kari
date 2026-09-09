@@ -2,8 +2,8 @@
 
 use crate::model::*;
 use crate::{
-    agents, estimate, herdr, hooks, infer, launcher, paths, planner, quota, registry, store::Store,
-    summary, transcript,
+    agents, estimate, herdr, hooks, infer, launcher, paths, peer, planner, quota, registry,
+    store::Store, summary, transcript,
 };
 use chrono::{DateTime, Duration, Utc};
 use notify::RecursiveMode;
@@ -1880,6 +1880,16 @@ impl Engine {
             .unwrap_or(settings.default_permission_mode.clone());
         let model = Self::run_model(card, &settings);
         let name = launcher::slugify(&cv.title);
+        // A session that runs right now cannot be resumed a second time: Claude
+        // Code starts a copy, the prompt lands in a second transcript, and the
+        // terminal the user watches never sees it. Hand the prompt to the
+        // running process instead.
+        if let Some(l) = cv.live.as_ref().filter(|l| l.alive) {
+            anyhow::bail!(
+                "this session is running (pid {}). Send the prompt to it instead of starting a second copy.",
+                l.pid
+            );
+        }
         // A job that failed before its first turn leaves a session id with no transcript.
         // Such a session cannot resume, so the run starts fresh.
         let resume = card.session_id.as_deref().filter(|_| cv.session.is_some());
@@ -1902,6 +1912,72 @@ impl Engine {
         self.scan_jobs();
         self.emit_changed();
         Ok(started.job_id)
+    }
+
+    /// Give a card the next prompt. A session that runs takes it into its own
+    /// queue, so the terminal the user watches answers it. A session that is
+    /// not running, or a task, starts as a background job with the prompt.
+    /// Returns one line that says which of the two happened.
+    pub fn send_prompt(&self, card_id: &str, text: &str) -> anyhow::Result<String> {
+        let text = text.trim();
+        if text.is_empty() {
+            anyhow::bail!("the prompt is empty");
+        }
+        let board = self.board();
+        let Some(cv) = board.cards.iter().find(|c| c.card.id == card_id) else {
+            anyhow::bail!("card not found")
+        };
+        let live = cv
+            .live
+            .as_ref()
+            .filter(|l| l.alive)
+            .map(|l| (l.pid, l.session_id.clone()));
+        if let Some((pid, sid)) = live {
+            peer::send(pid, &sid, text)?;
+            // The run log is the card's own history, so a prompt handed over
+            // belongs in it beside the job states, under the job when there is
+            // one and under the session otherwise.
+            let _ = self.store.lock().unwrap().log_job(&JobLogEntry {
+                at: Utc::now(),
+                job_id: cv.card.bg_job_id.clone().unwrap_or_else(|| sid.clone()),
+                card_id: Some(card_id.to_string()),
+                state: Some("sent".into()),
+                detail: Some(format!(
+                    "prompt sent to the running session: {}",
+                    truncate(text, 120)
+                )),
+            });
+            self.emit_changed();
+            return Ok(format!("Sent to the running session (pid {pid})"));
+        }
+        let job = self.start_card(card_id, Some(text.to_string()))?;
+        Ok(format!("Started background job {job}"))
+    }
+
+    /// The conversation of the card's session: every prompt and reply, the
+    /// last `limit` of them.
+    pub fn conversation(&self, card_id: &str, limit: usize) -> anyhow::Result<Conversation> {
+        let facts = {
+            let store = self.store.lock().unwrap();
+            let Some(c) = store.get_card(card_id)? else {
+                anyhow::bail!("card not found")
+            };
+            let sid = c
+                .session_id
+                .ok_or_else(|| anyhow::anyhow!("this card has no session yet"))?;
+            self.snap
+                .read()
+                .unwrap()
+                .facts
+                .get(&sid)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("no transcript yet"))?
+        };
+        transcript::messages(
+            Path::new(&facts.transcript_path),
+            &facts.session_id,
+            limit.clamp(1, 100_000),
+        )
     }
 
     pub fn stop_card(&self, card_id: &str) -> anyhow::Result<()> {
@@ -2608,6 +2684,9 @@ mod tests {
             name: Some("a-long-running-task".into()),
             pid: None,
             started_at: None,
+            detail: None,
+            needs: None,
+            suggested_reply: None,
         };
 
         // The first scan gives job "old" a session card of its own.

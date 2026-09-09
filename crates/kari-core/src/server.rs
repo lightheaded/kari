@@ -343,6 +343,28 @@ async fn hub_stop_card(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn hub_send_prompt(
+    State(st): State<ServerState>,
+    Path((node, card)): Path<(String, String)>,
+    Json(b): Json<TextBody>,
+) -> Result<Json<TextBody>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    let text = blocking(move || h.send_prompt(&node, &card, &b.text)).await?;
+    Ok(Json(TextBody { text }))
+}
+
+async fn hub_conversation(
+    State(st): State<ServerState>,
+    Path((node, card)): Path<(String, String)>,
+    Query(q): Query<LimitQuery>,
+) -> Result<Json<Conversation>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    let limit = q.limit.unwrap_or(300);
+    Ok(Json(
+        blocking(move || h.conversation(&node, &card, limit)).await?,
+    ))
+}
+
 async fn hub_stop_all(State(st): State<ServerState>) -> Result<Json<CountBody>, ApiError> {
     let h = Arc::clone(hub(&st)?);
     let count = blocking(move || h.stop_all()).await?;
@@ -558,6 +580,12 @@ pub struct IdBody {
     pub id: String,
 }
 
+/// One line of text, in and out: the prompt on the way in, the outcome on the way back.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TextBody {
+    pub text: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CountBody {
     pub count: usize,
@@ -671,6 +699,11 @@ pub fn router(registry: Arc<LinkRegistry>, token: String, hub: Option<Arc<Hub>>)
         )
         .route("/hub/nodes/{node}/cards/{card}/start", post(hub_start_card))
         .route("/hub/nodes/{node}/cards/{card}/stop", post(hub_stop_card))
+        .route("/hub/nodes/{node}/cards/{card}/send", post(hub_send_prompt))
+        .route(
+            "/hub/nodes/{node}/cards/{card}/conversation",
+            get(hub_conversation),
+        )
         .route("/hub/nodes/{node}/cards/{card}/jump", post(hub_jump_in))
         .route(
             "/hub/nodes/{node}/cards/{card}/summarize",

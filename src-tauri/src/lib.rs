@@ -317,6 +317,32 @@ async fn stop_card(state: State<'_, AppState>, node_id: String, card_id: String)
 }
 
 #[tauri::command]
+async fn send_prompt(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    text: String,
+) -> R<String> {
+    off_thread(&state.hub, move |h| {
+        h.send_prompt(&node_id, &card_id, &text)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn conversation(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    limit: usize,
+) -> R<kari_core::Conversation> {
+    off_thread(&state.hub, move |h| {
+        h.conversation(&node_id, &card_id, limit)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn stop_all(state: State<'_, AppState>) -> R<usize> {
     off_thread(&state.hub, |h| h.stop_all()).await
 }
@@ -813,6 +839,8 @@ macro_rules! handlers {
             jump_in,
             start_card,
             stop_card,
+            send_prompt,
+            conversation,
             stop_all,
             quota_history,
             list_projects,

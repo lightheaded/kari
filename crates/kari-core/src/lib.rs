@@ -18,6 +18,7 @@ pub mod model;
 pub mod net;
 pub mod owner;
 pub mod paths;
+pub mod peer;
 pub mod planner;
 pub mod proc;
 pub mod quota;

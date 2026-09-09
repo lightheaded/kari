@@ -204,6 +204,12 @@ export interface BgJob {
   name: string | null;
   pid: number | null;
   started_at: string | null;
+  /** The job's own one-line account of where it stands. */
+  detail?: string | null;
+  /** What a blocked job waits for, in its own words. */
+  needs?: string | null;
+  /** The answer the job proposes. One click sends it. */
+  suggested_reply?: string | null;
 }
 export interface HerdrAgent {
   pane_id: string;
@@ -267,6 +273,22 @@ export interface Summary {
   source: string;
   based_on_at: string | null;
   model: string | null;
+  /** How far the work travelled: committed, pushed, PR open, merged, released,
+   *  deployed, CI passed or failed. Null when the transcript does not say. */
+  delivery?: string | null;
+}
+/** One turn of a transcript, as the conversation view shows it. */
+export interface TranscriptMessage {
+  /** user, assistant, or peer for a prompt another process sent in. */
+  role: string;
+  text: string;
+  at: string | null;
+}
+/** The conversation of one session: the last `messages.length` turns of `total`. */
+export interface Conversation {
+  session_id: string;
+  total: number;
+  messages: TranscriptMessage[];
 }
 export type ProposalTrigger = "weekly_reset" | "idle_five_hour" | "manual";
 export interface ProposalItem {
