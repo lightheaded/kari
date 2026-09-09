@@ -93,6 +93,8 @@ function localNode(): NodeStatus {
     away_mode: false,
     addresses: [],
     automation_mode: "ask",
+    pending_writes: 0,
+    pending_error: null,
   };
 }
 

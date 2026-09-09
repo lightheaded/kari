@@ -129,7 +129,8 @@ A remote node is another host that runs `kari-node serve`. Add it in Settings wi
 
 - Every card carries a node badge, and a chip row above the board filters to one node.
 - Quota meters are grouped by Claude Code account, not by node: two machines on one login draw down one window and share a row. A node whose account kari cannot read keeps a row of its own, so two budgets are never merged by guessing.
-- An offline node keeps its cards on the board, dimmed, with the time it was last seen. Its actions come back when the forward does.
+- An offline node keeps its cards on the board, dimmed, with the time it was last seen.
+- You can still write to an offline node. A new task, an edit and a delete are kept and sent when the node answers. The card shows "waiting for node", and the node row counts what is waiting. Running, stopping and opening a session need the machine, so they come back with the forward.
 - Jump in on a remote card opens your terminal and connects over SSH.
 
 The README explains what a node needs.

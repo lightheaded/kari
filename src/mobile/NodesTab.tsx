@@ -246,6 +246,9 @@ export function NodesTab({
                 : n.lease
                   ? ` · columns: ${n.lease.hub_name}`
                   : ""}
+              {n.pending_writes
+                ? ` · ${n.pending_writes} change${n.pending_writes === 1 ? "" : "s"} waiting`
+                : ""}
             </div>
             {(n.addresses ?? []).length > 1 && (
               <div className="hint">

@@ -537,6 +537,9 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
 .chip.node { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line-soft); }
 .card.offline { opacity: 0.55; cursor: default; }
 .card.offline .chip .live.pulse { animation: none; }
+/* A card the hub still holds for a node that is away. It reads as a card, not
+   as an error: the write is safe, it is only late. */
+.chip.plain.waiting { border: 1px dashed var(--line-soft); color: var(--ink-2); }
 
 /* node list in settings */
 .nodelist { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }

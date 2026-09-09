@@ -4,6 +4,7 @@ use crate::model::{
     BoardView, Card, CardKind, Column, HookEvent, JobLogEntry, NodeRecord, Proposal, QuotaSample,
     QuotaWindow, SessionFacts, Settings, Summary, TokenDelta,
 };
+use crate::outbox::{PendingWrite, Queued};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
@@ -108,6 +109,14 @@ CREATE TABLE IF NOT EXISTS node_cache (
   board TEXT NOT NULL,
   seen_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS outbox (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id TEXT NOT NULL,
+  op TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS outbox_node ON outbox(node_id, seq);
 "#;
 
 /// Add columns that later versions of kari need. Older databases keep their rows.
@@ -788,6 +797,70 @@ impl Store {
             .execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
         self.conn
             .execute("DELETE FROM node_cache WHERE node_id = ?1", params![id])?;
+        // A node that is off the board has nobody to send its queue to.
+        self.conn
+            .execute("DELETE FROM outbox WHERE node_id = ?1", params![id])?;
+        Ok(())
+    }
+
+    // ---- outbox: writes held for a node that is away ----
+
+    /// Every write held for one node, oldest first.
+    pub fn outbox(&self, node_id: &str) -> anyhow::Result<Vec<Queued>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT seq, op, last_error FROM outbox WHERE node_id = ?1 ORDER BY seq")?;
+        let rows = stmt.query_map(params![node_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        let mut out = vec![];
+        for (seq, op, last_error) in rows.flatten() {
+            // A row this kari cannot read is a write from a newer one. Leave
+            // it in place rather than sending half a queue.
+            if let Ok(write) = serde_json::from_str::<PendingWrite>(&op) {
+                out.push(Queued {
+                    seq,
+                    write,
+                    last_error,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// How many writes each node is holding.
+    pub fn outbox_counts(&self) -> anyhow::Result<HashMap<String, u32>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT node_id, COUNT(*) FROM outbox GROUP BY node_id")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?)))?;
+        Ok(rows.flatten().collect())
+    }
+
+    pub fn queue_write(&self, node_id: &str, w: &PendingWrite) -> anyhow::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO outbox (node_id, op, created_at) VALUES (?1, ?2, ?3)",
+            params![node_id, serde_json::to_string(w)?, Utc::now().timestamp()],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn drop_write(&self, seq: i64) -> anyhow::Result<()> {
+        self.conn
+            .execute("DELETE FROM outbox WHERE seq = ?1", params![seq])?;
+        Ok(())
+    }
+
+    /// Keep on the row what the node said when it refused the write.
+    pub fn mark_write_error(&self, seq: i64, err: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET last_error = ?2 WHERE seq = ?1",
+            params![seq, err],
+        )?;
         Ok(())
     }
 

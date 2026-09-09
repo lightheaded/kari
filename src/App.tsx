@@ -333,7 +333,10 @@ export default function App() {
               <button
                 key={n.id}
                 className={`nodechip ${node === n.id ? "sel" : ""}`}
-                title={n.error ?? (n.enabled ? (n.online ? "online" : "offline") : "disabled")}
+                title={
+                  (n.error ?? (n.enabled ? (n.online ? "online" : "offline") : "disabled")) +
+                  (n.pending_writes ? `, ${n.pending_writes} change(s) waiting` : "")
+                }
                 onClick={() => setNodeFilter(node === n.id ? "" : n.id)}
               >
                 <span className={n.enabled ? (n.online ? "dot online" : "dot offline") : "dot disabled"} />

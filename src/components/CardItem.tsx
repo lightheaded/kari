@@ -44,7 +44,13 @@ export function CardItem({ view, selected, overlay, showNode, offline, lastSeen,
         e.stopPropagation();
         onJump?.();
       }}
-      title={offline ? `node offline, last seen ${lastSeen ? `${relTime(lastSeen)} ago` : "never"}` : "Click for details, double-click to open the session, drag to reorder"}
+      title={
+        view.pending
+          ? "This card waits for the node. kari sends it when the node answers."
+          : offline
+            ? `node offline, last seen ${lastSeen ? `${relTime(lastSeen)} ago` : "never"}`
+            : "Click for details, double-click to open the session, drag to reorder"
+      }
     >
       {view.locked && <span className="lock" title="Manual placement. Holds until a stronger signal.">⌖</span>}
       {ranked && !view.locked && (
@@ -72,6 +78,11 @@ export function CardItem({ view, selected, overlay, showNode, offline, lastSeen,
           >
             {view.node_name}
           </button>
+        )}
+        {view.pending && (
+          <span className="chip plain waiting" title="Written here. The node takes it when it answers.">
+            waiting for node
+          </span>
         )}
         {view.card.kind === "task" && <span className="chip plain">task</span>}
         {view.card.kind === "session" && !live && !bg && view.state !== "done" && <span className="chip plain">exited</span>}
