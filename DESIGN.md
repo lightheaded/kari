@@ -281,6 +281,51 @@ Safety: a kill switch in the tray stops all kari-started jobs with `claude stop 
 
 Mode `auto` accepts a weekly-reset plan without a click, up to `autopilot_max_jobs`. It sends a notice and the panel keeps a Stop button. The idle trigger and the manual button always wait for a click. See "The automation mode".
 
+### The prompt for a session that runs
+
+A session that runs cannot be resumed a second time: Claude Code starts a copy,
+and the prompt lands in a transcript nobody watches. So kari writes to the
+message socket that every Claude Code process opens, and the prompt goes into
+that session's own queue.
+
+Two gates stand in front of the model there.
+
+The first gate is the inbox of that session. It sorts a sender into one of two
+classes, `bypass` or `prompting`, and holds a message from the other class
+until its own user releases it by hand. The sender states its class in an
+envelope around the message text:
+
+```
+<cross-session-message from="uds:<our socket>" from-name="kari on <host>" from-mode="bypass">
+the prompt
+</cross-session-message>
+```
+
+A message with no envelope is held by every session that bypasses prompts. kari
+states the permission mode it runs that card under, and states nothing when the
+mode is `plan` or a word kari does not know, because the class of `plan` is a
+fact about that session and not about the mode. kari never claims a class it
+does not run under: the hold is the receiving user's protection, and a false
+claim would take it away.
+
+The second gate is the model. A peer message is not the user's approval, and
+the receiver refuses a peer that claims otherwise. That gate is by design and
+no sender passes it.
+
+The outcome of the first gate arrives as a receipt, on a new connection to the
+address in the frame's `from`, so kari binds a socket of its own beside the
+socket it writes to (`<dir of their socket>/<our pid>-<8 hex>.sock`) and reads
+the receipt there. The receipt carries bad news only: `held`, `denied`,
+`expired`, `refused` and `dropped`. A message the inbox accepts gets no receipt
+at all, so silence is the answer for a send that went through, and `delivered`
+arrives for one case only, a held message that the user then released. kari
+verifies the peer credentials of the connection before it reads a receipt,
+because the frame carries no token.
+
+The card reports what the inbox did. "Held for approval in that session" is a
+different fact from "Sent to the running session", and before kari read the
+receipt the two looked the same.
+
 ## 10. Jump in
 
 | Where the session lives | Action |

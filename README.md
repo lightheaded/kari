@@ -150,6 +150,8 @@ Each card can also name a model. The New task dialog and the card drawer offer F
 
 The prompt box in the card drawer gives a card its next prompt. A session that runs on the node takes the prompt into its own queue, over the message socket every Claude Code process opens, so the terminal you look at answers it. A session that is not running resumes as a background job with the prompt, and a task starts one. kari never resumes a running session a second time: Claude Code would start a copy, and the prompt would land in a transcript nobody is looking at.
 
+A running session decides for itself whether it takes the prompt at once. Its inbox compares the permission mode of the sender with its own, and holds a message from the other class until the person at that terminal releases it. So kari names itself and states the mode it runs the card under, and the toast then says what happened: "Sent to the running session", or "Held for approval in that session". A prompt that waits for someone's click no longer looks like a prompt that arrived.
+
 Stop one job from the card drawer. Stop everything from the tray: the first click arms the item, the second click within 10 seconds stops the jobs. The tray tooltip shows how many sessions work and how many need you.
 
 ## The automation switch

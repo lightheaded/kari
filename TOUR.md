@@ -68,7 +68,7 @@ The drawer shows one card in full, and it is where you talk to the session.
 - Card: facts and fields in one list. Project, node, session, process, hooks, estimate, activity, tokens, models and PR links, then the fields you can change: priority, model, permission mode, "May run unattended", the scheduler prompt (or the body of a task), and notes. A field saves when you leave it. There is no Save button.
 - Run log: one line per state change of every background job that kari started for this card, and one line per prompt sent from here.
 - Conversation: the last prompt and the last reply. "Show all" lists every prompt and reply of the session, oldest first, with a search box. The button beside it opens the same conversation in a window of its own, with its own prompt box, so it can stay open while you work on the board.
-- The prompt box at the foot. A running session takes the prompt into its own queue, so the terminal you look at answers it: an idle session at once, a busy one after its current turn. A session that is not running resumes as a background job with the prompt. A task starts as a background job. Cmd+Enter sends.
+- The prompt box at the foot. A running session takes the prompt into its own queue, so the terminal you look at answers it: an idle session at once, a busy one after its current turn. A session that is not running resumes as a background job with the prompt. A task starts as a background job. Cmd+Enter sends. The toast says whether the session took the prompt or holds it for the person at that terminal to release.
 
 The drawer in the image belongs to a task that ran as a background job. The job finished, opened a PR, and left the card in Validate.
 
