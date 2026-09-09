@@ -724,6 +724,10 @@ pub struct Settings {
     pub autopilot_max_jobs: u32,
     /// Open new sessions in a herdr pane when herdr runs. Falls back to the terminal.
     pub prefer_herdr: bool,
+    /// Close the herdr tab of a card when the user moves the card to Done or
+    /// archives it. Off by default: the tab can hold an agent that still runs,
+    /// and kari cannot open it again.
+    pub close_herdr_tab_on_done: bool,
     /// Warn when the weekly window resets within a day with this much unused.
     pub weekly_warn_unused_pct: f64,
     /// Name of this node as other kari instances see it. Empty means the host name.
@@ -821,6 +825,7 @@ impl Default for Settings {
             autopilot: false,
             autopilot_max_jobs: 1,
             prefer_herdr: true,
+            close_herdr_tab_on_done: false,
             weekly_warn_unused_pct: 25.0,
             node_name: String::new(),
             away_mode: false,

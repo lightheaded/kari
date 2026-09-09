@@ -1238,6 +1238,14 @@ impl Engine {
         } else if card.done_at.is_some() {
             card.done_at = None;
         }
+        // The herdr tab of a card that lands in Done, when the option asks for
+        // it. The tab is read here and closed after the write, so a move that
+        // fails leaves the terminal alone.
+        let close_tab = if col.accepts.contains(&DerivedState::Done) {
+            tab_to_close(&self.settings(), cv)
+        } else {
+            None
+        };
         // A manual move settles the outcome of the last job.
         if col.accepts.contains(&DerivedState::Done) || col.accepts.contains(&DerivedState::Backlog)
         {
@@ -1259,8 +1267,23 @@ impl Engine {
         }
         card.updated_at = now;
         self.store.lock().unwrap().upsert_card(&card)?;
+        if let Some(tab) = close_tab {
+            self.close_herdr_tab(&tab);
+        }
         self.emit_changed();
         Ok(())
+    }
+
+    /// Close a herdr tab that a card left behind. A failure is logged and
+    /// nothing more: the card already moved, and herdr is optional.
+    fn close_herdr_tab(&self, tab_id: &str) {
+        match herdr::close_tab(tab_id) {
+            Ok(()) => {
+                info!("closed herdr tab {tab_id} with its card");
+                self.scan_herdr();
+            }
+            Err(e) => warn!("herdr tab.close {tab_id}: {e}"),
+        }
     }
 
     pub fn add_task(&self, t: NewTask) -> anyhow::Result<Card> {
@@ -1311,6 +1334,21 @@ impl Engine {
     }
 
     pub fn patch_card(&self, id: &str, p: CardPatch) -> anyhow::Result<Card> {
+        // Archiving retires the card, so it closes the herdr tab as a move to
+        // Done does. The board is read first, and only while the option is on:
+        // an archived card is off the board, and the pane cannot be found once
+        // the card is written.
+        let settings = self.settings();
+        let close_tab = if p.archived == Some(true) && settings.close_herdr_tab_on_done {
+            let board = self.board();
+            board
+                .cards
+                .iter()
+                .find(|c| c.card.id == id)
+                .and_then(|cv| tab_to_close(&settings, cv))
+        } else {
+            None
+        };
         let store = self.store.lock().unwrap();
         let Some(mut c) = store.get_card(id)? else {
             anyhow::bail!("card not found")
@@ -1353,6 +1391,9 @@ impl Engine {
         c.updated_at = Utc::now();
         store.upsert_card(&c)?;
         drop(store);
+        if let Some(tab) = close_tab {
+            self.close_herdr_tab(&tab);
+        }
         self.emit_changed();
         Ok(c)
     }
@@ -2614,6 +2655,20 @@ fn run_log_still_owns(card: &Card, jid: &str) -> bool {
     }
 }
 
+/// The herdr tab kari closes when the user retires a card. `None` when the
+/// option is off, when the card has no herdr pane, or when herdr did not name
+/// the tab of that pane.
+///
+/// A card is retired while it is still on the board, so the caller must read
+/// the tab before it writes the card. An archived card leaves the board, and
+/// then nothing can say which pane held it.
+fn tab_to_close(settings: &Settings, cv: &CardView) -> Option<String> {
+    if !settings.close_herdr_tab_on_done {
+        return None;
+    }
+    cv.herdr.as_ref()?.tab_id.clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2718,6 +2773,53 @@ mod tests {
         assert_eq!(task_after.bg_job_id.as_deref(), Some("new"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn view_with_pane(tab: Option<&str>) -> CardView {
+        CardView {
+            card: card_with_job(None),
+            title: "a card".into(),
+            state: DerivedState::Done,
+            column_id: "done".into(),
+            locked: false,
+            project_name: None,
+            session: None,
+            live: None,
+            bg_job: None,
+            herdr: Some(HerdrAgent {
+                pane_id: "p1".into(),
+                tab_id: tab.map(|t| t.to_string()),
+                workspace_id: None,
+                workspace_label: None,
+                cwd: None,
+                agent: None,
+                agent_status: None,
+                title: None,
+                focused: false,
+                session_id: None,
+            }),
+            summary: None,
+            hooks: None,
+            estimate: None,
+            last_activity_at: None,
+            reason: String::new(),
+            permission: None,
+        }
+    }
+
+    #[test]
+    fn only_the_option_and_a_named_tab_close_a_pane() {
+        let mut s = Settings::default();
+        let cv = view_with_pane(Some("t1"));
+        assert_eq!(tab_to_close(&s, &cv), None, "the option is off by default");
+        s.close_herdr_tab_on_done = true;
+        assert_eq!(tab_to_close(&s, &cv).as_deref(), Some("t1"));
+        // herdr named no tab for the pane, so there is nothing to close.
+        assert_eq!(tab_to_close(&s, &view_with_pane(None)), None);
+        // The card has no pane at all.
+        let mut no_pane = view_with_pane(Some("t1"));
+        no_pane.herdr = None;
+        assert_eq!(tab_to_close(&s, &no_pane), None);
     }
 
     #[test]
