@@ -30,8 +30,12 @@ export interface ToastOpts {
 }
 
 /** Report the result of one action, with an undo when the action has one.
- *  `card` names the card the action was about, so the toast can open it. */
-export type Act = (fn: () => Promise<unknown>, ok?: string, undo?: Undo, card?: Picked | null) => Promise<void>;
+ *  `card` names the card the action was about, so the toast can open it.
+ *
+ *  Resolves true when the action went through and false when it failed. The
+ *  error reaches the user either way, as a toast. A caller that holds text the
+ *  user typed must wait for true before it empties the box. */
+export type Act = (fn: () => Promise<unknown>, ok?: string, undo?: Undo, card?: Picked | null) => Promise<boolean>;
 
 /** The most toasts on screen at once. A run of notices drops the oldest,
  *  because a stack that fills the window is worse than a lost line. */

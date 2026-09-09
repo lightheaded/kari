@@ -143,6 +143,8 @@ The Android app is a second hub. It reaches the nodes over a private network, su
 
 A tap on a card opens the same drawer as the desktop, without Jump in. The drawer shows the command to run in a terminal instead. The prompt box works the same way: a reply from the phone goes into the session that runs on the desk.
 
+A phone sends over a link that drops. The box keeps your text until the send goes through, and an error toast says what went wrong. So a failed send costs one more tap and never the message. A send to a node that runs an older kari says so, and names the node to update.
+
 ## The tray
 
 kari lives in the menu bar. The tray tooltip shows how many sessions work, how many need you, and how many nodes are offline. The tray menu has "Open kari", "Refresh now", "Stop all kari jobs" and "Quit kari". "Stop all kari jobs" takes two clicks within 10 seconds, so one slip does not kill your work.
