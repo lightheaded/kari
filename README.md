@@ -176,6 +176,8 @@ The strip starts nothing. The plan panel keeps the buttons.
 
 When herdr runs and "Open new sessions in a herdr pane" is on, Jump in creates a herdr tab in the project directory and starts Claude Code in its pane, with `--resume` for a session card. If herdr refuses, kari falls back to the terminal. An existing pane is always focused instead.
 
+Settings can also close the tab again. When "Close the herdr tab when a card is done or archived" is on, kari closes the tab of the pane that holds the card as soon as you move the card to Done or archive it. The tab closes on the machine that runs the session, and it closes even when its agent still works. Undo puts the card back, never the tab. The option is off by default.
+
 ## Remote nodes
 
 A second machine can join the board. The app stays the only window; the other host runs the headless node.

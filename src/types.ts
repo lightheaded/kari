@@ -390,6 +390,7 @@ export interface Settings {
   autopilot: boolean;
   autopilot_max_jobs: number;
   prefer_herdr: boolean;
+  close_herdr_tab_on_done: boolean;
   weekly_warn_unused_pct: number;
   away_mode: boolean;
   away_hold_secs: number;
