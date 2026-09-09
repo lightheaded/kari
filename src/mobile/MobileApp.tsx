@@ -58,7 +58,9 @@ const EMPTY_BOARD: HubBoard = {
 export default function MobileApp() {
   const [board, setBoard] = useState<HubBoard | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [tab, setTab] = useState<Tab>("inbox");
+  // The board opens first, on its Working column: a phone is taken out to see
+  // what runs, and the inbox badge says when something needs an answer.
+  const [tab, setTab] = useState<Tab>("board");
   const [selected, setSelected] = useState<Picked | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [waited, setWaited] = useState(0);
