@@ -423,9 +423,13 @@ fn read_receipt(line: &str, msg_id: &str) -> Option<Outcome> {
 /// the name arrives here already clean, or the whole envelope is lost.
 #[cfg(unix)]
 fn sender_name() -> String {
+    // The name has to be what the receiver's own cleaning leaves behind, or
+    // the two strings differ and the envelope goes. `is_filler` covers the
+    // invisible characters the receiver strips, and more, which is safe: what
+    // stays holds none of them either way.
     let host: String = paths::hostname()
         .chars()
-        .filter(|c| !c.is_control() && !matches!(c, '"' | '<' | '>'))
+        .filter(|c| !c.is_control() && !is_filler(*c) && !matches!(c, '"' | '<' | '>'))
         .collect();
     let host = host.trim();
     let name = if host.is_empty() {
