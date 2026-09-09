@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addTarget, fuzzyScore, planReorder, sortCards, type FilterProject, type Rankable } from "./util";
+import { addTarget, clearsBox, fuzzyScore, planReorder, sortCards, type FilterProject, type Rankable } from "./util";
 import type { CardView, DerivedState } from "./types";
 
 /** One card in a column, for the reorder tests. */
@@ -203,5 +203,31 @@ describe("addTarget", () => {
     const t = addTarget(all, `gone${SEP}/nowhere`, "", `gone${SEP}/nowhere`);
     expect(t.node).toBe("");
     expect(t.cwd).toBeNull();
+  });
+});
+
+describe("clearsBox", () => {
+  test("a failed send keeps the text", () => {
+    // The point of the rule. The link dropped, and the message must survive.
+    expect(clearsBox("ship it", "ship it", false)).toBe(false);
+  });
+
+  test("a send that went through empties the box", () => {
+    expect(clearsBox("ship it", "ship it", true)).toBe(true);
+  });
+
+  test("the box empties on the trimmed text that went", () => {
+    // The composers send `draft.trim()`, and the box still holds the spaces.
+    expect(clearsBox("  ship it  ", "ship it", true)).toBe(true);
+  });
+
+  test("text typed while the send was in flight stays", () => {
+    expect(clearsBox("ship it and tag it", "ship it", true)).toBe(false);
+  });
+
+  test("a closed box stays closed", () => {
+    // The phone card sends an option with no box open.
+    expect(clearsBox(null, "Yes", true)).toBe(false);
+    expect(clearsBox(null, "Yes", false)).toBe(false);
   });
 });

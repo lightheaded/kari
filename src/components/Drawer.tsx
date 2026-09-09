@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { CardPatch, Column, HubCard, JobLogEntry, NodeStatus, Project, Settings } from "../types";
 import { RUN_MODELS, STATE_LABEL } from "../types";
-import { clock, fmtM, fmtPct, noAutoFill, proseField, relTime, shortId, weighted } from "../util";
+import { clearsBox, clock, fmtM, fmtPct, noAutoFill, proseField, relTime, shortId, weighted } from "../util";
 import { useAutoGrow } from "../hooks";
 import { useCloseGuard } from "../dirty";
 import { UnsavedBar } from "./Modals";
@@ -280,8 +280,11 @@ export function Drawer({
     // An empty prompt on a task or a saved continue prompt starts the run as
     // the scheduler would: the title and the body, or the standing prompt.
     const fn = text ? () => api.sendPrompt(node, c.id, text) : () => api.startCard(node, c.id);
-    setDraft("");
-    void onAction(fn, text ? "Sent" : "Started in background", undefined, picked).then(() => {
+    // The composer empties only after the send goes through, so a failed send
+    // costs a retry and not the prompt. The text the user typed while the send
+    // was in flight is not the text that went, so that text stays.
+    void onAction(fn, text ? "Sent" : "Started in background", undefined, picked).then((sent) => {
+      setDraft((d) => (clearsBox(d, text, sent) ? "" : d));
       if (convOpen) loadConv();
     });
   };

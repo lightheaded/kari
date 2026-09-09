@@ -110,6 +110,18 @@ export function shortId(id: string | null | undefined): string {
   return id ? id.slice(0, 8) : "";
 }
 
+/** True when a composer can empty itself after a send.
+ *
+ *  Two conditions, and both must hold. The send went through: a failed send
+ *  keeps the text, so a retry costs one tap and not the message. And the box
+ *  still holds the text that went: anything the user typed while the send was
+ *  in flight is a new message, and it stays.
+ *
+ *  `box` is null when the box is closed, which is how the phone card holds it. */
+export function clearsBox(box: string | null, sent: string, ok: boolean): boolean {
+  return ok && box !== null && box.trim() === sent;
+}
+
 /** Class for the status dot of a node: accent when online, muted when offline, hollow when off. */
 export function nodeDot(n: NodeStatus): string {
   if (!n.enabled) return "dot disabled";

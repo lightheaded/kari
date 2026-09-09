@@ -3,7 +3,7 @@ import type { Act } from "../toasts";
 import { api } from "../api";
 import type { Column, HubCard } from "../types";
 import { STATE_LABEL } from "../types";
-import { STATE_TONE, fmtM, relTime, weighted } from "../util";
+import { STATE_TONE, clearsBox, fmtM, relTime, weighted } from "../util";
 
 interface Props {
   view: HubCard;
@@ -38,6 +38,7 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
   const bg = view.bg_job;
   const running = !!view.live?.alive;
   const [reply, setReply] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const doneCol = columns.find((k) => k.accepts.includes("done"));
   // A running session takes a reply into its own queue. Anything else needs a
   // directory to start a background job in, and waits while one already runs.
@@ -45,9 +46,15 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
   const perm = view.permission ?? null;
   const permText = perm ? describeInput(perm.tool_name, perm.tool_input) : "";
 
-  const send = (text: string) => {
-    setReply(null);
-    onAction(() => api.sendPrompt(node, c.id, text), "Sent", undefined, { node, id: c.id });
+  // The box empties only after the send goes through. A phone sends over a link
+  // that drops, so a failed send must cost a retry and not the message. The
+  // error itself arrives as a toast, from `onAction`.
+  const send = async (text: string) => {
+    if (sending) return;
+    setSending(true);
+    const sent = await onAction(() => api.sendPrompt(node, c.id, text), "Sent", undefined, { node, id: c.id });
+    setSending(false);
+    setReply((r) => (clearsBox(r, text, sent) ? null : r));
   };
 
   return (
@@ -88,7 +95,7 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
       {actions && !offline && (
         <div className="macts">
           {q?.options.slice(0, 4).map((o) => (
-            <button key={o} className="btn sm" disabled={!canReply} onClick={() => send(o)}>
+            <button key={o} className="btn sm" disabled={!canReply || sending} onClick={() => void send(o)}>
               {o}
             </button>
           ))}
@@ -117,10 +124,10 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
         <div className="mreply">
           <textarea value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Tell the agent what to do next" rows={3} />
           <div className="macts">
-            <button className="btn primary sm" disabled={!reply.trim()} onClick={() => send(reply.trim())}>
-              Send
+            <button className="btn primary sm" disabled={!reply.trim() || sending} onClick={() => void send(reply.trim())}>
+              {sending ? "Sending…" : "Send"}
             </button>
-            <button className="btn ghost sm" onClick={() => setReply(null)}>
+            <button className="btn ghost sm" disabled={sending} onClick={() => setReply(null)}>
               Cancel
             </button>
           </div>

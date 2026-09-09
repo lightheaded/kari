@@ -8,7 +8,7 @@ interface Props {
   settings: Settings | null;
   onChanged: () => void;
   onSettingsChanged: () => void;
-  onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
+  onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<boolean>;
 }
 
 /** One node in a pairing code. The desktop writes it; the phone reads it. */

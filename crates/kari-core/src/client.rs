@@ -118,6 +118,7 @@ impl EventReader {
 
 pub(crate) fn error_of(resp: Response) -> anyhow::Error {
     let status = resp.status();
+    let path = resp.url().path().to_string();
     let text = resp.text().unwrap_or_default();
     let msg = serde_json::from_str::<serde_json::Value>(&text)
         .ok()
@@ -127,6 +128,27 @@ pub(crate) fn error_of(resp: Response) -> anyhow::Error {
                 .map(|s| s.to_string())
         })
         .unwrap_or(text);
+    api_error(status, &path, msg.trim())
+}
+
+/// The prefix of every route this client calls.
+const API_PREFIX: &str = "/kari/v1/";
+
+/// Turn one failed reply into an error the user can act on.
+///
+/// A version skew reads as a bare 404 and tells the user nothing. Every handler
+/// answers with a JSON `error` message (see the `ApiError` types in `api.rs` and
+/// `server.rs`), and the router answers a route it does not know with an empty
+/// body. So an empty 404 on an API path means one thing: the far end runs an
+/// older kari than this client, and that route arrived after it. Name the skew,
+/// and keep the status and the route for the next reader of a log.
+fn api_error(status: reqwest::StatusCode, path: &str, msg: &str) -> anyhow::Error {
+    if status == reqwest::StatusCode::NOT_FOUND && msg.is_empty() && path.starts_with(API_PREFIX) {
+        return anyhow::anyhow!(
+            "{status}: the kari at the other end is older than this one. \
+             It does not know the route {path}. Update kari on that node."
+        );
+    }
     anyhow::anyhow!("{status}: {msg}")
 }
 
@@ -550,5 +572,44 @@ impl ApiClient {
 
     pub fn stop_all(&self) -> anyhow::Result<usize> {
         self.post("/kari/v1/stop-all", None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::api_error;
+    use reqwest::StatusCode;
+
+    /// The route the send button calls. An older server does not have it.
+    const SEND: &str = "/kari/v1/hub/nodes/n1/cards/c1/send";
+
+    #[test]
+    fn an_empty_404_on_an_api_route_names_the_skew() {
+        let e = api_error(StatusCode::NOT_FOUND, SEND, "").to_string();
+        assert!(e.contains("older than this one"), "{e}");
+        assert!(e.contains("Update kari on that node"), "{e}");
+        // The status and the route stay in the message, for the log.
+        assert!(e.contains("404"), "{e}");
+        assert!(e.contains(SEND), "{e}");
+    }
+
+    #[test]
+    fn a_404_that_carries_a_message_keeps_it() {
+        // A handler answered. It is not a skew, so do not guess at one.
+        let e = api_error(StatusCode::NOT_FOUND, SEND, "no node n1 is linked").to_string();
+        assert_eq!(e, "404 Not Found: no node n1 is linked");
+    }
+
+    #[test]
+    fn another_status_keeps_its_message() {
+        let e = api_error(StatusCode::BAD_GATEWAY, SEND, "the node does not answer").to_string();
+        assert_eq!(e, "502 Bad Gateway: the node does not answer");
+    }
+
+    #[test]
+    fn an_empty_404_off_the_api_keeps_its_shape() {
+        // A proxy or a wrong base URL, not a kari route. Claim nothing.
+        let e = api_error(StatusCode::NOT_FOUND, "/", "").to_string();
+        assert_eq!(e, "404 Not Found: ");
     }
 }

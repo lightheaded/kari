@@ -117,8 +117,10 @@ export default function MobileApp() {
           toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined, card: card ?? undefined });
         }
         await load();
+        return true;
       } catch (e) {
         toast(String(e), { err: true, card: card ?? undefined });
+        return false;
       }
     },
     [load, toast],

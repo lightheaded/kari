@@ -86,7 +86,7 @@ interface Props {
   /** Shown in the header when the board has more than one node. */
   nodeName?: string;
   onClose: () => void;
-  onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<void>;
+  onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<boolean>;
   onSelectCard: (cardId: string) => void;
 }
 
