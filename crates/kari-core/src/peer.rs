@@ -20,7 +20,6 @@
 use crate::paths;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::time::Duration;
 
 /// Where a running session takes messages, as its registry file says.
 pub struct Inbox {
@@ -120,6 +119,7 @@ pub fn frame(token: Option<&str>, session_id: &str, text: &str) -> String {
 pub fn send(pid: u32, session_id: &str, text: &str) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::net::UnixStream;
+    use std::time::Duration;
 
     let inbox = inbox_of(pid)?;
     let payload = frame(inbox.token.as_deref(), session_id, text);
