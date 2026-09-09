@@ -16,10 +16,13 @@ use std::time::Duration;
 const SYSTEM: &str = r#"You summarize a Claude Code session for a Kanban board. You get the tail of the transcript: USER and ASSISTANT lines.
 Reply with one JSON object only, no prose, no code fence:
 {"narrative": "<two short sentences: what the session is about and where it stands>",
+ "delivery": "<how far the work travelled, or null>",
  "open_questions": ["<question the user still has to answer>", ...],
  "next_step": "<the single next action, or null>",
  "judged_state": "<one of: working, my_turn, needs_decision, needs_approval, waiting_on_others, validate, done, unknown>",
  "confidence": <0.0 to 1.0>}
+The narrative must end with the latest state of the work: whether it is committed, pushed, merged, released, deployed, and whether CI passed or failed, as far as the transcript says.
+delivery is a short phrase built from these words, in order of progress: "not committed", "committed", "pushed", "PR open", "merged", "released", "deployed", plus "CI passed" or "CI failed" when known. Examples: "merged, not released", "pushed, PR open, CI passed", "committed on a branch". TOOL lines show the git and gh commands the assistant ran. Use null when nothing in the excerpt says.
 Meaning of judged_state:
 - needs_decision: the assistant asked the user to choose between options.
 - needs_approval: the assistant waits for permission or plan approval.
@@ -205,6 +208,7 @@ pub fn generate(facts: &SessionFacts, model: &str) -> anyhow::Result<Summary> {
         generated_at: Utc::now(),
         source: "haiku".into(),
         based_on_at: facts.last_at,
+        delivery: s("delivery"),
         model: outer
             .get("model")
             .and_then(|m| m.as_str())

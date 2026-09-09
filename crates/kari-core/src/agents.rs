@@ -36,6 +36,9 @@ pub fn list() -> anyhow::Result<Vec<BgJob>> {
                 .get("startedAt")
                 .and_then(|p| p.as_i64())
                 .and_then(|m| Utc.timestamp_millis_opt(m).single()),
+            detail: None,
+            needs: None,
+            suggested_reply: None,
         };
         if job.kind.as_deref() != Some("background") && job.id.is_none() {
             // Interactive sessions come from the registry already.
@@ -72,6 +75,19 @@ fn enrich_from_state_file(job: &mut BgJob) {
             .and_then(|s| s.as_str())
             .map(|s| s.to_string());
     }
+    // The job writes its own account of where it stands, and a blocked job
+    // says what it waits for and what answer it expects. `claude agents` does
+    // not repeat these, so the state file is the only place to read them.
+    let text = |k: &str| {
+        v.get(k)
+            .and_then(|s| s.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+    job.detail = text("detail");
+    job.needs = text("needs");
+    job.suggested_reply = text("suggestedReply");
 }
 
 fn run_with_timeout(mut cmd: Command, timeout: Duration) -> anyhow::Result<Vec<u8>> {
