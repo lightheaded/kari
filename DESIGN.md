@@ -292,6 +292,14 @@ Mode `auto` accepts a weekly-reset plan without a click, up to `autopilot_max_jo
 
 The terminal (iTerm2, Terminal or Ghostty, set in Settings) is driven with `osascript`. herdr panes are matched to sessions by the session id when the herdr Claude integration is installed, else by cwd and title.
 
+The reverse step is `close_herdr_tab_on_done`, off by default. A move to a
+Done column closes the tab of the pane that the board matched to the card. An
+archive does the same. The engine reads the tab from the board before it writes
+the card, because an archived card leaves the board. It closes the tab after
+the write, so a write that fails leaves the terminal alone. The engine of the
+node that owns the card does this work, and that node is the host that runs
+herdr. A `tab.close` that fails is logged and changes nothing else.
+
 ## 11. Notifications
 
 - Decision needed, approval needed. Click opens the session.

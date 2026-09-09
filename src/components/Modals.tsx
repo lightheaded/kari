@@ -1421,14 +1421,6 @@ export function SettingsModal({
               onChange={num("autopilot_max_jobs")}
             />
           </div>
-          <label className="field inline">
-            <input
-              type="checkbox"
-              checked={s.prefer_herdr}
-              onChange={(e) => setS({ ...s, prefer_herdr: e.target.checked })}
-            />
-            <span>Open new sessions in a herdr pane</span>
-          </label>
           <div className="field">
             <label>Warn when weekly unused is above (percent)</label>
             <input
@@ -1438,6 +1430,32 @@ export function SettingsModal({
               onChange={num("weekly_warn_unused_pct")}
             />
           </div>
+        </div>
+      </div>
+      <div className="section">
+        <h5>herdr</h5>
+        <label className="field inline">
+          <input
+            type="checkbox"
+            checked={s.prefer_herdr}
+            onChange={(e) => setS({ ...s, prefer_herdr: e.target.checked })}
+          />
+          <span>Open new sessions in a herdr pane</span>
+        </label>
+        <label className="field inline" style={{ marginTop: 8 }}>
+          <input
+            type="checkbox"
+            checked={s.close_herdr_tab_on_done}
+            onChange={(e) =>
+              setS({ ...s, close_herdr_tab_on_done: e.target.checked })
+            }
+          />
+          <span>Close the herdr tab when a card is done or archived</span>
+        </label>
+        <div className="hint" style={{ marginTop: 8 }}>
+          kari closes the tab of the pane that holds the card, on the machine
+          that runs the session. The tab closes even when its agent still works.
+          Undo puts the card back, never the tab.
         </div>
       </div>
       <div className="section">

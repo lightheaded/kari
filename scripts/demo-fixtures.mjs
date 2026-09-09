@@ -909,6 +909,7 @@ const settings = {
   autopilot: false,
   autopilot_max_jobs: 1,
   prefer_herdr: true,
+  close_herdr_tab_on_done: false,
   weekly_warn_unused_pct: 25,
 };
 

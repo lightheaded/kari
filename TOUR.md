@@ -113,7 +113,8 @@ Settings holds every threshold and switch.
 - Live hooks: install or remove the Claude Code hooks that post session events to kari.
 - Summaries: on or off, model, calls per hour, and the recent window.
 - Scheduling: the two automatic triggers, the working hours, the reserve and the ceiling.
-- Autopilot: the job cap for mode Auto, herdr as the launch target, and the weekly warning.
+- Autopilot: the job cap for mode Auto and the weekly warning.
+- herdr: herdr as the launch target, and closing the tab of a card that is done or archived.
 - Quota tracking: the status line installer and the optional usage endpoint fallback.
 - Nodes: the name this machine shows to others, the list of remote nodes with their state, and the form that adds one.
 
