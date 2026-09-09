@@ -61,15 +61,14 @@ After a start, the panel lists the started jobs and offers "Stop these jobs".
 
 ![The drawer of a finished background job with a summary, facts and the run log](docs/screenshots/drawer.png)
 
-The drawer shows one card in full.
+The drawer shows one card in full, and it is where you talk to the session.
 
-- The header: the title, the state with the reason kari chose it, and the actions. "Jump in" opens the session. "Start in bg" or "Continue in bg" starts a background job. "Done" moves the card to the Done column. "Summarize" asks Haiku for a fresh summary now. "Archive" hides the card. A task card also has "Delete".
-- Summary: the narrative, the next step, and the judged state with its confidence.
-- Facts: project and directory, session id with branch and Claude Code version, process, herdr pane, hook state, estimate with its band and source, background job, activity, tokens, models, and PR links.
-- Run log: one line per state change of every background job that kari started for this card.
-- Last prompt, last reply and first prompt from the transcript.
-- The card fields: title, body or continue prompt, priority, model, permission mode, "May run unattended", and notes. "Save card" writes them. Priority 0 means the automatic order; a drag on the board writes a number here.
-- A one-off prompt for the next background start.
+- The header: the title, the state with the reason kari chose it, and the actions. Click the title to rename the card. "Jump in" opens the session. "Done" moves the card to the Done column. "Summarize" asks Haiku for a fresh summary now. "Archive" hides the card. A task card also has "Delete". A running job has "Stop job".
+- Where it stands: the summary's narrative, and a line that says how far the work travelled: committed, pushed, PR open, merged, released, deployed, CI passed or failed. Then the next step. A background job adds its own account: its state, what it waits for, and the reply it suggests. One tap puts that reply in the prompt box.
+- Card: facts and fields in one list. Project, node, session, process, hooks, estimate, activity, tokens, models and PR links, then the fields you can change: priority, model, permission mode, "May run unattended", the scheduler prompt (or the body of a task), and notes. A field saves when you leave it. There is no Save button.
+- Run log: one line per state change of every background job that kari started for this card, and one line per prompt sent from here.
+- Conversation: the last prompt and the last reply. "Show all" lists every prompt and reply of the session, oldest first, with a search box.
+- The prompt box at the foot. A running session takes the prompt into its own queue, so the terminal you look at answers it: an idle session at once, a busy one after its current turn. A session that is not running resumes as a background job with the prompt. A task starts as a background job. Cmd+Enter sends.
 
 The drawer in the image belongs to a task that ran as a background job. The job finished, opened a PR, and left the card in Validate.
 
@@ -137,11 +136,11 @@ The Nodes section also shows who pushes the columns. Two hubs, the desktop and t
 The Android app is a second hub. It reaches the nodes over a private network, such as a VPN, and pairs with the code from the desktop. Four tabs:
 
 - **Needs you**: the quota per account, the open plans with Start, Snooze and Dismiss, then every card that waits for a person. The actions sit on the card: an option of an open question, a reply, Allow and Deny for a held permission prompt, Stop, Done, Open.
-- **Board**: one column at a time. The arrows or the dots move between columns. A chip row filters to one node.
+- **Board**: one column at a time, and the first view is the Working column. A swipe, the arrows or the dots move between columns. A chip row filters to one node.
 - **Add**: the task form. A task with a prompt and auto-run on is ready for the next plan.
 - **Nodes**: the status and the lease holder per node, Away mode per node, "Make this device primary", the pairing code, and this device's name.
 
-A tap on a card opens the same drawer as the desktop, without Jump in. The drawer shows the command to run in a terminal instead.
+A tap on a card opens the same drawer as the desktop, without Jump in. The drawer shows the command to run in a terminal instead. The prompt box works the same way: a reply from the phone goes into the session that runs on the desk.
 
 ## The tray
 

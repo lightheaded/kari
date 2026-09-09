@@ -103,6 +103,11 @@ async function main() {
     // Card drawer: a finished background job with a summary, a PR and a run log.
     await page.getByText("Fix the crash on empty transcript files", { exact: true }).click();
     await page.locator(".drawer .runlog li").first().waitFor();
+    await page.locator(".drawer").getByRole("button", { name: "Show all" }).click();
+    await page.locator(".drawer .turns li").first().waitFor();
+    // The click scrolled the body down to the conversation. The image shows
+    // the drawer from its top, where the summary and the job state are.
+    await page.locator(".drawer .body").evaluate((el) => el.scrollTo(0, 0));
     await shot(page, "drawer");
     await page.keyboard.press("Escape");
 

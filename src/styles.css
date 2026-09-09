@@ -200,8 +200,71 @@ a { color: var(--accent); }
 .drawer header { padding: 16px 18px 12px; border-bottom: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 8px; }
 .drawer header h2 { margin: 0; font: 600 17px/1.3 var(--display); letter-spacing: -0.01em; }
 .drawer header .actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.drawer .body { padding: 14px 18px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.drawer .body { flex: 1 1 auto; min-height: 0; padding: 14px 18px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
 .drawer .close { position: absolute; top: 10px; right: 10px; }
+/* The title is the field: a click turns it into an input in the same place. */
+.drawer header h2.titleedit { padding-right: 32px; }
+.drawer header h2.titleedit.can { cursor: text; border-radius: 4px; }
+.drawer header h2.titleedit.can:hover { text-decoration: underline dotted var(--ink-3); text-underline-offset: 3px; }
+.drawer header .titleinput {
+  width: 100%; box-sizing: border-box; margin: 0; padding: 2px 6px; margin-left: -6px; border-radius: 4px;
+  border: 1px solid var(--accent); background: var(--ground); font: 600 17px/1.3 var(--display); letter-spacing: -0.01em; color: var(--ink);
+}
+/* Facts and fields share one grid. A field saves on change or on blur, so
+   there is no Save button and nothing to forget. */
+.kv.edit { gap: 8px 12px; align-items: start; }
+.kv.edit dt { padding-top: 6px; }
+.kv.edit dd > .hint, .kv.edit dd > input, .kv.edit dd > .field { margin-top: 4px; }
+.kv.edit input, .kv.edit textarea, .kv.edit select {
+  padding: 6px 9px; border-radius: 5px; border: 1px solid var(--line); background: var(--ground); font-size: 12.5px; width: 100%; box-sizing: border-box;
+}
+.kv.edit textarea { min-height: 34px; resize: vertical; overflow-y: auto; }
+.kv.edit input:focus, .kv.edit textarea:focus, .kv.edit select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.kv.edit .field.inline input[type="checkbox"] { width: auto; }
+.runopts { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 8px; }
+.runopts label:last-child { grid-column: 1 / -1; }
+.runopts label { display: flex; flex-direction: column; gap: 3px; }
+.runopts label span { font: 500 10px/1.2 var(--mono); color: var(--ink-3); letter-spacing: 0.04em; text-transform: uppercase; }
+/* Where the work stands, in the summary's words. */
+.delivery { display: inline-block; margin-bottom: 6px; padding: 2px 8px; border-radius: 4px; font: 500 11.5px/1.5 var(--mono); background: var(--accent-soft); color: var(--accent); }
+.jobstate { margin-top: 8px; font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; }
+.jobstate .st { font: 500 11px/1.5 var(--mono); color: var(--ink-2); margin-right: 6px; }
+.jobstate .st.done { color: var(--accent); }
+.jobstate .st.failed, .jobstate .st.blocked { color: var(--rust); }
+.jobstate .det { color: var(--ink); }
+.jobstate .needs { color: var(--amber); }
+.jobstate .suggest { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.jobstate .suggest .btn { white-space: normal; text-align: left; }
+/* A button that reads as a link, inside a line of text. */
+.linkbtn { background: none; border: none; padding: 0; margin: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; text-align: left; }
+.linkbtn:hover { text-decoration-style: solid; }
+.linkbtn:disabled { opacity: 0.5; cursor: default; }
+/* The conversation: every turn, oldest first, and a search over them. */
+.conversation h5 { display: flex; align-items: center; gap: 4px; }
+.conversation h5 .spacer { flex: 1; }
+.conversation h5 .btn { text-transform: none; letter-spacing: 0; font: 11.5px var(--body); }
+.convsearch { width: 100%; box-sizing: border-box; padding: 6px 9px; border-radius: 5px; border: 1px solid var(--line); background: var(--ground); font-size: 12.5px; margin-bottom: 6px; }
+.convsearch:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.turns { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.turn { display: flex; flex-direction: column; gap: 3px; }
+.turn + .turn { margin-top: 8px; }
+.turn .who { display: flex; gap: 8px; font: 500 10.5px/1.2 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); }
+.turn.assistant .who span:first-child { color: var(--accent); }
+.turn.peer .who span:first-child { color: var(--amber); }
+.turn .who .when { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.turn .quote { max-height: none; }
+.turn.user .quote { border-left: 2px solid var(--line); }
+.turn.hit .quote { border-color: var(--accent); }
+/* The composer: what to say next. Sits at the foot so it is always in reach. */
+.composer { border-top: 1px solid var(--line-soft); padding: 10px 18px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
+.composer textarea {
+  width: 100%; box-sizing: border-box; padding: 7px 9px; border-radius: 5px; border: 1px solid var(--line); background: var(--ground);
+  font-size: 12.5px; min-height: 34px; max-height: 300px; resize: vertical; overflow-y: auto;
+}
+.composer textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.composerrow { display: flex; align-items: center; gap: 10px; }
+.composerrow .hint { flex: 1; font-size: 11.5px; }
+.composerrow .btn { flex: none; }
 .kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 5px 12px; font-size: 12.5px; }
 .kv dt { color: var(--ink-3); font: 11px/1.6 var(--mono); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
@@ -238,7 +301,7 @@ a { color: var(--accent); }
 .field input, .field textarea, .field select {
   padding: 7px 9px; border-radius: 5px; border: 1px solid var(--line); background: var(--ground); font-size: 12.5px; width: 100%;
 }
-.field textarea { min-height: 70px; resize: vertical; }
+.field textarea { min-height: 34px; resize: vertical; }
 .field input:focus, .field textarea:focus, .field select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .field.inline { flex-direction: row; align-items: center; gap: 8px; }
 .field.inline label, .field.inline span { text-transform: none; font: 12.5px var(--body); color: var(--ink); }
@@ -627,4 +690,4 @@ What the planner would run next, in order. It starts nothing. */
 .card .rank { position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--ink-3); }
 .chip.node.act { border: 1px solid var(--line-soft); cursor: pointer; }
 .chip.node.act:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-.field textarea { min-height: 68px; resize: vertical; overflow-y: auto; }
+.field textarea { min-height: 34px; resize: vertical; overflow-y: auto; }

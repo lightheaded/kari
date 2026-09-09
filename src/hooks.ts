@@ -46,13 +46,17 @@ function writeHeight(name: string, px: number) {
   }
 }
 
+/** The height of an empty textarea: one line of text and its padding. An empty
+ *  field takes no more room than a line, and grows as the text does. */
+export const ONE_LINE = 34;
+
 /** Grow a textarea to fit its text, up to `max` pixels, and keep a height the
  *  user dragged. Returns the props to spread on the textarea.
  *
  *  `name` identifies the field across openings of the drawer or the dialog.
  *  A drag beats the content: once the user sets a height, that height stays
  *  until the text needs more room than it gives. */
-export function useAutoGrow(name: string, value: string, min = 68, max = 420) {
+export function useAutoGrow(name: string, value: string, min = ONE_LINE, max = 420) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const dragged = useRef<number | null>(readHeights()[name] ?? null);
 

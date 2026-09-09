@@ -1,0 +1,28 @@
+{
+  "task_crash": {
+    "session_id": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    "total": 4,
+    "messages": [
+      {
+        "role": "user",
+        "at": "2026-09-03T09:02:00.000Z",
+        "text": "Fix the crash when a transcript file is empty. Add a regression test. Open a PR."
+      },
+      {
+        "role": "assistant",
+        "at": "2026-09-03T09:10:00.000Z",
+        "text": "The reader calls `lines().next().unwrap()` on the first line, so a zero-byte file panics. I will return an empty session for an empty file, add a test with a zero-byte fixture, and run the suite."
+      },
+      {
+        "role": "peer",
+        "at": "2026-09-03T09:29:00.000Z",
+        "text": "Push the branch and open the PR when the tests pass."
+      },
+      {
+        "role": "assistant",
+        "at": "2026-09-03T09:35:00.000Z",
+        "text": "Done. The reader returns an empty session for a zero-byte file. Regression test added. PR: https://github.com/example/mobile-app/pull/88"
+      }
+    ]
+  }
+}

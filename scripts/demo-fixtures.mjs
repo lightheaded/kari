@@ -249,6 +249,7 @@ function summary(sessionId, narrative, judged, confidence, o = {}) {
     source: "haiku",
     based_on_at: o.at ?? min(9),
     model: "haiku",
+    delivery: o.delivery ?? null,
   };
 }
 
@@ -575,9 +576,14 @@ const localCards = [
       models: ["claude-sonnet-5"],
       tokens: { input: 29_000, output: 5_600, cache_read: 720_000, cache_write: 41_000, messages: 18 },
     }),
-    bg_job: { id: "job_2b9e41", session_id: S.crash, cwd: projects.mobile.cwd, kind: "background", state: "done", status: "completed", waiting_for: null, name: "Fix the crash on empty transcript files", pid: null, started_at: min(58) },
-    summary: summary(S.crash, "The reader now handles a zero-byte transcript and a regression test covers it. A PR is open and nobody checked the result yet.", "validate", 0.92, {
+    bg_job: {
+      id: "job_2b9e41", session_id: S.crash, cwd: projects.mobile.cwd, kind: "background", state: "done", status: "completed", waiting_for: null,
+      name: "Fix the crash on empty transcript files", pid: null, started_at: min(58),
+      detail: "PR 88 opened; CI green on the branch", needs: null, suggested_reply: null,
+    },
+    summary: summary(S.crash, "The reader now handles a zero-byte transcript and a regression test covers it. A PR is open and nobody checked the result yet. Pushed and CI passed, not merged.", "validate", 0.92, {
       next_step: "Read the diff in PR 88 and run the app once with an empty transcript.",
+      delivery: "pushed, PR open, CI passed",
       at: min(24),
     }),
     estimate: estimate(1_100_000, "project", 3),
@@ -931,13 +937,36 @@ const jobLog = {
   ],
 };
 
+// The conversation of the card the drawer screenshot shows, keyed by card id.
+const conversation = {
+  task_crash: {
+    session_id: S.crash,
+    total: 4,
+    messages: [
+      { role: "user", at: min(58), text: "Fix the crash when a transcript file is empty. Add a regression test. Open a PR." },
+      {
+        role: "assistant",
+        at: min(50),
+        text: "The reader calls `lines().next().unwrap()` on the first line, so a zero-byte file panics. I will return an empty session for an empty file, add a test with a zero-byte fixture, and run the suite.",
+      },
+      { role: "peer", at: min(31), text: "Push the branch and open the PR when the tests pass." },
+      {
+        role: "assistant",
+        at: min(25),
+        text: "Done. The reader returns an empty session for a zero-byte file. Regression test added. PR: https://github.com/example/mobile-app/pull/88",
+      },
+    ],
+  },
+};
+
 export function writeFixtures(out = "docs/demo") {
   mkdirSync(out, { recursive: true });
   const write = (name, data) => writeFileSync(join(out, name), JSON.stringify(data, null, 2) + "\n");
   write("board.json", board);
   write("settings.json", settings);
   write("job-log.json", jobLog);
-  console.log(`wrote board.json, settings.json and job-log.json to ${out}/`);
+  write("conversation.json", conversation);
+  console.log(`wrote board.json, settings.json, job-log.json and conversation.json to ${out}/`);
 }
 
 if (import.meta.main) writeFixtures(process.argv[2]);

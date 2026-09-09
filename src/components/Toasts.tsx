@@ -108,6 +108,17 @@ function ToastItem({ t, held, onClose, onOpen, onUndo }: ItemProps) {
   return (
     <div className={`toast ${t.err ? "err" : ""} ${onOpen ? "link" : ""}`} onClick={onOpen} role="status">
       <span className="msg">{t.text}</span>
+      {onOpen && (
+        <button
+          className="undo"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+        >
+          Open
+        </button>
+      )}
       {onUndo && (
         <button
           className="undo"

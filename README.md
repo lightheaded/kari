@@ -118,7 +118,7 @@ curl -H "x-kari-token: $(cat ~/.config/kari/hook-token)" 127.0.0.1:47311/kari/bo
 
 ## Summaries
 
-After a turn ends, kari runs `claude -p --model haiku` with the last 30 messages of the transcript and stores the result: narrative, open questions, next step, judged state, confidence. The call uses `--no-session-persistence`, no tools, no MCP servers and no settings, so it runs no hooks and leaves no transcript. A confident judgment can move a quiet session to Waiting on others or Validate. It never overrides a hard signal such as a pending question or a busy process. Limits live in Settings: on or off, model, calls per hour (default 6), and the recent window (default 48 hours). "Summarize" in the card drawer makes one call outside the cap.
+After a turn ends, kari runs `claude -p --model haiku` with the last 30 messages of the transcript, plus every `git` and `gh` command the session ran between them, and stores the result: narrative, delivery (how far the work travelled: committed, pushed, PR open, merged, released, deployed, CI passed or failed), open questions, next step, judged state, confidence. The call uses `--no-session-persistence`, no tools, no MCP servers and no settings, so it runs no hooks and leaves no transcript. A confident judgment can move a quiet session to Waiting on others or Validate. It never overrides a hard signal such as a pending question or a busy process. Limits live in Settings: on or off, model, calls per hour (default 6), and the recent window (default 48 hours). "Summarize" in the card drawer makes one call outside the cap.
 
 ## Estimates and calibration
 
@@ -147,6 +147,8 @@ The panel shows the reason and a budget bar. The bar is the 5-hour window. The g
 A started card runs as `claude --bg` with the permission mode of the card, or the default from Settings. New installs default to `auto`. Choose `bypassPermissions` there only if you accept that an unattended run has no permission checks in the project directory.
 
 Each card can also name a model. The New task dialog and the card drawer offer Fable, Opus, Sonnet and Haiku, and "Default" leaves the choice to Claude Code. kari passes the name as `--model` on every start: background runs, Jump in, and a herdr pane. Settings holds the default for cards that name none. A card that names a model shows it as a chip, and the plan panel shows it per task. kari follows the job and writes one run-log line per state change. The card drawer shows the log. The job outcome stays on the card after `claude agents` forgets the job, so a finished job leaves the card in Validate and a failed job leaves it in My turn.
+
+The prompt box in the card drawer gives a card its next prompt. A session that runs on the node takes the prompt into its own queue, over the message socket every Claude Code process opens, so the terminal you look at answers it. A session that is not running resumes as a background job with the prompt, and a task starts one. kari never resumes a running session a second time: Claude Code would start a copy, and the prompt would land in a transcript nobody is looking at.
 
 Stop one job from the card drawer. Stop everything from the tray: the first click arms the item, the second click within 10 seconds stops the jobs. The tray tooltip shows how many sessions work and how many need you.
 

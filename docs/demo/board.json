@@ -491,7 +491,8 @@
         "generated_at": "2026-09-03T09:56:00.000Z",
         "source": "haiku",
         "based_on_at": "2026-09-03T09:56:00.000Z",
-        "model": "haiku"
+        "model": "haiku",
+        "delivery": null
       },
       "hooks": {
         "last_event": "PostToolUse",
@@ -659,7 +660,8 @@
         "generated_at": "2026-09-03T09:55:00.000Z",
         "source": "haiku",
         "based_on_at": "2026-09-03T09:55:00.000Z",
-        "model": "haiku"
+        "model": "haiku",
+        "delivery": null
       },
       "hooks": {
         "last_event": "Stop",
@@ -961,7 +963,8 @@
         "generated_at": "2026-09-03T05:00:00.000Z",
         "source": "haiku",
         "based_on_at": "2026-09-03T05:00:00.000Z",
-        "model": "haiku"
+        "model": "haiku",
+        "delivery": null
       },
       "hooks": null,
       "estimate": null,
@@ -1046,12 +1049,15 @@
         "waiting_for": null,
         "name": "Fix the crash on empty transcript files",
         "pid": null,
-        "started_at": "2026-09-03T09:02:00.000Z"
+        "started_at": "2026-09-03T09:02:00.000Z",
+        "detail": "PR 88 opened; CI green on the branch",
+        "needs": null,
+        "suggested_reply": null
       },
       "herdr": null,
       "summary": {
         "session_id": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
-        "narrative": "The reader now handles a zero-byte transcript and a regression test covers it. A PR is open and nobody checked the result yet.",
+        "narrative": "The reader now handles a zero-byte transcript and a regression test covers it. A PR is open and nobody checked the result yet. Pushed and CI passed, not merged.",
         "open_questions": [],
         "next_step": "Read the diff in PR 88 and run the app once with an empty transcript.",
         "judged_state": "validate",
@@ -1059,7 +1065,8 @@
         "generated_at": "2026-09-03T09:36:00.000Z",
         "source": "haiku",
         "based_on_at": "2026-09-03T09:36:00.000Z",
-        "model": "haiku"
+        "model": "haiku",
+        "delivery": "pushed, PR open, CI passed"
       },
       "hooks": null,
       "estimate": {
@@ -1414,7 +1421,8 @@
         "generated_at": "2026-09-03T09:54:00.000Z",
         "source": "haiku",
         "based_on_at": "2026-09-03T09:54:00.000Z",
-        "model": "haiku"
+        "model": "haiku",
+        "delivery": null
       },
       "hooks": null,
       "estimate": null,
@@ -1510,7 +1518,8 @@
         "generated_at": "2026-09-03T09:43:00.000Z",
         "source": "haiku",
         "based_on_at": "2026-09-03T09:43:00.000Z",
-        "model": "haiku"
+        "model": "haiku",
+        "delivery": null
       },
       "hooks": null,
       "estimate": {
