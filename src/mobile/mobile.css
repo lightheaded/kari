@@ -123,6 +123,8 @@
 .mdot { width: 8px; height: 8px; border-radius: 50%; border: 0; padding: 0; background: var(--line); }
 .mdot.on { background: var(--accent); }
 .mchips { padding: 0 14px 10px; flex-wrap: wrap; }
+/* What the nodes do by themselves, over the cards it acts on. */
+.mauto { display: flex; justify-content: center; padding: 0 14px 10px; }
 
 /* Nodes tab */
 .msection { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 8px; }
@@ -134,6 +136,7 @@
 
 /* Shared pieces resized for a phone */
 .mapp .proposal { margin: 0 14px 10px; width: auto; max-width: none; }
+.mapp .swopt { padding: 8px 14px; font-size: 12.5px; min-height: 36px; }
 .mapp .drawer {
   position: fixed;
   inset: 0;

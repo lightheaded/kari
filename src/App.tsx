@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
 import type { AutomationMode, Column, HubBoard, HubCard, Project, Settings } from "./types";
-import { AUTOMATION_MODES } from "./types";
+import { setAutomation } from "./automation";
 import { Board, type Picked, type Reorder } from "./components/Board";
 import type { AddPreview } from "./components/ColumnAdd";
 import { Drawer } from "./components/Drawer";
@@ -254,18 +254,6 @@ export default function App() {
     );
   };
 
-  /** The automation switch. An empty node id means every node that answers, so
-   *  the undo holds only when the nodes agreed on one mode before. */
-  const setMode = (nodeId: string, mode: AutomationMode) => {
-    const scope = nodeId ? nodes.filter((n) => n.id === nodeId) : nodes.filter((n) => n.enabled && n.online);
-    const modes = new Set(scope.map((n) => n.automation_mode || "ask"));
-    const was = modes.size === 1 ? ([...modes][0] as AutomationMode) : null;
-    const label = (m: AutomationMode) => AUTOMATION_MODES.find((x) => x.value === m)?.label ?? m;
-    run(() => api.setAutomationMode(nodeId, mode), `Automation: ${label(mode)}`, () =>
-      was && was !== mode ? { done: `Automation back to ${label(was)}`, run: () => api.setAutomationMode(nodeId, was) } : null,
-    );
-  };
-
   /** A one-line task from the foot of a column. A `#tag` in the line picks the
    *  project, and the tag itself does not reach the title. The toast carries
    *  the new card, so the line the user just typed can be opened at once. */
@@ -301,7 +289,7 @@ export default function App() {
         <AutomationSwitch
           nodes={nodes}
           filter={node}
-          onChange={(nodeId, mode: AutomationMode) => setMode(nodeId, mode)}
+          onChange={(nodeId, mode: AutomationMode) => setAutomation(nodes, nodeId, mode, run)}
         />
         {hiddenPlans > 0 && (
           <button className="pill plan" onClick={() => setPlanHidden(new Set())} title="Show the plan panel again">
