@@ -1,11 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { noAutoFill } from "../util";
 
+/** Where the line that is typed now will land, as the draft bar shows it. */
+export interface AddPreview {
+  /** The node name, or an empty string when the board has one node. */
+  node: string;
+  /** The project name, or null when nothing names one. */
+  project: string | null;
+  /** A tag that names no project, without the `#`. Empty when there is none. */
+  unknown: string;
+}
+
 interface Props {
   columnName: string;
-  /** Where a one-line task lands: the node, and the project when one is known.
-   *  Shown in the draft bar, so the card never goes somewhere unseen. */
-  target: { node: string; project: string | null };
+  /** Read the draft. The answer holds the node, the project and a tag that
+   *  missed. It is read on every keystroke, so the card never goes unseen. */
+  preview: (title: string) => AddPreview;
   /** Save a one-line task. Rejects when the node refuses it. */
   onAdd: (title: string) => Promise<void>;
   /** Open the full dialog with what is typed so far. */
@@ -13,8 +23,9 @@ interface Props {
 }
 
 /** The foot of every column: add a task here without leaving the board. Enter
- *  saves and keeps the field open for the next one. Escape closes it. */
-export function ColumnAdd({ columnName, target, onAdd, onFull }: Props) {
+ *  saves and keeps the field open for the next one. Escape closes it. A
+ *  `#project` word in the line picks the project and leaves the title. */
+export function ColumnAdd({ columnName, preview, onAdd, onFull }: Props) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,6 +56,8 @@ export function ColumnAdd({ columnName, target, onAdd, onFull }: Props) {
     );
   }
 
+  const at = preview(title);
+
   return (
     <div className="coldraft">
       <textarea
@@ -69,12 +82,20 @@ export function ColumnAdd({ columnName, target, onAdd, onFull }: Props) {
           if (!title.trim()) setOpen(false);
         }}
       />
-      <div className="coltarget hint" title="Change either of these in the full dialog, or later on the card">
-        {target.project ? `→ ${target.project}` : "→ no project yet"}
-        {target.node ? ` · ${target.node}` : ""}
+      <div
+        className={`coltarget hint ${at.unknown ? "miss" : ""}`}
+        title={
+          at.unknown
+            ? `No project is called ${at.unknown}. The word stays in the title.`
+            : "Type #name to pick a project. Change either of these in the full dialog, or later on the card"
+        }
+      >
+        {at.project ? `→ ${at.project}` : "→ no project yet"}
+        {at.node ? ` · ${at.node}` : ""}
+        {at.unknown ? ` · #${at.unknown} names no project` : ""}
       </div>
       <div className="draftbar">
-        <span className="hint">Enter saves</span>
+        <span className="hint">Enter saves · #name picks a project</span>
         <div className="spacer" />
         <button className="btn ghost sm" onClick={() => onFull(title)} title="Open the full dialog">
           More ⌄
