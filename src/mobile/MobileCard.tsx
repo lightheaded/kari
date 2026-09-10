@@ -41,8 +41,10 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
   const [sending, setSending] = useState(false);
   const doneCol = columns.find((k) => k.accepts.includes("done"));
   // A running session takes a reply into its own queue. Anything else needs a
-  // directory to start a background job in, and waits while one already runs.
-  const canReply = running || (!!(c.project_cwd ?? s?.cwd) && bg?.state !== "working");
+  // directory to start a background job in. A job marked working no longer
+  // shuts the box: its own session takes the message while it runs, and a job
+  // whose process is gone leaves a card that must still be answerable.
+  const canReply = running || !!(c.project_cwd ?? s?.cwd);
   const perm = view.permission ?? null;
   const permText = perm ? describeInput(perm.tool_name, perm.tool_input) : "";
 

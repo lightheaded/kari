@@ -77,7 +77,7 @@ function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   // The system Back button on a phone closes the dialog, the way Escape does.
-  useBackClose(onClose);
+  useBackClose(true, onClose);
   return (
     <div
       className="backdrop"

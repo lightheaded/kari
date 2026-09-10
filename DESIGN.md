@@ -525,6 +525,54 @@ after a monitor goes away.
 
 Flow: watchers and pollers in `kari-core` emit domain events on a channel. A reducer updates the store and computes derived state. The hub turns an event of the local engine, or of a remote node, into a `board_changed` event for the UI, which re-fetches the merged board through one command. The UI never reads files and never opens a socket.
 
+### The back button closes the top layer
+
+A phone has no Escape key. The system back button is how a person closes a
+sheet, and the page cannot read that button. What the page can read is its own
+history: the Android web view turns a back press into one step back in the
+history of the page while there is a step to take, and leaves the app when
+there is none.
+
+So `src/back.ts` holds one stack of open layers. Every layer that opens — a
+card sheet, a dialog, a tab away from the board — pushes one history entry,
+and one step back closes the layer that pushed it. With no layer open the
+history has nothing to go back to, and the press leaves the app. The same code
+answers the back button of a browser, so a card closes the same way in every
+client. A layer that refuses to close, such as a card sheet with an unsent
+prompt, takes a new entry, so the next press asks again.
+
+An entry is added at once, and a step back is asked for and answered later. So
+a layer that closes as another opens must not add an entry and drop one in an
+order the browser decides: the stack holds the entry it owes for one tick, and
+a layer that opens in that tick takes it over. React mounts a component twice
+to check it, which is exactly this case, and without the rule the card sheet
+needed two presses to close.
+
+Android also needs the activity to hand the press to the web view. Tauri turns
+that off, and `scripts/android-back.sh` turns it on again after every
+`bun tauri android init`, because the generated project is not tracked.
+
+kari does not use the `back-button` event of the Tauri app plugin. A listener
+for that event stops the native side from walking the history or leaving the
+app, and the app would then need a command of its own to exit.
+
+### The conversation is read from its end
+
+A transcript can hold thousands of turns, and every reply is markdown, so no
+view renders a whole one. `useConversation` asks the node for the newest 200
+turns, then for 400 more each time the reader asks, and for everything when
+the reader asks for that. The count it reached survives a reload, so a new
+turn in a live session never takes back the older turns the reader loaded.
+
+Two rules keep the list readable while it grows. A turn is keyed by its place
+in the whole transcript, not by its place in the list, because a page of older
+turns would otherwise change the key of every turn, and React would build the
+list again and drop the reading position with it. And a page that lands above
+the reader moves the scroll by exactly the height it added, so the turn on
+screen stays where it was. A view that holds the conversation and nothing else
+— the phone chat page, the pop-out window — opens on the newest turn and
+follows it, but only while the reader sits at the end of the list.
+
 ## 13. Milestones
 
 1. Board from local data: registry, transcripts, herdr mapping, configurable columns, backlog cards, manual moves, jump in, quota bar from the status line. Read only, no Claude calls.
