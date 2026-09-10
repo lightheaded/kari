@@ -927,6 +927,11 @@ const board = {
     { node_id: "lab", node_name: "lab", queue: queueOf(labCards, 14, 41, ahead(14 * 60), false) },
   ],
   proposals: [{ node_id: "local", node_name: "studio", proposal }],
+  // The hub that drew this board. The phone Nodes tab names it, so a board
+  // without these fields left `bun run demo` with no Nodes tab on a phone.
+  hub_id: "0d1e2f3a4b5c6d7e",
+  hub_name: "studio",
+  primary: true,
   generated_at: min(0),
   scanning: false,
   herdr_connected: true,
