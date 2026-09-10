@@ -80,20 +80,28 @@ export default function App() {
     };
   }, [load, toast]);
 
-  /** Run one action, report it, and offer its undo when it has one. `undo`
-   *  can read the result, for example the card a new task became. */
+  /** Run one action, report it, and offer its undo when it has one. `undo` and
+   *  `card` can read the result, for example the card a new task became. A
+   *  card that the action creates has no id until the action answers, so the
+   *  failed action reports no card. */
   const run = useCallback(
-    async <T,>(fn: () => Promise<T>, ok?: string, undo?: Undo | ((r: T) => Undo | null), card?: Picked | null) => {
+    async <T,>(
+      fn: () => Promise<T>,
+      ok?: string,
+      undo?: Undo | ((r: T) => Undo | null),
+      card?: Picked | null | ((r: T) => Picked | null),
+    ) => {
       try {
         const r = await fn();
         if (ok) {
           const u = typeof undo === "function" ? undo(r) : undo;
-          toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined, card: card ?? undefined });
+          const c = typeof card === "function" ? card(r) : card;
+          toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined, card: c ?? undefined });
         }
         await load();
         return true;
       } catch (e) {
-        toast(String(e), { err: true, card: card ?? undefined });
+        toast(String(e), { err: true, card: typeof card === "function" ? undefined : (card ?? undefined) });
         return false;
       }
     },
@@ -233,7 +241,8 @@ export default function App() {
     );
   };
 
-  /** A one-line task from the foot of a column. */
+  /** A one-line task from the foot of a column. The toast carries the new
+   *  card, so the line the user just typed can be opened at once. */
   const addInline = async (columnId: string, title: string) => {
     await run(
       () =>
@@ -248,6 +257,8 @@ export default function App() {
           column_id: columnId,
         }),
       "Task added",
+      undefined,
+      (c) => ({ node: addNode, id: c.id }),
     );
     rememberProject(addNode, addProject);
   };
@@ -446,6 +457,7 @@ export default function App() {
                 done: "Task taken off the board",
                 run: () => api.deleteCard(nodeId, c.id),
               }),
+              (c) => ({ node: nodeId, id: c.id }),
             ).then(() => {
               rememberProject(nodeId, t.project_cwd);
               setAddTitle("");

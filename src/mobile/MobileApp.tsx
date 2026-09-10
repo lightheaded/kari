@@ -109,18 +109,27 @@ export default function MobileApp() {
     };
   }, [load, loadSettings, toast]);
 
+  /** `undo` and `card` can read the result, for example the card a new task
+   *  became. A card that the action creates has no id until the action
+   *  answers, so the failed action reports no card. */
   const run = useCallback(
-    async <T,>(fn: () => Promise<T>, ok?: string, undo?: Undo | ((r: T) => Undo | null), card?: Picked | null) => {
+    async <T,>(
+      fn: () => Promise<T>,
+      ok?: string,
+      undo?: Undo | ((r: T) => Undo | null),
+      card?: Picked | null | ((r: T) => Picked | null),
+    ) => {
       try {
         const r = await fn();
         if (ok) {
           const u = typeof undo === "function" ? undo(r) : undo;
-          toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined, card: card ?? undefined });
+          const c = typeof card === "function" ? card(r) : card;
+          toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined, card: c ?? undefined });
         }
         await load();
         return true;
       } catch (e) {
-        toast(String(e), { err: true, card: card ?? undefined });
+        toast(String(e), { err: true, card: typeof card === "function" ? undefined : (card ?? undefined) });
         return false;
       }
     },
@@ -188,6 +197,7 @@ export default function MobileApp() {
                   done: "Task taken off the board",
                   run: () => api.deleteCard(nodeId, c.id),
                 }),
+                (c) => ({ node: nodeId, id: c.id }),
               ).then(() => {
                 setTab("board");
               })
