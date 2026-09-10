@@ -989,7 +989,18 @@ export function Drawer({
         {mobile && chatting && (
           <div className="section conversation chatpage">
             {c.session_id && s && (s.turns > 0 || s.last_assistant_text) ? (
-              <ConversationList key={`${node}/${c.id}`} conv={conv} busy={convBusy} err={convErr} onMore={moreConv} onLoadAll={allConv} tail />
+              // A held permission prompt sits above the turns and needs an
+              // answer now, so the page opens on it. With nothing held, the
+              // page opens on the newest turn and follows it.
+              <ConversationList
+                key={`${node}/${c.id}`}
+                conv={conv}
+                busy={convBusy}
+                err={convErr}
+                onMore={moreConv}
+                onLoadAll={allConv}
+                tail={!view.permission}
+              />
             ) : (
               <div className="hint">
                 {c.session_id
