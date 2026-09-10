@@ -41,10 +41,13 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
   const [sending, setSending] = useState(false);
   const doneCol = columns.find((k) => k.accepts.includes("done"));
   // A running session takes a reply into its own queue. Anything else needs a
-  // directory to start a background job in. A job marked working no longer
-  // shuts the box: its own session takes the message while it runs, and a job
-  // whose process is gone leaves a card that must still be answerable.
+  // directory to start a background job in. The box opens either way, as it
+  // does in the card sheet, so an answer can be typed and kept. The send waits
+  // while a job holds the card and its session does not answer yet, because a
+  // second run in the same directory would write into the same transcript.
   const canReply = running || !!(c.project_cwd ?? s?.cwd);
+  const jobBusy = !running && bg?.state === "working";
+  const canSend = canReply && !jobBusy;
   const perm = view.permission ?? null;
   const permText = perm ? describeInput(perm.tool_name, perm.tool_input) : "";
 
@@ -103,7 +106,7 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
       {actions && !offline && (
         <div className="macts">
           {q?.options.slice(0, 4).map((o) => (
-            <button key={o} className="btn sm" disabled={!canReply || sending} onClick={() => void send(o)}>
+            <button key={o} className="btn sm" disabled={!canSend || sending} onClick={() => void send(o)}>
               {o}
             </button>
           ))}
@@ -131,8 +134,9 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
       {reply !== null && (
         <div className="mreply">
           <textarea value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Tell the agent what to do next" rows={3} />
+          {jobBusy && <div className="mhint">A background job holds this card. The text stays here until the job stops or its session answers.</div>}
           <div className="macts">
-            <button className="btn primary sm" disabled={!reply.trim() || sending} onClick={() => void send(reply.trim())}>
+            <button className="btn primary sm" disabled={!reply.trim() || !canSend || sending} onClick={() => void send(reply.trim())}>
               {sending ? "Sending…" : "Send"}
             </button>
             <button className="btn ghost sm" disabled={sending} onClick={() => setReply(null)}>
