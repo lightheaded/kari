@@ -14,19 +14,36 @@ fn ssh_bin() -> std::path::PathBuf {
     paths::which("ssh").unwrap_or_else(|| "/usr/bin/ssh".into())
 }
 
+/// The 1Password agent socket. macOS holds a group container under App Data
+/// protection, so the first look at this path raises a system prompt: "kari
+/// would like to access data from other apps". One prompt is the price of the
+/// fallback. A prompt every reconnect is not, which is why the answer is kept
+/// for the life of the process.
+static AGENT_SOCK: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
 /// A GUI app inherits no agent socket from a shell. When none is set, use the
 /// 1Password agent socket if it exists. A plain key file needs no agent.
+///
+/// `KARI_SSH_AUTH_SOCK` names the socket directly. Set it to skip the search,
+/// and set it to an empty value to turn the fallback off: a node that
+/// authenticates with a key file, or an `IdentityAgent` line in
+/// `~/.ssh/config`, needs neither the search nor the prompt.
 fn agent_sock() -> Option<String> {
+    if let Ok(s) = std::env::var("KARI_SSH_AUTH_SOCK") {
+        return Some(s).filter(|s| !s.is_empty());
+    }
     if let Ok(s) = std::env::var("SSH_AUTH_SOCK") {
         if !s.is_empty() {
             return Some(s);
         }
     }
-    let op = paths::home().join("Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock");
-    if op.exists() {
-        return Some(op.to_string_lossy().into_owned());
-    }
-    None
+    AGENT_SOCK
+        .get_or_init(|| {
+            let op = paths::home()
+                .join("Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock");
+            op.exists().then(|| op.to_string_lossy().into_owned())
+        })
+        .clone()
 }
 
 fn ssh_command() -> Command {
