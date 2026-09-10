@@ -207,6 +207,13 @@ pub struct Card {
     pub notes: Option<String>,
     pub archived: bool,
     pub bg_job_id: Option<String>,
+    /// True when autopilot started the run that `bg_job_id` names, with no
+    /// click. It says where the run came from, which `auto_run` above does
+    /// not: `auto_run` says the card MAY run unattended. A run with this flag
+    /// can open a pull request, and the gate refuses to let it release.
+    /// A person who starts the card clears it.
+    #[serde(default)]
+    pub started_by_autopilot: bool,
     /// The last state kari saw for `bg_job_id`. The job list forgets old jobs.
     pub last_job_state: Option<String>,
     pub last_job_at: Option<DateTime<Utc>>,
@@ -356,6 +363,7 @@ impl Card {
             notes: t.notes,
             archived: false,
             bg_job_id: None,
+            started_by_autopilot: false,
             last_job_state: None,
             last_job_at: None,
             scheduled: None,
@@ -978,6 +986,12 @@ pub struct Settings {
     pub autopilot: bool,
     /// Jobs autopilot may start at once.
     pub autopilot_max_jobs: u32,
+    /// Directories where a commit deploys, for example a GitOps repository
+    /// that a cluster follows. An autopilot run cannot commit or push in one
+    /// of them. Empty by default, because the paths belong to the user and
+    /// not to this repository.
+    #[serde(default)]
+    pub autopilot_protected_paths: Vec<String>,
     /// Open new sessions in a herdr pane when herdr runs. Falls back to the terminal.
     pub prefer_herdr: bool,
     /// Close the herdr tab of a card when the user moves the card to Done or
@@ -1085,6 +1099,7 @@ impl Default for Settings {
             fill_ceiling_pct: 85.0,
             autopilot: false,
             autopilot_max_jobs: 1,
+            autopilot_protected_paths: vec![],
             prefer_herdr: true,
             close_herdr_tab_on_done: false,
             weekly_warn_unused_pct: 25.0,
@@ -1192,6 +1207,15 @@ pub struct HookState {
     /// Set by `UserPromptSubmit`, cleared by `Stop`.
     pub turn_active: bool,
     pub events_seen: u32,
+    /// The last command the gate refused in an autopilot run, and the reason
+    /// in a word. The board shows both, so a run that was stopped short of a
+    /// release is visible and does not look like a run that simply ended.
+    #[serde(default)]
+    pub blocked_command: Option<String>,
+    #[serde(default)]
+    pub blocked_kind: Option<String>,
+    #[serde(default)]
+    pub blocked_at: Option<DateTime<Utc>>,
 }
 
 /// A narrative for one session, from Haiku or from heuristics.
@@ -1612,6 +1636,7 @@ mod tests {
             notes: Some("one run in five".into()),
             archived: false,
             bg_job_id: Some("job-1".into()),
+            started_by_autopilot: false,
             last_job_state: Some("working".into()),
             last_job_at: Some(now),
             scheduled: Some(ScheduledRun {

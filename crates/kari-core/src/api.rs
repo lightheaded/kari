@@ -146,6 +146,11 @@ async fn hook(
         warn!("hook rejected: {e}");
         return Json(serde_json::json!({}));
     }
+    // Autopilot can open a pull request. It cannot release. A refusal answers
+    // the call itself, so it comes before the permission hold below.
+    if let Some(reason) = st.engine.gate_refusal(&payload) {
+        return Json(hooks::deny_json(&reason));
+    }
     let Some(rx) = st.engine.hold_permission(&payload) else {
         return Json(serde_json::json!({}));
     };

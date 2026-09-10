@@ -226,6 +226,13 @@ One control in the top bar holds three states:
 
 Ask is the default. In Auto, kari still sends a notice, and the plan panel keeps "Stop these jobs" as the undo. The idle trigger and the manual button always wait for a click.
 
+An autopilot run can do the work and open a pull request. It cannot release.
+kari refuses a merge, a tag, a release, an image push, and a commit in a
+directory where a commit deploys. The run reads why it was stopped, and the
+card shows the command it tried. Name your deploy directories in
+`autopilot_protected_paths`; the list is empty until you fill it. A session
+that you start yourself is never held back.
+
 The mode belongs to a node, because every node runs its own planner. The switch sets every node that answers at once. With a node filter on, it sets that node only. Settings holds the mode of the local machine on its own.
 
 ## The queue

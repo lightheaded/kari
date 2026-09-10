@@ -73,6 +73,9 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
           {offline ? " · node offline" : ""}
           {view.pending ? " · waiting for node" : ""}
         </div>
+        {view.hooks?.blocked_command && (
+          <div className="mblocked">Stopped short of a {view.hooks.blocked_kind ?? "release"}: {view.hooks.blocked_command}</div>
+        )}
         {view.summary?.narrative && !q && actions && <div className="mnarr">{view.summary.narrative}</div>}
         {bg?.waiting_for && <div className="mq">{bg.waiting_for}</div>}
         {q && <div className="mq">{q.question}</div>}

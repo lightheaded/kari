@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS cards (
   notes TEXT,
   archived INTEGER NOT NULL DEFAULT 0,
   bg_job_id TEXT,
+  started_by_autopilot INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   done_at TEXT
@@ -134,6 +135,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("last_job_at", "TEXT"),
         ("model", "TEXT"),
         ("scheduled", "TEXT"),
+        ("started_by_autopilot", "INTEGER NOT NULL DEFAULT 0"),
     ] {
         if !have.iter().any(|h| h == name) {
             conn.execute(&format!("ALTER TABLE cards ADD COLUMN {name} {decl}"), [])?;
@@ -307,10 +309,11 @@ impl Store {
             scheduled: r
                 .get::<_, Option<String>>(22)?
                 .and_then(|j| serde_json::from_str(&j).ok()),
+            started_by_autopilot: r.get::<_, i64>(23)? != 0,
         })
     }
 
-    const CARD_COLS: &'static str = "id, kind, title, session_id, project_cwd, priority, auto_run, run_prompt, permission_mode, estimate, manual_column, manual_lock_priority, tags, notes, archived, bg_job_id, created_at, updated_at, done_at, last_job_state, last_job_at, model, scheduled";
+    const CARD_COLS: &'static str = "id, kind, title, session_id, project_cwd, priority, auto_run, run_prompt, permission_mode, estimate, manual_column, manual_lock_priority, tags, notes, archived, bg_job_id, created_at, updated_at, done_at, last_job_state, last_job_at, model, scheduled, started_by_autopilot";
 
     pub fn list_cards(&self) -> anyhow::Result<Vec<Card>> {
         let sql = format!("SELECT {} FROM cards", Self::CARD_COLS);
@@ -341,14 +344,15 @@ impl Store {
     pub fn upsert_card(&self, c: &Card) -> anyhow::Result<()> {
         self.conn.execute(
             &format!(
-                "INSERT INTO cards ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+                "INSERT INTO cards ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
                  ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, session_id=excluded.session_id,
                  project_cwd=excluded.project_cwd, priority=excluded.priority, auto_run=excluded.auto_run,
                  run_prompt=excluded.run_prompt, permission_mode=excluded.permission_mode, estimate=excluded.estimate,
                  manual_column=excluded.manual_column, manual_lock_priority=excluded.manual_lock_priority, tags=excluded.tags,
                  notes=excluded.notes, archived=excluded.archived, bg_job_id=excluded.bg_job_id, updated_at=excluded.updated_at,
                  done_at=excluded.done_at, last_job_state=excluded.last_job_state, last_job_at=excluded.last_job_at,
-                 model=excluded.model, scheduled=excluded.scheduled",
+                 model=excluded.model, scheduled=excluded.scheduled,
+                 started_by_autopilot=excluded.started_by_autopilot",
                 Self::CARD_COLS
             ),
             params![
@@ -378,6 +382,7 @@ impl Store {
                     .as_ref()
                     .map(serde_json::to_string)
                     .transpose()?,
+                c.started_by_autopilot as i64,
             ],
         )?;
         Ok(())
