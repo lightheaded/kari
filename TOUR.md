@@ -17,7 +17,7 @@ The window has four bands.
 
 Six columns fit a 1440-pixel window with nothing to scroll. Two of them merge states: "Needs me" holds Approval, Decision and My turn, and "Review" holds Validate and Waiting on others. A merged column groups its cards by state inside itself, most urgent first, and a click on a group header collapses it.
 
-Every column ends with "+ Add task", which opens a one-line draft in that column.
+Every column ends with "+ Add task", which opens a one-line draft in that column. A `#name` word in the draft picks the project.
 
 When the board does scroll, three ways move it sideways: a trackpad or Shift with the wheel, a plain wheel over a column that cannot scroll further, and a drag on the ground between the columns.
 
@@ -97,6 +97,10 @@ A task is a card without a session. Give it a title and a project directory. A r
 "Attachments" takes a file for the new card. Paste a screenshot into the body, or press "Attach". The files stay in the dialog until you press Add, so a change of node costs nothing. kari writes them on the node the card lands on.
 
 The foot of every column also holds "+ Add task". It opens a one-line draft in place: type the title and press Enter. "More" opens this dialog with what you typed. A draft added at the foot of Ready is marked "May run unattended" for you, and a draft added to any other column gets a manual lock on it.
+
+A `#name` word in that line picks the project, so the draft needs no dialog. The name matches the project name or the last part of the path, and a few letters are enough: `#docs` finds `docs-site`. The line under the box names the project and the machine before you press Enter. On a board with more than one node, the tag picks the machine as well, because a path lives on one machine.
+
+The tag is cut out of the title. Two rules keep the rest of your text. A word of digits alone, such as `#1234`, is an issue number and is never read as a tag. A word that matches no project also stays in the title, and the line says that nothing answered to it.
 
 ## Columns
 

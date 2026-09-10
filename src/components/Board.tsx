@@ -15,7 +15,7 @@ import type { Column, DerivedState, HubCard, NodeStatus } from "../types";
 import { STATE_HELP, STATE_LABEL } from "../types";
 import { clearRanks, planReorder, sortCards, STATE_TONE } from "../util";
 import { CardItem } from "./CardItem";
-import { ColumnAdd } from "./ColumnAdd";
+import { ColumnAdd, type AddPreview } from "./ColumnAdd";
 
 export interface Picked {
   node: string;
@@ -42,8 +42,9 @@ interface Props {
   onFilterNode: (nodeId: string) => void;
   onAdd: (columnId: string, title: string) => Promise<void>;
   onAddFull: (columnId: string, title: string) => void;
-  /** Where a one-line task lands, shown at the foot of every column. */
-  addTarget: { node: string; project: string | null };
+  /** Read a draft line: where it lands, and whether a `#tag` missed. Shown at
+   *  the foot of every column. */
+  addPreview: (title: string) => AddPreview;
 }
 
 /** The keys `planReorder` and `clearRanks` read, for one card. */
@@ -90,7 +91,7 @@ interface ColProps {
   onFilterNode: (nodeId: string) => void;
   onAdd: (title: string) => Promise<void>;
   onAddFull: (title: string) => void;
-  addTarget: { node: string; project: string | null };
+  addPreview: (title: string) => AddPreview;
   /** Give every placed card of this column back to the automatic order. */
   onClearRanks: () => void;
 }
@@ -108,7 +109,7 @@ function ColumnView({
   onFilterNode,
   onAdd,
   onAddFull,
-  addTarget,
+  addPreview,
   onClearRanks,
 }: ColProps) {
   const { setNodeRef, isOver } = useDroppable({ id: col.id, data: { type: "column", columnId: col.id } });
@@ -176,7 +177,7 @@ function ColumnView({
           {cards.length === 0 && <div className="empty">—</div>}
         </div>
       </SortableContext>
-      <ColumnAdd columnName={col.name} target={addTarget} onAdd={onAdd} onFull={onAddFull} />
+      <ColumnAdd columnName={col.name} preview={addPreview} onAdd={onAdd} onFull={onAddFull} />
     </div>
   );
 }
@@ -193,7 +194,7 @@ export function Board({
   onFilterNode,
   onAdd,
   onAddFull,
-  addTarget,
+  addPreview,
 }: Props) {
   const [active, setActive] = useState<HubCard | null>(null);
   // The order the user just dropped, kept until the board comes back with it.
@@ -351,7 +352,7 @@ export function Board({
             onFilterNode={onFilterNode}
             onAdd={(title) => onAdd(col.id, title)}
             onAddFull={(title) => onAddFull(col.id, title)}
-            addTarget={addTarget}
+            addPreview={addPreview}
             onClearRanks={() => {
               // One call per node: priorities live in each node's own store.
               const column = (byColumn.get(col.id) ?? []).map(rankable);
