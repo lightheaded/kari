@@ -56,6 +56,7 @@ kari keeps itself current after that on both platforms. See "Updates".
 - Estimates: kari learns how much of the 5-hour window one million weighted tokens costs, then gives each card a cost estimate with a band.
 - Proposals: when quota expires unused, kari offers a plan. Start, Start all, Snooze or Dismiss.
 - Model per card: a task can name the model it runs with, for example Fable for a deep review and Sonnet for operational work.
+- Attachments: paste a screenshot into a card or pick a file, and every run of that card reads it. See "Attachments".
 - Run log and kill switch: every background job kari starts writes a state history on its card. The tray stops all jobs after a confirm click.
 - Booked runs: a card can start at a time you pick, such as after the rate limit resets, or one cycle later. The booking ignores the automation mode.
 - One switch for the automatic behaviour: Off, Ask or Auto. Off keeps the quota for you. Auto starts a weekly-reset plan by itself, with a notice and a Stop button.
@@ -180,6 +181,38 @@ Four rules end a booking:
 - The run cannot start, for example because the project directory is gone. kari clears the booking and says why.
 - The card is busy at its time, or every job slot is full. kari holds the booking and looks again every 15 seconds.
 - The booked time passed more than 24 hours ago. kari clears the booking and says so. A host that slept through the reset still runs the card when it wakes. A host that slept for a day does not.
+
+## Attachments
+
+A prompt sometimes needs a picture. Paste a screenshot into the prompt box of
+the card drawer, or press Attach and pick a file. The New task dialog takes
+files the same way.
+
+The run reads them. kari adds the paths under the prompt, so `claude` opens the
+files as part of the task. That is the reason the bytes live on the node that
+owns the card: Claude Code reads a file from a path on the host that runs the
+session. With a server, the server passes the file to that node and keeps no
+copy. With no server, nothing changes at all.
+
+One file is at most 4 MB. A card shows a paperclip with the count, and the
+drawer shows a thumbnail of each picture.
+
+The files sit outside the project, so kari starts the run with `--add-dir` on
+their directory. Without that the default permission mode refuses the file and
+an unattended job would wait for an answer that never comes. A session that
+already runs cannot be given the flag, so it asks you the first time it opens
+an attached file.
+
+A move to another node takes the files with the card. If a file cannot be read
+from the node it is on, the card does not move and kari says which file.
+
+kari removes the files when it no longer needs them:
+
+- An archive removes them at once.
+- A card marked done keeps them for the days set by "Keep attachments after
+  done" in Settings (7 by default).
+- A deleted card keeps them for a day, so that the undo on the toast gives the
+  card back its files.
 
 ## The automation switch
 
@@ -373,6 +406,7 @@ The phone is the exception: it installs through Obtainium, which watches the sam
 ## Data
 
 - Database: `~/.config/kari/kari.db` (SQLite). It also holds the remote nodes, the column lease and the primary intent. Node tokens live in the keychain, never in the database. On the phone the store lives in the app's data directory.
+- Attachments: `~/.config/kari/attachments/<card id>/`, one directory per card, on the node that owns the card. kari sweeps them; see "Attachments".
 - kari reads `~/.claude/sessions`, `~/.claude/projects`, `~/.claude/jobs` and the herdr socket. It never writes to those directories. The hook and status line installers edit `~/.claude/settings.json` only when you ask, and keep a backup.
 
 ## Layout

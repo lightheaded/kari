@@ -4,6 +4,7 @@ import type { HubBoard, HubCard, Project, Settings } from "../types";
 import type { Picked } from "../components/Board";
 import { Drawer } from "../components/Drawer";
 import { AddTaskModal } from "../components/Modals";
+import { uploadPending } from "../components/Attachments";
 import { Toasts } from "../components/Toasts";
 import { useToasts, type Undo } from "../toasts";
 import { Inbox } from "./Inbox";
@@ -174,11 +175,20 @@ export default function MobileApp() {
             columns={board.columns}
             projectsByNode={projectsByNode}
             onClose={() => setTab("inbox")}
-            onSubmit={(nodeId, t) =>
-              run(() => api.addTask(nodeId, t), "Task added", (c) => ({
-                done: "Task taken off the board",
-                run: () => api.deleteCard(nodeId, c.id),
-              })).then(() => {
+            onSubmit={(nodeId, t, files) =>
+              run(
+                async () => {
+                  const card = await api.addTask(nodeId, t);
+                  const failed = await uploadPending(nodeId, card.id, files);
+                  for (const line of failed) toast(line, { err: true });
+                  return card;
+                },
+                files.length > 0 ? `Task added with ${files.length} file(s)` : "Task added",
+                (c) => ({
+                  done: "Task taken off the board",
+                  run: () => api.deleteCard(nodeId, c.id),
+                }),
+              ).then(() => {
                 setTab("board");
               })
             }

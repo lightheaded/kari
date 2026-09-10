@@ -307,13 +307,40 @@ impl HubApi for SplitHub {
             anyhow::bail!("only a task card moves between nodes");
         }
         let mut moved = hc.view.card.clone();
-        moved.id = String::new();
+        // A new id, because the card is written on a store that does not hold
+        // it. An empty id was written here before, and `restore_card` keeps
+        // the id it is given, so the target node ended up with a card whose id
+        // was the empty string: a second move then wrote over the first.
+        moved.id = uuid::Uuid::new_v4().to_string();
+        // Read the files before anything is written. A file that cannot be
+        // read stops the move rather than arriving after the card is gone.
+        let mut files: Vec<NewAttachment> = vec![];
+        for a in &hc.view.attachments {
+            let got = HubApi::attachment(self, from, card, &a.name).map_err(|e| {
+                anyhow::anyhow!(
+                    "the attachment {} could not be read: {e}. The card did not move.",
+                    a.name
+                )
+            })?;
+            files.push(NewAttachment {
+                name: a.name.clone(),
+                data_b64: got.data_b64,
+            });
+        }
 
         let written = if self.is_local(to) {
             self.on_local(|h| h.restore_card(LOCAL, moved))?
         } else {
             self.server.restore_card(to, moved)?
         };
+        for f in files {
+            let name = f.name.clone();
+            if let Err(e) = HubApi::add_attachment(self, to, &written.id, f) {
+                anyhow::bail!(
+                    "the card was created on the target node but the attachment {name} did not go with it: {e}. Delete the new card and try again."
+                );
+            }
+        }
         // Delete second: a card that exists twice is recoverable by hand, and
         // one deleted before the write lands is gone.
         let deleted = if self.is_local(from) {
@@ -325,6 +352,32 @@ impl HubApi for SplitHub {
             warn!("card {card} was copied to {to} but not deleted from {from}: {e}");
         }
         Ok(written)
+    }
+
+    fn add_attachment(
+        &self,
+        node: &str,
+        card: &str,
+        a: NewAttachment,
+    ) -> anyhow::Result<Attachment> {
+        if self.is_local(node) {
+            return self.on_local(|h| h.add_attachment(LOCAL, card, a));
+        }
+        self.server.add_attachment(node, card, a)
+    }
+
+    fn attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<AttachmentData> {
+        if self.is_local(node) {
+            return self.on_local(|h| h.attachment(LOCAL, card, name));
+        }
+        self.server.attachment(node, card, name)
+    }
+
+    fn delete_attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<()> {
+        if self.is_local(node) {
+            return self.on_local(|h| h.delete_attachment(LOCAL, card, name));
+        }
+        self.server.delete_attachment(node, card, name)
     }
 
     fn start_card(&self, node: &str, card: &str, prompt: Option<String>) -> anyhow::Result<String> {

@@ -2,7 +2,7 @@
 
 use crate::model::*;
 use crate::{
-    agents, estimate, herdr, hooks, infer, launcher, paths, peer, planner, quota, registry,
+    agents, attach, estimate, herdr, hooks, infer, launcher, paths, peer, planner, quota, registry,
     store::Store, summary, transcript,
 };
 use chrono::{DateTime, Duration, Utc};
@@ -1051,6 +1051,9 @@ impl Engine {
         }
         let mut out = vec![];
         let mut lock_breaks: Vec<Card> = vec![];
+        // One `read_dir` of the attachments root, not one per card. Most
+        // boards have no attachment at all, and then this is the only call.
+        let with_files = attach::cards_with_files();
         for card in cards {
             if card.archived {
                 continue;
@@ -1129,8 +1132,14 @@ impl Engine {
                         .map(|s| s.chars().take(8).collect())
                         .unwrap_or_else(|| "untitled".into())
                 });
+            let attachments = if with_files.contains(&card.id) {
+                attach::list(&card.id)
+            } else {
+                vec![]
+            };
             out.push(CardView {
                 permission,
+                attachments,
                 title,
                 state,
                 column_id,
@@ -1410,6 +1419,10 @@ impl Engine {
         Ok(c)
     }
 
+    /// Take a card off the board. The attachments stay for a day: this delete
+    /// is undoable from its toast, and `restore_card` brings the card back
+    /// with its id, so the files must still be there. `attach::sweep` collects
+    /// the directory once the undo can no longer happen.
     pub fn delete_card(&self, id: &str) -> anyhow::Result<()> {
         self.store.lock().unwrap().delete_card(id)?;
         self.emit_changed();
@@ -1651,6 +1664,16 @@ impl Engine {
         // herdr is the better home for a new pane when it runs.
         let herdr_ok = settings.prefer_herdr && self.snap.read().unwrap().herdr_ok;
         let model = Self::run_model(&cv.card, &settings);
+        // A card with files hands the session read access to their directory.
+        // The files are outside the project, so without this the session asks
+        // for permission on the first one.
+        let extra_dirs: Vec<String> = if cv.attachments.is_empty() {
+            vec![]
+        } else {
+            vec![paths::card_attachments_dir(card_id)
+                .to_string_lossy()
+                .into_owned()]
+        };
         if herdr_ok {
             let mut args: Vec<String> = match &cv.card.session_id {
                 Some(sid) => vec!["--resume".into(), sid.clone()],
@@ -1659,6 +1682,10 @@ impl Engine {
             if let Some(m) = &model {
                 args.push("--model".into());
                 args.push(m.clone());
+            }
+            for d in &extra_dirs {
+                args.push("--add-dir".into());
+                args.push(d.clone());
             }
             match herdr::open_agent(&cwd, &cv.title, "claude", &args, true) {
                 Ok(p) => {
@@ -1678,8 +1705,8 @@ impl Engine {
         if let Some(sid) = &cv.card.session_id {
             return Ok(JumpPlan {
                 cwd,
-                command: launcher::resume_command(sid, model.as_deref()),
-                argv: launcher::resume_argv(sid, model.as_deref()),
+                command: launcher::resume_command(sid, model.as_deref(), &extra_dirs),
+                argv: launcher::resume_argv(sid, model.as_deref(), &extra_dirs),
                 herdr_pane: None,
                 message: format!("opened {}", short(sid)),
             });
@@ -1687,8 +1714,8 @@ impl Engine {
         // A task without a session: open a fresh Claude Code in the project.
         Ok(JumpPlan {
             cwd: cwd.clone(),
-            command: launcher::new_command(model.as_deref()),
-            argv: launcher::new_argv(model.as_deref()),
+            command: launcher::new_command(model.as_deref(), &extra_dirs),
+            argv: launcher::new_argv(model.as_deref(), &extra_dirs),
             herdr_pane: None,
             message: format!("opened a new session in {cwd}"),
         })
@@ -1904,6 +1931,60 @@ impl Engine {
         }
     }
 
+    // ------------------------------------------------------------ attachments
+
+    /// The files attached to one card.
+    pub fn attachments(&self, card_id: &str) -> Vec<Attachment> {
+        attach::list(card_id)
+    }
+
+    /// Put a file on a card. The card must exist on this node, because the run
+    /// reads the file by its path here.
+    pub fn add_attachment(
+        &self,
+        card_id: &str,
+        name: &str,
+        data: &[u8],
+    ) -> anyhow::Result<Attachment> {
+        if self.store.lock().unwrap().get_card(card_id)?.is_none() {
+            anyhow::bail!("card not found");
+        }
+        let a = attach::add(card_id, name, data)?;
+        self.emit_changed();
+        Ok(a)
+    }
+
+    /// The bytes of one attachment, with its content type. The drawer asks for
+    /// this to show a preview.
+    pub fn attachment_data(&self, card_id: &str, name: &str) -> anyhow::Result<(String, Vec<u8>)> {
+        attach::read(card_id, name)
+    }
+
+    pub fn delete_attachment(&self, card_id: &str, name: &str) -> anyhow::Result<()> {
+        attach::remove(card_id, name)?;
+        self.emit_changed();
+        Ok(())
+    }
+
+    /// Drop the attachments of cards that are finished with. Runs on the poll
+    /// loop, so a card that has been done long enough loses its files whether
+    /// or not anybody opens it.
+    pub fn sweep_attachments(&self) {
+        let cards = match self.store.lock().unwrap().list_cards() {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("attachment sweep: {e}");
+                return;
+            }
+        };
+        let keep = self.settings().attachment_keep_days;
+        let cleared = attach::sweep(&cards, keep, Utc::now());
+        if cleared > 0 {
+            info!("attachment sweep cleared {cleared} card(s)");
+            self.emit_changed();
+        }
+    }
+
     /// Start a card as a background job. Task cards start fresh; session cards resume.
     pub fn start_card(
         &self,
@@ -1936,6 +2017,10 @@ impl Engine {
             _ => compose_prompt(card.kind, card.title.as_deref(), card.run_prompt.as_deref()),
         }
         .ok_or_else(|| anyhow::anyhow!("card has no prompt"))?;
+        // The run reads a file only when the prompt names its path, and the
+        // path is on this node. This is the whole reason an attachment lives
+        // on the node that owns the card.
+        let prompt = with_attachments(&prompt, &cv.attachments);
         let mode = Self::run_permission_mode(card, &settings);
         let model = Self::run_model(card, &settings);
         let name = launcher::slugify(&cv.title);
@@ -1952,6 +2037,17 @@ impl Engine {
         // A job that failed before its first turn leaves a session id with no transcript.
         // Such a session cannot resume, so the run starts fresh.
         let resume = card.session_id.as_deref().filter(|_| cv.session.is_some());
+        // The attached files live outside the project, so the run is given
+        // read access to their directory. Without it the default permission
+        // mode refuses the file and an unattended job blocks on a prompt that
+        // nobody answers.
+        let extra_dirs: Vec<String> = if cv.attachments.is_empty() {
+            vec![]
+        } else {
+            vec![paths::card_attachments_dir(card_id)
+                .to_string_lossy()
+                .into_owned()]
+        };
         let started = launcher::start_background(
             &cwd,
             &prompt,
@@ -1959,6 +2055,7 @@ impl Engine {
             &mode,
             resume,
             model.as_deref(),
+            &extra_dirs,
         )?;
         let mut c = card.clone();
         c.bg_job_id = Some(started.job_id.clone());
@@ -1992,6 +2089,8 @@ impl Engine {
             .filter(|l| l.alive)
             .map(|l| (l.pid, l.session_id.clone()));
         if let Some((pid, sid)) = live {
+            let text = with_attachments(text, &cv.attachments);
+            let text = text.as_str();
             // That session's inbox classes a sender by permission mode and
             // holds a message that does not match, until its own user
             // approves it. So kari states the mode it runs this card under,
@@ -2825,6 +2924,7 @@ impl Engine {
                     if tick.is_multiple_of(4) {
                         me.proposal_tick();
                         me.notice_tick();
+                        me.sweep_attachments();
                     }
                 }
             })
@@ -3062,6 +3162,7 @@ mod tests {
             last_activity_at: None,
             reason: String::new(),
             permission: None,
+            attachments: vec![],
         }
     }
 

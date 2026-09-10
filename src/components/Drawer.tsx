@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import type { CardPatch, Column, HubCard, JobLogEntry, NodeStatus, Project, QuotaSample, ScheduleWhen, Settings } from "../types";
+import type { Attachment, CardPatch, Column, HubCard, JobLogEntry, NodeStatus, Project, QuotaSample, ScheduleWhen, Settings } from "../types";
 import { RUN_MODELS, STATE_LABEL } from "../types";
 import { clearsBox, clock, fmtM, fmtPct, noAutoFill, proseField, relTime, schedulePreview, shortId, untilTime, weighted } from "../util";
 import { useAutoGrow } from "../hooks";
@@ -10,6 +10,7 @@ import type { Act } from "../toasts";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
 import { Markdown } from "./Markdown";
 import { ConversationList, popOutConversation, useConversation } from "./Conversation";
+import { AttachButton, AttachmentList, collectFiles } from "./Attachments";
 
 interface Props {
   view: HubCard;
@@ -161,6 +162,13 @@ export function Drawer({
   const notesGrow = useAutoGrow("drawer.notes", notes.draft, 34, 400);
   const draftGrow = useAutoGrow("drawer.compose", draft, 34, 300);
 
+  /** What the node says the card holds. The board carries the list, and an
+   *  upload answers with the file it wrote, so the strip is right before the
+   *  next board arrives. */
+  const [added, setAdded] = useState<{ card: string; items: Attachment[] } | null>(null);
+  const attachments = added?.card === c.id ? added.items : (view.attachments ?? []);
+  const [attachBusy, setAttachBusy] = useState(false);
+
   /** Whether the whole conversation is on show, or only the last exchange. */
   const [convOpen, setConvOpen] = useState(false);
   const { conv, busy: convBusy, err: convErr, load: loadConv } = useConversation(node, c.id, convOpen && !!c.session_id, view.last_activity_at);
@@ -175,6 +183,7 @@ export function Drawer({
   useEffect(() => {
     setConvOpen(false);
     setDraft("");
+    setAdded(null);
   }, [c.id]);
 
   // Ask the node for every project it knows. The board only names the projects
@@ -326,6 +335,52 @@ export function Drawer({
       if (convOpen) loadConv();
     });
   };
+
+  /** Send picked files to the node that owns the card. Each one is a call of
+   *  its own, so a file that is refused does not take the rest with it. */
+  const attach = async (list: FileList | File[] | null) => {
+    const { files, refused } = await collectFiles(list);
+    // A file the page will not send is reported here, before any call. The
+    // drawer says everything through `onAction`, so a rejected promise is how
+    // it raises an error toast.
+    if (refused.length > 0) {
+      const why = `${refused.join(", ")}. The limit is 4 MB per file.`;
+      void onAction(() => Promise.reject(new Error(why)), undefined, undefined, picked);
+    }
+    if (files.length === 0) return;
+    setAttachBusy(true);
+    try {
+      for (const f of files) {
+        await onAction(
+          async () => {
+            const a = await api.addAttachment(node, c.id, f.name, f.dataUrl);
+            setAdded((prev) => ({
+              card: c.id,
+              items: [...(prev?.card === c.id ? prev.items : attachments), a],
+            }));
+            return `Attached ${a.name}`;
+          },
+          "Attached",
+          undefined,
+          picked,
+        );
+      }
+    } finally {
+      setAttachBusy(false);
+    }
+  };
+
+  const detach = (name: string) =>
+    onAction(
+      async () => {
+        await api.deleteAttachment(node, c.id, name);
+        setAdded({ card: c.id, items: attachments.filter((a) => a.name !== name) });
+        return `Removed ${name}`;
+      },
+      "Removed",
+      undefined,
+      picked,
+    );
 
   const putInComposer = (text: string) => {
     setDraft(text);
@@ -631,6 +686,8 @@ export function Drawer({
                           <div className="hint">
                             Each node keeps its own cards, so a move writes the card again on {moveTarget?.name ?? moveTo} and gives it a new id. It keeps
                             the project only when that node holds one project of the same name.
+                            {attachments.length > 0 &&
+                              ` The ${attachments.length === 1 ? "attached file goes" : `${attachments.length} attached files go`} with it, copied to that node. If a file cannot be read, the card stays here.`}
                           </div>
                           <div style={{ marginTop: 6 }}>
                             <button className="btn sm" disabled={offline || moveTarget?.online === false} onClick={move}>
@@ -885,12 +942,28 @@ export function Drawer({
         )}
       </div>
       <footer className="composer">
+        <AttachmentList
+          nodeId={node}
+          cardId={c.id}
+          items={attachments}
+          disabled={offline || attachBusy}
+          onRemove={detach}
+        />
         <textarea
           {...proseField}
           {...draftGrow}
           value={draft}
           disabled={offline || jobBusy}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            // A screenshot on the clipboard arrives as a file here. Take it
+            // and leave the text paste alone.
+            const files = Array.from(e.clipboardData.files);
+            if (files.length > 0) {
+              e.preventDefault();
+              void attach(files);
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
@@ -901,7 +974,18 @@ export function Drawer({
           aria-label="Prompt"
         />
         <div className="composerrow">
-          <span className="hint">{target.hint}</span>
+          <span className="hint">
+            {target.hint}
+            {attachments.length > 0 &&
+              (running
+                ? ` The ${attachments.length === 1 ? "attached file is" : "attached files are"} named in the prompt. A running session asks for permission the first time it opens one.`
+                : ` The run reads the ${attachments.length === 1 ? "attached file" : `${attachments.length} attached files`} from ${showNode ? view.node_name : "this node"}.`)}
+          </span>
+          <AttachButton
+            disabled={offline || attachBusy}
+            onPick={(l) => void attach(l)}
+            label={attachBusy ? "Attaching…" : "Attach"}
+          />
           <button className="btn primary sm" disabled={!canSend} onClick={send}>
             {draft.trim() || running ? target.label : `▶ ${target.label}`}
           </button>

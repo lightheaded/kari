@@ -116,6 +116,16 @@ impl EventReader {
     }
 }
 
+/// A 404 from a route that a newer kari added means the node is behind, not
+/// that the card is missing. Say the thing the user can act on.
+fn too_old(e: anyhow::Error) -> anyhow::Error {
+    if e.to_string().contains("404") {
+        anyhow::anyhow!("this node runs a kari that cannot hold attachments; update it")
+    } else {
+        e
+    }
+}
+
 pub(crate) fn error_of(resp: Response) -> anyhow::Error {
     let status = resp.status();
     let path = resp.url().path().to_string();
@@ -348,6 +358,34 @@ impl ApiClient {
             &format!("/kari/v1/cards/{id}"),
             None,
         )
+    }
+
+    // ---- attachments ----
+    //
+    // The routes arrived in version 0.12.0. A node that predates them answers
+    // 404, and the message says to update that node rather than repeating the
+    // raw status.
+
+    pub fn add_attachment(&self, card: &str, a: &NewAttachment) -> anyhow::Result<Attachment> {
+        self.post(
+            &format!("/kari/v1/cards/{card}/attachments"),
+            Some(serde_json::to_value(a)?),
+        )
+        .map_err(too_old)
+    }
+
+    pub fn attachment(&self, card: &str, name: &str) -> anyhow::Result<AttachmentData> {
+        self.get(&format!("/kari/v1/cards/{card}/attachments/{name}"))
+            .map_err(too_old)
+    }
+
+    pub fn delete_attachment(&self, card: &str, name: &str) -> anyhow::Result<()> {
+        self.send(
+            reqwest::Method::DELETE,
+            &format!("/kari/v1/cards/{card}/attachments/{name}"),
+            None,
+        )
+        .map_err(too_old)
     }
 
     /// Put a deleted card back. The route arrived after version 0.5.4, so a

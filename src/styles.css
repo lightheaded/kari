@@ -282,6 +282,25 @@ a { color: var(--accent); }
 .composerrow { display: flex; align-items: center; gap: 10px; }
 .composerrow .hint { flex: 1; font-size: 11.5px; }
 .composerrow .btn { flex: none; }
+/* Attached files. One chip each, with a thumbnail when the file is a picture.
+   The row wraps, because a card can hold more files than one line holds. */
+.attachments { display: flex; flex-wrap: wrap; gap: 6px; }
+.attachment {
+  display: flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 3px 4px 3px 6px; border: 1px solid var(--line-soft); border-radius: 5px;
+  background: var(--surface-2); font-size: 11.5px; color: var(--ink-2);
+}
+.attachment img { width: 30px; height: 30px; object-fit: cover; border-radius: 3px; border: 1px solid var(--line-soft); }
+.attachment .attachicon { width: 30px; text-align: center; font-size: 15px; }
+.attachment .attachname { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment .attachsize { color: var(--ink-3); font: 10.5px var(--mono); }
+.attachment .btn { padding: 0 4px; }
+/* In the composer the strip shares a fixed footer with the prompt box, so a
+   card with many files must not push the box off the screen. */
+.composer .attachments { max-height: 78px; overflow-y: auto; }
+.attachrow { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.attachrow .hint { flex: 1; }
+.hint.warn { color: var(--amber); }
 .kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 5px 12px; font-size: 12.5px; }
 .kv dt { color: var(--ink-3); font: 11px/1.6 var(--mono); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }

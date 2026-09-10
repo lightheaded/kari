@@ -1237,6 +1237,23 @@ impl Hub {
         if hc.view.bg_job.as_ref().and_then(|j| j.state.as_deref()) == Some("working") {
             anyhow::bail!("a background job runs on this card. Stop the job, then move it.");
         }
+        // Read the attached files from the source first, before anything is
+        // written. A file that cannot be read is a reason to refuse the move,
+        // not a reason to finish it with the files missing.
+        let mut files: Vec<NewAttachment> = vec![];
+        for a in &hc.view.attachments {
+            let data = self.attachment(from, card, &a.name).map_err(|e| {
+                anyhow::anyhow!(
+                    "the attachment {} could not be read from {}: {e}. The card did not move.",
+                    a.name,
+                    hc.node_name
+                )
+            })?;
+            files.push(NewAttachment {
+                name: a.name.clone(),
+                data_b64: data.data_b64,
+            });
+        }
         // The same project by name, on the target node. Two of that name is no
         // answer, and neither is none.
         let project_cwd = src
@@ -1276,11 +1293,63 @@ impl Hub {
                 warn!("move_card_to_node {card}: the new card kept no mode or tags: {e}");
             }
         }
+        // The files follow the card. They are written before the source card
+        // goes, so a failure here still leaves the originals to read.
+        for f in files {
+            let name = f.name.clone();
+            if let Err(e) = self.add_attachment(to, &new.id, f) {
+                anyhow::bail!(
+                    "the card was created on the target node but the attachment {name} did not go with it: {e}. Delete the new card and try again."
+                );
+            }
+        }
         // The new card exists. Drop the old one last, so a failure here leaves
         // two cards and not none.
         self.delete_card(from, card)?;
         info!("moved card {card} from {from} to {to} as {}", new.id);
         Ok(new)
+    }
+
+    // ------------------------------------------------------------ attachments
+
+    pub fn add_attachment(
+        &self,
+        node: &str,
+        card: &str,
+        a: NewAttachment,
+    ) -> anyhow::Result<Attachment> {
+        let a2 = a.clone();
+        self.on_node(
+            node,
+            move |e| {
+                let data = crate::attach::b64_decode(&a.data_b64)?;
+                e.add_attachment(card, &a.name, &data)
+            },
+            move |c| c.add_attachment(card, &a2),
+        )
+    }
+
+    pub fn attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<AttachmentData> {
+        self.on_node(
+            node,
+            move |e| {
+                let (mime, data) = e.attachment_data(card, name)?;
+                Ok(AttachmentData {
+                    name: name.to_string(),
+                    mime,
+                    data_b64: crate::attach::b64_encode(&data),
+                })
+            },
+            move |c| c.attachment(card, name),
+        )
+    }
+
+    pub fn delete_attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<()> {
+        self.on_node(
+            node,
+            move |e| e.delete_attachment(card, name),
+            move |c| c.delete_attachment(card, name),
+        )
     }
 
     pub fn start_card(
@@ -1921,6 +1990,7 @@ mod tests {
             last_activity_at: None,
             reason: String::new(),
             permission: None,
+            attachments: vec![],
         }
     }
 

@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  Attachment,
+  AttachmentData,
   AutomationMode,
   BoardView,
   Calibration,
@@ -55,6 +57,19 @@ async function devFixture<T>(name: string, fallback?: T): Promise<T> {
   }
   return r.json();
 }
+
+/** A placeholder thumbnail for the dev server, as a data URL. Invented, like
+ *  every other value in a fixture. */
+const DEV_THUMB =
+  "data:image/svg+xml;base64," +
+  btoa(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60">' +
+      '<rect width="60" height="60" fill="#cfd8cf"/>' +
+      '<rect x="8" y="14" width="44" height="26" fill="#8aa08c"/>' +
+      '<circle cx="20" cy="24" r="4" fill="#eef1ec"/>' +
+      '<path d="M8 40l14-12 10 8 8-6 12 10z" fill="#5d7460"/>' +
+      "</svg>",
+  );
 
 /** The one node a single-machine board has. A fixture from an older kari has no nodes. */
 function localNode(): NodeStatus {
@@ -141,6 +156,19 @@ export const api = {
   /** Put a deleted card back, exactly as it was. The undo of `deleteCard`. */
   restoreCard: (nodeId: string, card: Card) =>
     invoke<Card>("restore_card", { nodeId, card }),
+  /** Put a file on a card. The bytes go to the node that owns the card,
+   *  because a run reads a file from a path on that host. */
+  addAttachment: (nodeId: string, cardId: string, name: string, dataB64: string) =>
+    invoke<Attachment>("add_attachment", { nodeId, cardId, name, dataB64 }),
+  /** The bytes of one attachment, for a preview. The dev server has no app
+   *  core to ask, so it answers with a placeholder picture: the demo board
+   *  names attachments and the drawer must still draw a thumbnail. */
+  attachment: (nodeId: string, cardId: string, name: string) =>
+    inDevServer
+      ? Promise.resolve({ name, mime: "image/svg+xml", data_b64: DEV_THUMB })
+      : invoke<AttachmentData>("attachment", { nodeId, cardId, name }),
+  deleteAttachment: (nodeId: string, cardId: string, name: string) =>
+    invoke<void>("delete_attachment", { nodeId, cardId, name }),
   /** Move one task card to another node. The card is recreated there, so the
    *  returned card has a new id. */
   moveCardToNode: (nodeId: string, cardId: string, toNodeId: string) =>

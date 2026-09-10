@@ -270,6 +270,53 @@ pub struct ScheduleRequest {
     pub prompt: Option<String>,
 }
 
+/// A file attached to a card, on the node that owns the card.
+///
+/// The name is also the id: one card holds one file of a name, and the file
+/// lives at `<attachments>/<card id>/<name>`. A run reads it by `path`, which
+/// is why the file must be on the node and not on a server.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Attachment {
+    pub name: String,
+    pub bytes: u64,
+    /// Guessed from the extension. `application/octet-stream` when unknown.
+    pub mime: String,
+    /// Absolute path on the node. This is what the run prompt names.
+    pub path: String,
+    pub at: DateTime<Utc>,
+}
+
+impl Attachment {
+    /// True for a file a card can show as a picture.
+    pub fn is_image(&self) -> bool {
+        self.mime.starts_with("image/")
+    }
+}
+
+/// One file on its way to a card. Base64, because the link carries JSON frames
+/// and a client posts JSON.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewAttachment {
+    pub name: String,
+    pub data_b64: String,
+}
+
+/// One file on its way back, for a preview.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentData {
+    pub name: String,
+    pub mime: String,
+    pub data_b64: String,
+}
+
+/// The largest file one card takes, in bytes.
+///
+/// The ceiling is the link: a node answers a server over a WebSocket frame
+/// capped at `link::MAX_BODY` (8 MiB), and base64 makes a file a third larger.
+/// 4 MiB encodes to about 5.5 MiB and leaves room for the rest of the frame. A
+/// screenshot is far under it.
+pub const MAX_ATTACHMENT_BYTES: u64 = 4 * 1024 * 1024;
+
 /// One pending tool call at the tail of a transcript.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PendingTool {
@@ -591,6 +638,11 @@ pub struct CardView {
     /// A permission prompt kari holds for a remote answer. Away mode only.
     #[serde(default)]
     pub permission: Option<PendingPermission>,
+    /// The files attached to this card, on the node that owns it. The board
+    /// carries the list and not the bytes, so a card shows its paperclip
+    /// without a second call.
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 /// A permission prompt that Claude Code asked and kari holds open, so that a
@@ -733,6 +785,27 @@ pub fn compose_prompt(kind: CardKind, title: Option<&str>, body: Option<&str>) -
     }
 }
 
+/// Name the attached files at the end of a prompt, so the run reads them.
+///
+/// Claude Code takes a file into the conversation when the prompt names its
+/// path, and the file is on the same host as the run. There is no other way to
+/// hand a picture to `claude --bg`, which is why an attachment lives on the
+/// node that owns the card. A card with no attachment gets the prompt back
+/// unchanged.
+pub fn with_attachments(prompt: &str, files: &[Attachment]) -> String {
+    if files.is_empty() {
+        return prompt.to_string();
+    }
+    let mut out = prompt.trim_end().to_string();
+    out.push_str("\n\nFiles attached to this card. Read them before you answer:\n");
+    for f in files {
+        out.push_str(&f.path);
+        out.push('\n');
+    }
+    out.truncate(out.trim_end().len());
+    out
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -797,6 +870,11 @@ pub struct Settings {
     pub away_mode: bool,
     /// Seconds a held permission prompt waits before the dialog appears.
     pub away_hold_secs: u64,
+    /// Days a finished card keeps its attachments. The count starts when the
+    /// card is marked done, and an archive or a delete removes the files at
+    /// once, whatever this says. Zero means the files go as soon as the card
+    /// is done.
+    pub attachment_keep_days: i64,
     /// Where the API answers besides loopback, for a hub on a phone that
     /// cannot open an SSH forward. Empty means loopback only. An interface
     /// name, such as `utun5`, means the private addresses of that interface,
@@ -889,6 +967,7 @@ impl Default for Settings {
             node_name: String::new(),
             away_mode: false,
             away_hold_secs: 600,
+            attachment_keep_days: 7,
             listen_on: String::new(),
             auto_update: true,
             listen_private: false,

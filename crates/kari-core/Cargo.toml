@@ -26,6 +26,7 @@ tokio-stream.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
 if-addrs = "0.13"
+base64.workspace = true
 
 # Both are for one job only: asking whether a pid is still alive. See registry.rs.
 [target.'cfg(unix)'.dependencies]

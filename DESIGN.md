@@ -377,6 +377,65 @@ The card reports what the inbox did. "Held for approval in that session" is a
 different fact from "Sent to the running session", and before kari read the
 receipt the two looked the same.
 
+### Attachments
+
+A prompt sometimes needs a picture: a screenshot of the bug, a mock-up of the
+screen. Claude Code takes a file into a conversation only when the prompt names
+its path, and the file is on the host that runs the session. So an attachment
+lives on the node that owns the card, in
+`~/.config/kari/attachments/<card id>/<name>`, and `start_card` and
+`send_prompt` add the paths under the prompt.
+
+Three options were weighed:
+
+| Where the bytes live | Cost |
+|---|---|
+| On the server | The server is optional and off by default, so the feature would exist only for the users who run one. That breaks rule 2 in `AGENTS.md`. The node needs the file on its own disk in any case, so the server is a hop and never the home. |
+| On the node, node choice locked | The user must delete a file to move a card. A lock that exists because the code is short is a lock the user pays for. |
+| **On the node, and the files follow a move** | Chosen. `move_card_to_node` already writes the card on the target and deletes it from the source. It now reads the files first, and refuses the move when one cannot be read. |
+
+The New task dialog needs no such rule. The files it holds are in the page
+until Add is pressed, so a change of node costs nothing.
+
+The directory is the store. No table stands beside it, because a row and a file
+can disagree, and then a card offers a file that no run can read. A file name
+from a client is reduced to letters, digits, `.`, `-` and `_`, so a name cannot
+leave the card's directory. A second file of one name gets a number.
+
+A space is outside that set as well, and not because of the file system: the
+name is the last path segment of a URL on the node API, that URL travels raw
+inside a link frame, and `Request::builder().uri()` refuses a space. The name
+is also one line of the run prompt, where a path with a space in a list of
+paths is ambiguous. So `my shot.png` is stored as `my_shot.png`.
+
+One file is at most 4 MiB. The ceiling is the link: a node answers a server
+over a WebSocket frame capped at 8 MiB, and base64 makes a file a third larger.
+A screenshot is far under it.
+
+A run is given read access to the card's attachment directory with
+`--add-dir`. Without it the default permission mode (`auto`) refuses a file
+outside the project, and an unattended job blocks on a prompt that nobody
+answers. `--add-dir` takes a list, so it never sits last before the prompt;
+`--` ends the options in any case. "Jump in" passes the same flag, for the
+terminal and for a herdr pane. A session that already runs cannot be given the
+flag, so it asks for permission the first time it opens an attached file, and
+the user is at that terminal.
+
+The server carries the bytes and keeps no copy. `POST
+/kari/v1/hub/nodes/{node}/cards/{card}/attachments` becomes one `req` down the
+link, into the same route the node serves on loopback. One API, two transports,
+as every other route.
+
+Cleanup, on the poll loop:
+
+- An archived card loses its files at once. An archive takes the card off the
+  board and nothing runs it again.
+- A card marked done loses its files once `attachment_keep_days` (7 by default)
+  have passed. Not at the moment it is done: a done card can come back, and a
+  file that is gone cannot.
+- A directory that belongs to no card waits a day, because a delete is undoable
+  from its toast and `restore_card` gives the card back its own id.
+
 ## 10. Jump in
 
 | Where the session lives | Action |
@@ -523,6 +582,8 @@ and says so in Settings. Every other route needs the token in the
 | `POST /kari/v1/cards/{id}/move`, `/start`, `/stop`, `/summarize`, `/jump` | the card actions |
 | `POST`, `DELETE /kari/v1/cards/{id}/schedule` | `schedule_card()`, `cancel_schedule()`: book a run for a time, or drop the booking |
 | `GET /kari/v1/cards/{id}/jobs` | `job_log()` |
+| `GET`, `POST /kari/v1/cards/{id}/attachments` | the files of a card, and one more file (base64 in the body) |
+| `GET`, `DELETE /kari/v1/cards/{id}/attachments/{name}` | the bytes of one file, and its removal |
 | `GET`, `PUT /kari/v1/columns`, `/settings` | columns and settings; `PUT /columns` needs the lease |
 | `GET`, `POST`, `DELETE /kari/v1/lease` | the column lease: read, claim or renew, release |
 | `GET /kari/v1/permissions`, `POST /kari/v1/permissions/{id}` | the permission prompts a node holds, and their answer |
@@ -724,6 +785,8 @@ GET  PUT /kari/v1/hub/columns    the columns the server owns
 POST /kari/v1/hub/nodes/{node}/cards
 POST /kari/v1/hub/nodes/{node}/cards/{card}/move|start|stop|jump|summarize
 POST DELETE /kari/v1/hub/nodes/{node}/cards/{card}/schedule
+POST /kari/v1/hub/nodes/{node}/cards/{card}/attachments
+GET  DELETE .../attachments/{name}   the bytes, and the removal
 POST /kari/v1/hub/nodes/{node}/permissions/{id}
 POST /kari/v1/hub/stop-all
 ```
@@ -925,6 +988,23 @@ Made on 2026-09-06:
   directly. One hub, whether that hub is a server or a desktop app.
 - Quota is aggregated per account across nodes, and a planner on a shared login
   reserves against the account budget rather than its own view of the window.
+
+Made on 2026-09-10:
+
+- A card can carry files. The bytes live on the node that owns the card,
+  because Claude Code reads a file only from a path on the host that runs the
+  session, and because the feature must work on the default setup, which has no
+  server.
+- A server carries a file to its node and keeps no copy. The route is one more
+  route on the node API, dispatched down the link like every other one.
+- The files follow a card to another node rather than blocking the move or
+  being discarded. The move already writes the card twice; reading the files
+  first costs one call and refuses the move when a file cannot be read.
+- The directory is the store. A table beside it can disagree with the files,
+  and then a card offers a file that no run can read.
+- A finished card keeps its files for `attachment_keep_days` (7 by default). An
+  archive clears them at once, and a delete waits a day so that the undo of the
+  delete still finds them.
 
 Made on 2026-09-07:
 

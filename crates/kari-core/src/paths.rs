@@ -68,6 +68,53 @@ pub fn kari_db() -> PathBuf {
     kari_dir().join("kari.db")
 }
 
+/// Where the files attached to cards live, one directory per card.
+///
+/// The directory is the store: there is no table beside it. A row and a file
+/// can disagree, and then a card shows an attachment that a run cannot read.
+/// One `read_dir` cannot disagree with itself.
+pub fn attachments_dir() -> PathBuf {
+    kari_dir().join("attachments")
+}
+
+/// The directory that holds the files of one card.
+pub fn card_attachments_dir(card_id: &str) -> PathBuf {
+    attachments_dir().join(safe_file_name(card_id))
+}
+
+/// A file name that cannot leave the directory it is written in, and that
+/// needs no encoding anywhere kari carries it. Every character outside the
+/// safe set becomes `_`, and a name that says nothing after that becomes
+/// `file`.
+///
+/// The name comes from a client, so `../..` and a leading `/` must not survive
+/// it. The check is a whitelist rather than a search for the bad shapes,
+/// because the bad shapes differ per platform and the whitelist does not.
+///
+/// A space is outside the set as well, and that is not about the file system.
+/// The name is the last segment of a URL on the node API, and that URL travels
+/// raw inside a link frame, where `Request::builder().uri()` refuses a space.
+/// The name is also one line of the run prompt, and a path with a space in a
+/// list of paths is ambiguous to the reader. So `my shot.png` is stored as
+/// `my_shot.png`.
+pub fn safe_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_' => c,
+            _ => '_',
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches('.').to_string();
+    if cleaned.is_empty() {
+        "file".to_string()
+    } else {
+        // A long name is a name a file system refuses. 120 bytes leaves room
+        // for the numeric suffix a collision adds.
+        cleaned.chars().take(120).collect()
+    }
+}
+
 /// The shared secret between the hook relay script and the receiver.
 pub fn hook_token_file() -> PathBuf {
     kari_dir().join("hook-token")

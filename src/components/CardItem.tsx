@@ -87,6 +87,14 @@ export function CardItem({ view, selected, overlay, showNode, offline, lastSeen,
             ~{fmtPct(view.estimate.pct_five_hour)}
           </span>
         )}
+        {(view.attachments?.length ?? 0) > 0 && (
+          <span
+            className="chip plain"
+            title={`${view.attachments!.map((a) => a.name).join(", ")}\nThe files are on ${view.node_name}, and every run of this card reads them.`}
+          >
+            📎 {view.attachments!.length}
+          </span>
+        )}
         {bg && <span className="chip plain">bg {bg.state ?? ""}</span>}
         {view.herdr && <span className="chip plain">herdr {view.herdr.pane_id}</span>}
         {s?.pr_links.length ? <span className="chip plain">PR</span> : null}

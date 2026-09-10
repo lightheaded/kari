@@ -49,17 +49,18 @@ pub fn open_in_terminal(terminal_app: &str, cwd: &str, command: &str) -> anyhow:
     }
 }
 
-pub fn resume_command(session_id: &str, model: Option<&str>) -> String {
+pub fn resume_command(session_id: &str, model: Option<&str>, extra_dirs: &[String]) -> String {
     format!(
-        "claude --resume {}{}",
+        "claude --resume {}{}{}",
         sh_quote(session_id),
-        model_flag(model)
+        model_flag(model),
+        add_dir_flags(extra_dirs)
     )
 }
 
 /// A new session in the current directory.
-pub fn new_command(model: Option<&str>) -> String {
-    format!("claude{}", model_flag(model))
+pub fn new_command(model: Option<&str>, extra_dirs: &[String]) -> String {
+    format!("claude{}{}", model_flag(model), add_dir_flags(extra_dirs))
 }
 
 fn model_flag(model: Option<&str>) -> String {
@@ -67,6 +68,18 @@ fn model_flag(model: Option<&str>) -> String {
         Some(m) => format!(" --model {}", sh_quote(m)),
         None => String::new(),
     }
+}
+
+/// Directories the session may read besides its working directory. The
+/// attachments of a card need this: without it the session asks for
+/// permission on the first file, because the file is outside the project.
+///
+/// One `--add-dir` per directory, and never as the last option: the flag takes
+/// a list and would swallow whatever follows.
+fn add_dir_flags(dirs: &[String]) -> String {
+    dirs.iter()
+        .map(|d| format!(" --add-dir {}", sh_quote(d)))
+        .collect()
 }
 
 pub fn attach_command(job_id: &str) -> String {
@@ -87,15 +100,24 @@ fn push_model(argv: &mut Vec<String>, model: Option<&str>) {
     }
 }
 
-pub fn resume_argv(session_id: &str, model: Option<&str>) -> Vec<String> {
+fn push_dirs(argv: &mut Vec<String>, dirs: &[String]) {
+    for d in dirs {
+        argv.push("--add-dir".into());
+        argv.push(d.clone());
+    }
+}
+
+pub fn resume_argv(session_id: &str, model: Option<&str>, extra_dirs: &[String]) -> Vec<String> {
     let mut argv = vec!["claude".into(), "--resume".into(), session_id.into()];
     push_model(&mut argv, model);
+    push_dirs(&mut argv, extra_dirs);
     argv
 }
 
-pub fn new_argv(model: Option<&str>) -> Vec<String> {
+pub fn new_argv(model: Option<&str>, extra_dirs: &[String]) -> Vec<String> {
     let mut argv = vec!["claude".to_string()];
     push_model(&mut argv, model);
+    push_dirs(&mut argv, extra_dirs);
     argv
 }
 
@@ -250,7 +272,12 @@ pub struct BgStart {
     pub raw: String,
 }
 
-/// `claude --bg [--resume <id>] [--model <model>] --permission-mode <mode> --name <name> -- "<prompt>"` in `cwd`.
+/// `claude --bg [--resume <id>] [--model <model>] --permission-mode <mode> [--add-dir <dir>] --name <name> -- "<prompt>"` in `cwd`.
+///
+/// `extra_dirs` names directories the run may read besides `cwd`. The
+/// attachments of a card go there. Without it the default permission mode
+/// (`auto`) refuses a file outside the project, the run asks for permission
+/// that nobody is there to give, and the job blocks on the first file.
 pub fn start_background(
     cwd: &str,
     prompt: &str,
@@ -258,6 +285,7 @@ pub fn start_background(
     permission_mode: &str,
     resume: Option<&str>,
     model: Option<&str>,
+    extra_dirs: &[String],
 ) -> anyhow::Result<BgStart> {
     let claude =
         paths::which("claude").ok_or_else(|| anyhow::anyhow!("claude not found on PATH"))?;
@@ -272,6 +300,11 @@ pub fn start_background(
     cmd.args(["--permission-mode", permission_mode]);
     if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
         cmd.args(["--model", m]);
+    }
+    // `--add-dir` takes a list, so it must not be the last option before the
+    // prompt: it would swallow it. `--` below is what stops that in any case.
+    for d in extra_dirs {
+        cmd.args(["--add-dir", d]);
     }
     if let Some(n) = name {
         cmd.args(["--name", n]);
@@ -407,6 +440,36 @@ mod tests {
         let raw =
             "\x1b[2mbackgrounded\x1b[22m · \x1b[36m4f678c99\x1b[39m · kari-plan-view-overhaul\n";
         assert_eq!(parse_job_id(&strip_ansi(raw)).as_deref(), Some("4f678c99"));
+    }
+
+    /// `--add-dir` takes a list of directories, so it must never be the last
+    /// option before the prompt: it would take the prompt as a directory. The
+    /// command forms put the prompt nowhere, and `start_background` ends its
+    /// options with `--`, but the order is asserted here because the failure
+    /// is an error about a missing prompt and says nothing about the cause.
+    #[test]
+    fn add_dir_is_one_flag_per_directory_and_quoted() {
+        let dirs = vec!["/home/you/.config/kari/attachments/c1".to_string()];
+        let c = resume_command("abc", Some("haiku"), &dirs);
+        assert_eq!(
+            c,
+            "claude --resume 'abc' --model 'haiku' --add-dir '/home/you/.config/kari/attachments/c1'"
+        );
+        assert_eq!(resume_command("abc", None, &[]), "claude --resume 'abc'");
+
+        let argv = resume_argv("abc", None, &dirs);
+        assert_eq!(
+            argv,
+            vec!["claude", "--resume", "abc", "--add-dir", &dirs[0]]
+        );
+        assert_eq!(new_argv(None, &[]), vec!["claude"]);
+
+        // Two directories give two flags, not one flag with two values.
+        let two = vec!["/a".to_string(), "/b".to_string()];
+        assert_eq!(
+            new_argv(None, &two),
+            vec!["claude", "--add-dir", "/a", "--add-dir", "/b"]
+        );
     }
 
     #[test]

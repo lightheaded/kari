@@ -67,8 +67,24 @@ pub trait HubApi: Send + Sync + 'static {
     ) -> anyhow::Result<()>;
     /// Move a task card to another node. Each node keeps its own store, so the
     /// card is written on the target and deleted from the source: the card
-    /// that comes back has a new id.
+    /// that comes back has a new id. The attachments travel with it.
     fn move_card_to_node(&self, from: &str, card: &str, to: &str) -> anyhow::Result<Card>;
+
+    // --- attachments ------------------------------------------------------
+    //
+    // The bytes live on the node that owns the card, because the run reads
+    // them from a path there. A server carries them down the link and keeps no
+    // copy. The board already carries the list, so there is no `list` method.
+
+    fn add_attachment(
+        &self,
+        node: &str,
+        card: &str,
+        a: NewAttachment,
+    ) -> anyhow::Result<Attachment>;
+    /// The bytes of one attachment, for a preview.
+    fn attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<AttachmentData>;
+    fn delete_attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<()>;
 
     // --- running a card --------------------------------------------------
 
@@ -208,6 +224,21 @@ impl HubApi for crate::hub::Hub {
     }
     fn move_card_to_node(&self, from: &str, card: &str, to: &str) -> anyhow::Result<Card> {
         crate::hub::Hub::move_card_to_node(self, from, card, to)
+    }
+
+    fn add_attachment(
+        &self,
+        node: &str,
+        card: &str,
+        a: NewAttachment,
+    ) -> anyhow::Result<Attachment> {
+        crate::hub::Hub::add_attachment(self, node, card, a)
+    }
+    fn attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<AttachmentData> {
+        crate::hub::Hub::attachment(self, node, card, name)
+    }
+    fn delete_attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<()> {
+        crate::hub::Hub::delete_attachment(self, node, card, name)
     }
 
     fn start_card(&self, node: &str, card: &str, prompt: Option<String>) -> anyhow::Result<String> {
