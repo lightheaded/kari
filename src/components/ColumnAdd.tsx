@@ -66,7 +66,7 @@ export function ColumnAdd({ columnName, preview, onAdd, onFull }: Props) {
         rows={2}
         value={title}
         disabled={busy}
-        placeholder="What needs to happen"
+        placeholder="What needs to happen · #project"
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
@@ -83,19 +83,24 @@ export function ColumnAdd({ columnName, preview, onAdd, onFull }: Props) {
         }}
       />
       <div
-        className={`coltarget hint ${at.unknown ? "miss" : ""}`}
-        title={
-          at.unknown
-            ? `No project is called ${at.unknown}. The word stays in the title.`
-            : "Type #name to pick a project. Change either of these in the full dialog, or later on the card"
-        }
+        className="coltarget hint"
+        title="Type #name to pick a project. Change either of these in the full dialog, or later on the card"
       >
         {at.project ? `→ ${at.project}` : "→ no project yet"}
         {at.node ? ` · ${at.node}` : ""}
-        {at.unknown ? ` · #${at.unknown} names no project` : ""}
       </div>
+      {/* One line under the target, which wraps because a column is narrow and
+          the line above cuts a long path with an ellipsis. It says how to pick
+          a project while the box is empty, and what missed once it is not. */}
+      {at.unknown ? (
+        <div className="colmiss hint warn" title={`The word stays in the title, because no project is called ${at.unknown}.`}>
+          #{at.unknown} names no project
+        </div>
+      ) : (
+        !title.trim() && <div className="colmiss hint">#name picks a project</div>
+      )}
       <div className="draftbar">
-        <span className="hint">Enter saves · #name picks a project</span>
+        <span className="hint">Enter saves</span>
         <div className="spacer" />
         <button className="btn ghost sm" onClick={() => onFull(title)} title="Open the full dialog">
           More ⌄
