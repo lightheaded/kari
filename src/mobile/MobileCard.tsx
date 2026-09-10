@@ -4,11 +4,14 @@ import { api } from "../api";
 import type { Column, HubCard } from "../types";
 import { STATE_LABEL } from "../types";
 import { STATE_TONE, clearsBox, clock, fmtM, relTime, weighted } from "../util";
+import { NodeTag } from "../components/NodeTag";
 
 interface Props {
   view: HubCard;
   columns: Column[];
   showNode: boolean;
+  /** The account that pays for the node. Set when the board spends more than one. */
+  account?: string | null;
   offline: boolean;
   /** Show the answer buttons and the done button on the card itself. */
   actions: boolean;
@@ -29,7 +32,7 @@ export function describeInput(tool: string, input: unknown): string {
 }
 
 /** A card the thumb can act on: tap an option, reply, mark done, stop, or open. */
-export function MobileCard({ view, columns, showNode, offline, actions, onOpen, onAction }: Props) {
+export function MobileCard({ view, columns, showNode, account, offline, actions, onOpen, onAction }: Props) {
   const c = view.card;
   const node = view.node_id;
   const s = view.session;
@@ -65,9 +68,13 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
   return (
     <div className={`mcard tone-${tone} ${offline ? "offline" : ""}`}>
       <button className="mcard-head" onClick={onOpen}>
+        {showNode && (
+          <div className="mcard-node">
+            <NodeTag nodeId={view.node_id} nodeName={view.node_name} account={account} online={!offline} />
+          </div>
+        )}
         <div className="mtitle">{view.title}</div>
         <div className="mmeta">
-          {showNode ? `${view.node_name} · ` : ""}
           <b>{STATE_LABEL[view.state]}</b>
           {view.project_name ? ` · ${view.project_name}` : ""}
           {view.last_activity_at ? ` · ${relTime(view.last_activity_at)}` : ""}

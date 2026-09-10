@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AccountQuota, NodeStatus, QuotaWindow } from "../types";
-import { fmtPct, nodeDot, relTime, resetIn, resetTitle } from "../util";
+import { fmtPct, nodeDot, nodeHue, relTime, resetIn, resetTitle } from "../util";
 
 /** One window of one account: the name of the window, the bar, the percentage
  *  and the reset time.
@@ -113,7 +113,7 @@ function Row({ row, byId, showNodes, onFill, onHelp, onRename, onRefresh, refres
           {row.node_ids.map((id, i) => {
             const n = byId.get(id);
             return (
-              <span key={id} className="anode">
+              <span key={id} className={`anode ${nodeHue(id)}`}>
                 <span className={n ? nodeDot(n) : "dot"} />
                 {row.node_names[i]}
               </span>

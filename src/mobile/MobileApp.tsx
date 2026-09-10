@@ -8,6 +8,7 @@ import { uploadPending } from "../components/Attachments";
 import { Toasts } from "../components/Toasts";
 import { useToasts, type Undo } from "../toasts";
 import { useBackClose } from "../back";
+import { accountByNode } from "../util";
 import { Inbox } from "./Inbox";
 import { BoardTab } from "./BoardTab";
 import { NodesTab } from "./NodesTab";
@@ -151,6 +152,8 @@ export default function MobileApp() {
   }, [board]);
 
   const nodes = useMemo(() => board?.nodes ?? [], [board]);
+  /** The account of each node. Empty while one account pays for everything. */
+  const accountOf = useMemo(() => accountByNode(board?.accounts ?? []), [board]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const cards: HubCard[] = useMemo(() => board?.cards ?? [], [board]);
   const selectedCard = cards.find((c) => selected && c.node_id === selected.node && c.card.id === selected.id) ?? null;
@@ -221,6 +224,7 @@ export default function MobileApp() {
           projects={projectsByNode[selectedCard.node_id] ?? []}
           quota={board?.quotas.find((q) => q.node_id === selectedCard.node_id)?.quota ?? null}
           showNode={nodes.length > 1}
+          account={accountOf.get(selectedCard.node_id) ?? null}
           offline={selectedOffline}
           mobile
           onClose={() => setSelected(null)}

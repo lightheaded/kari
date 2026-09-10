@@ -34,6 +34,8 @@ interface Props {
   columns: Column[];
   cards: HubCard[];
   nodes: NodeStatus[];
+  /** The account of each node. Empty while one account pays for everything. */
+  accountOf: Map<string, string>;
   selected: Picked | null;
   onSelect: (nodeId: string, cardId: string) => void;
   onMove: (nodeId: string, cardId: string, columnId: string) => void;
@@ -83,6 +85,8 @@ interface ColProps {
   cards: HubCard[];
   nodes: Map<string, NodeStatus>;
   showNode: boolean;
+  /** The account of each node, when the board spends more than one. */
+  accountOf: Map<string, string>;
   selected: Picked | null;
   collapsed: Set<string>;
   onCollapse: (key: string) => void;
@@ -101,6 +105,7 @@ function ColumnView({
   cards,
   nodes,
   showNode,
+  accountOf,
   selected,
   collapsed,
   onCollapse,
@@ -125,6 +130,7 @@ function ColumnView({
         view={c}
         selected={selected?.node === c.node_id && selected?.id === c.card.id}
         showNode={showNode}
+        account={accountOf.get(c.node_id) ?? null}
         offline={node ? !node.online : false}
         lastSeen={node?.last_seen ?? null}
         onSelect={() => onSelect(c.node_id, c.card.id)}
@@ -186,6 +192,7 @@ export function Board({
   columns,
   cards,
   nodes,
+  accountOf,
   selected,
   onSelect,
   onMove,
@@ -344,6 +351,7 @@ export function Board({
             cards={byColumn.get(col.id) ?? []}
             nodes={byId}
             showNode={showNode}
+            accountOf={accountOf}
             selected={selected}
             collapsed={collapsed}
             onCollapse={onCollapse}
@@ -365,7 +373,9 @@ export function Board({
         ))}
       </div>
       <DragOverlay dropAnimation={null}>
-        {active ? <CardItem view={active} selected={false} showNode={showNode} overlay /> : null}
+        {active ? (
+          <CardItem view={active} selected={false} showNode={showNode} account={accountOf.get(active.node_id) ?? null} overlay />
+        ) : null}
       </DragOverlay>
     </DndContext>
   );

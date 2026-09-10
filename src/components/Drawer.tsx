@@ -10,6 +10,7 @@ import { UnsavedBar } from "./Modals";
 import type { Act } from "../toasts";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
 import { Markdown } from "./Markdown";
+import { NodeTag } from "./NodeTag";
 import { ConversationList, popOutConversation, useConversation } from "./Conversation";
 import { AttachButton, AttachmentList, collectFiles } from "./Attachments";
 
@@ -26,6 +27,8 @@ interface Props {
   quota?: QuotaSample | null;
   /** Show which node the card comes from. Set when the board has more than one node. */
   showNode?: boolean;
+  /** The account that pays for the node. Set when the board spends more than one. */
+  account?: string | null;
   /** The node does not answer. Every action is off until it comes back. */
   offline?: boolean;
   /** A phone: no terminal here, so Jump in gives way to the command to run elsewhere. */
@@ -127,6 +130,7 @@ export function Drawer({
   projects = [],
   quota,
   showNode,
+  account,
   offline,
   mobile,
   onClose,
@@ -459,8 +463,13 @@ export function Drawer({
       <UnsavedBar guard={guard} text="The prompt you typed is not sent." />
       <header>
         <TitleEdit title={view.title} saved={c.title ?? ""} onSave={(t) => patch({ title: t })} />
+        {showNode && (
+          <div className="runson">
+            <span className="rk">Runs on</span>
+            <NodeTag nodeId={view.node_id} nodeName={view.node_name} account={account} online={!offline} large />
+          </div>
+        )}
         <div className="hint">
-          {showNode ? `${view.node_name} · ` : ""}
           {STATE_LABEL[view.state]} · {view.reason}
           {view.locked ? " · manual placement" : ""}
         </div>

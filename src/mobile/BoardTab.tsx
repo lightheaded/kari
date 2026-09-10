@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { Act } from "../toasts";
 import type { HubBoard } from "../types";
-import { nodeDot, sortCards } from "../util";
+import { accountByNode, nodeDot, nodeHue, sortCards } from "../util";
 import { setAutomation } from "../automation";
 import { AutomationSwitch } from "../components/AutomationSwitch";
 import { MobileCard } from "./MobileCard";
@@ -28,6 +28,7 @@ export function BoardTab({ board, onOpen, onAction }: Props) {
   const [colId, setColId] = useState<string | null>(null);
   const [node, setNode] = useState("");
   const many = board.nodes.length > 1;
+  const accountOf = useMemo(() => accountByNode(board.accounts ?? []), [board.accounts]);
   const nodeById = useMemo(() => new Map(board.nodes.map((n) => [n.id, n])), [board.nodes]);
   const start = Math.max(
     0,
@@ -102,7 +103,7 @@ export function BoardTab({ board, onOpen, onAction }: Props) {
             All nodes
           </button>
           {board.nodes.map((n) => (
-            <button key={n.id} className={`nodechip ${node === n.id ? "sel" : ""}`} onClick={() => setNode(n.id)}>
+            <button key={n.id} className={`nodechip ${nodeHue(n.id)} ${node === n.id ? "sel" : ""}`} onClick={() => setNode(n.id)}>
               <span className={nodeDot(n)} />
               {n.name}
             </button>
@@ -125,6 +126,7 @@ export function BoardTab({ board, onOpen, onAction }: Props) {
               view={c}
               columns={board.columns}
               showNode={many}
+              account={accountOf.get(c.node_id) ?? null}
               offline={nodeById.get(c.node_id)?.online === false}
               actions={false}
               onOpen={() => onOpen(c.node_id, c.card.id)}

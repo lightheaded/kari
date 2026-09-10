@@ -5,6 +5,7 @@ import { STATE_LABEL } from "../types";
 import { clock, noAutoFill, proseField } from "../util";
 import { useAutoGrow } from "../hooks";
 import { Markdown } from "./Markdown";
+import { NodeTag } from "./NodeTag";
 
 /** How many turns the conversation view asks for first. A long transcript is
  *  read from its end, so the newest turns are the ones worth waiting for. */
@@ -310,8 +311,11 @@ export function ConversationWindow({ node, card }: { node: string; card: string 
       <header>
         <h2>{view?.title ?? (lost ? "This card is gone from the board." : "…")}</h2>
         {view && (
-          <div className="hint">
-            {view.node_name} · {STATE_LABEL[view.state]} · {view.reason}
+          <div className="runson">
+            <NodeTag nodeId={view.node_id} nodeName={view.node_name} />
+            <span className="hint">
+              {STATE_LABEL[view.state]} · {view.reason}
+            </span>
           </div>
         )}
       </header>

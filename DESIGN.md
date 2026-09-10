@@ -686,7 +686,17 @@ The board the UI receives holds the columns of the local node, a status per
 node, and every card with its node id and node name. Rules:
 
 - A card is `(node id, card id)`. Every action routes by node.
-- Each card shows a node badge. A chip row filters the board to one node.
+- Each card shows a node tag: the machine, and the account that pays for it.
+  A chip row filters the board to one node. The tag holds the colour of the
+  machine, from a hash of the node id over eight colours (`nodeHue`). Nothing
+  stores the colour and nobody picks it, so it survives a restart, and two
+  hubs that see one node paint it the same. The colour marks the machine
+  everywhere: the tag, the filter chip, the row in the stats strip, the head
+  of a queue block and the head of a plan. State keeps its own colours, on
+  the left edge of the card and in the state chip, so a machine never reads
+  as a state. The account half of the tag appears only when the board spends
+  more than one account, because a name that never changes tells the reader
+  nothing.
 - Columns live in the hub's store. The primary hub pushes them to each node on
   connect and on every change. A remote card that carries an unknown column
   falls back to the column that accepts its state.
