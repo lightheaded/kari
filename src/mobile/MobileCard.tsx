@@ -3,7 +3,7 @@ import type { Act } from "../toasts";
 import { api } from "../api";
 import type { Column, HubCard } from "../types";
 import { STATE_LABEL } from "../types";
-import { STATE_TONE, clearsBox, fmtM, relTime, weighted } from "../util";
+import { STATE_TONE, clearsBox, clock, fmtM, relTime, weighted } from "../util";
 
 interface Props {
   view: HubCard;
@@ -68,6 +68,7 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
           {view.last_activity_at ? ` · ${relTime(view.last_activity_at)}` : ""}
           {s && weighted(s.tokens) > 0 ? ` · ${fmtM(weighted(s.tokens))}` : ""}
           {bg?.state ? ` · bg ${bg.state}` : ""}
+          {c.scheduled ? ` · ⏱ ${clock(c.scheduled.at)}` : ""}
           {offline ? " · node offline" : ""}
         </div>
         {view.summary?.narrative && !q && actions && <div className="mnarr">{view.summary.narrative}</div>}

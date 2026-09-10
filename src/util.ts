@@ -1,4 +1,4 @@
-import type { CardView, DerivedState, NodeStatus, TokenTotals } from "./types";
+import type { CardView, DerivedState, NodeStatus, QuotaSample, ScheduleWhen, TokenTotals } from "./types";
 
 export function relTime(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return "—";
@@ -32,6 +32,48 @@ export function clock(iso: string | null | undefined): string {
   const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   if (sameDay) return hm;
   return `${d.toLocaleDateString([], { weekday: "short" })} ${hm}`;
+}
+
+/** The 5-hour rate-limit window, in milliseconds. */
+export const FIVE_HOUR_MS = 5 * 3600_000;
+/** kari books a run this long after the reset, so a run never meets the old
+ *  window. The node applies the same margin: see `planner::RESET_MARGIN_MINUTES`. */
+export const RESET_MARGIN_MS = 2 * 60_000;
+
+/** The next reset of a window, from a sample that can be older than it.
+ *  A machine that slept reports a reset that has passed, and every window
+ *  after it is the same length, so step forward until the time is ahead. */
+export function nextReset(
+  resetsAt: string | null | undefined,
+  lengthMs: number,
+  now = Date.now(),
+): number | null {
+  if (!resetsAt) return null;
+  let t = new Date(resetsAt).getTime();
+  if (Number.isNaN(t)) return null;
+  let guard = 0;
+  while (t <= now && guard < 400) {
+    t += lengthMs;
+    guard += 1;
+  }
+  return t > now ? t : null;
+}
+
+/** The time each choice would book, for the labels on the buttons. The node
+ *  resolves the real time from its own sample, so this is a preview. */
+export function schedulePreview(
+  quota: QuotaSample | null | undefined,
+  now = Date.now(),
+): Partial<Record<ScheduleWhen, string>> {
+  const five = nextReset(quota?.five_hour?.resets_at, FIVE_HOUR_MS, now);
+  const week = nextReset(quota?.seven_day?.resets_at, 7 * 24 * 3600_000, now);
+  const out: Partial<Record<ScheduleWhen, string>> = {};
+  if (five !== null) {
+    out.next_reset = new Date(five + RESET_MARGIN_MS).toISOString();
+    out.following_cycle = new Date(five + FIVE_HOUR_MS + RESET_MARGIN_MS).toISOString();
+  }
+  if (week !== null) out.weekly_reset = new Date(week + RESET_MARGIN_MS).toISOString();
+  return out;
 }
 
 export function weighted(t: TokenTotals | undefined | null): number {

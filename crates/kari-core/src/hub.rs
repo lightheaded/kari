@@ -1322,6 +1322,30 @@ impl Hub {
         c.conversation(card, limit)
     }
 
+    /// Book a run of a card. The node resolves the cycle to a time of its own,
+    /// because the rate-limit windows belong to the account it is signed in to.
+    pub fn schedule_card(
+        &self,
+        node: &str,
+        card: &str,
+        req: ScheduleRequest,
+    ) -> anyhow::Result<Card> {
+        let r2 = req.clone();
+        self.on_node(
+            node,
+            move |e| e.schedule_card(card, req),
+            move |c| c.schedule_card(card, &r2),
+        )
+    }
+
+    pub fn cancel_schedule(&self, node: &str, card: &str) -> anyhow::Result<Card> {
+        self.on_node(
+            node,
+            |e| e.cancel_schedule(card),
+            |c| c.cancel_schedule(card),
+        )
+    }
+
     /// Answer a permission prompt a node holds: `allow` or `deny`.
     pub fn answer_permission(&self, node: &str, id: &str, behavior: &str) -> anyhow::Result<()> {
         self.on_node(
@@ -1877,6 +1901,7 @@ mod tests {
                 bg_job_id: None,
                 last_job_state: None,
                 last_job_at: None,
+                scheduled: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
                 done_at: None,

@@ -210,9 +210,64 @@ pub struct Card {
     /// The last state kari saw for `bg_job_id`. The job list forgets old jobs.
     pub last_job_state: Option<String>,
     pub last_job_at: Option<DateTime<Utc>>,
+    /// A run the user asked for at a set time. The node that owns the card
+    /// starts it. None means that no run waits.
+    #[serde(default)]
+    pub scheduled: Option<ScheduledRun>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub done_at: Option<DateTime<Utc>>,
+}
+
+/// A run that waits for a time, not for a trigger.
+///
+/// The planner decides what to run when quota is free. This is the other
+/// half: the user picks one card and one time, and the node starts it then.
+/// It is a manual start with a delay, so the budget and the automation mode
+/// do not gate it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScheduledRun {
+    /// When the run starts, at the earliest.
+    pub at: DateTime<Utc>,
+    /// A one-off prompt for this run. None sends the prompt of the card.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// What the user picked, in words: `when the 5-hour window resets`.
+    pub reason: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A run that waits longer than this after its time did not start, because the
+/// host slept or every job slot stayed busy. kari drops it and says so. A run
+/// the user asked for yesterday must not surprise them tomorrow.
+pub const SCHEDULE_EXPIRY_HOURS: i64 = 24;
+
+/// The time a caller asks for, before a node resolves it.
+///
+/// The reset times belong to the node, not to the window that shows the
+/// button, so the caller names the cycle and the node reads its own sample.
+/// A hub with three nodes on three accounts would otherwise have to guess.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "when", rename_all = "snake_case")]
+pub enum ScheduleWhen {
+    /// The next reset of the 5-hour window.
+    NextReset,
+    /// One 5-hour window after that.
+    FollowingCycle,
+    /// The next reset of the 7-day window.
+    WeeklyReset,
+    /// A time the caller names.
+    At { at: DateTime<Utc> },
+}
+
+/// What a caller sends to schedule a run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleRequest {
+    #[serde(flatten)]
+    pub when: ScheduleWhen,
+    /// A one-off prompt for this run. None sends the prompt of the card.
+    #[serde(default)]
+    pub prompt: Option<String>,
 }
 
 /// One pending tool call at the tail of a transcript.
@@ -631,6 +686,10 @@ pub struct QueueStep {
     pub starts_at: Option<DateTime<Utc>>,
     /// One phrase for the user: `now`, `does not fit the budget`, and so on.
     pub reason: String,
+    /// True when the user set the time. Such a step ignores the budget, the
+    /// job slots and the automation mode, so it is never blocked.
+    #[serde(default)]
+    pub scheduled: bool,
 }
 
 /// The dry run of the planner. Built on demand, never stored.
@@ -1313,6 +1372,12 @@ mod tests {
             bg_job_id: Some("job-1".into()),
             last_job_state: Some("working".into()),
             last_job_at: Some(now),
+            scheduled: Some(ScheduledRun {
+                at: now,
+                prompt: Some("go on".into()),
+                reason: "when the 5-hour window resets".into(),
+                created_at: now,
+            }),
             created_at: now,
             updated_at: now,
             done_at: None,
@@ -1362,6 +1427,32 @@ mod tests {
             compose_prompt(CardKind::Task, Some("  "), Some("   ")),
             None
         );
+    }
+
+    /// The window and the phone both build this body by hand, so the shape the
+    /// UI sends must keep parsing. A flattened, internally tagged enum is easy
+    /// to break with an innocent-looking change to either side.
+    #[test]
+    fn a_schedule_request_reads_the_body_the_ui_sends() {
+        let cycle: ScheduleRequest =
+            serde_json::from_str(r#"{"when":"next_reset","prompt":null}"#).unwrap();
+        assert_eq!(cycle.when, ScheduleWhen::NextReset);
+        assert!(cycle.prompt.is_none());
+
+        let with_prompt: ScheduleRequest =
+            serde_json::from_str(r#"{"when":"following_cycle","prompt":"go on"}"#).unwrap();
+        assert_eq!(with_prompt.when, ScheduleWhen::FollowingCycle);
+        assert_eq!(with_prompt.prompt.as_deref(), Some("go on"));
+
+        let weekly: ScheduleRequest = serde_json::from_str(r#"{"when":"weekly_reset"}"#).unwrap();
+        assert_eq!(weekly.when, ScheduleWhen::WeeklyReset);
+
+        let at: ScheduleRequest =
+            serde_json::from_str(r#"{"when":"at","at":"2030-01-02T14:00:00Z"}"#).unwrap();
+        match at.when {
+            ScheduleWhen::At { at } => assert_eq!(at.to_rfc3339(), "2030-01-02T14:00:00+00:00"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

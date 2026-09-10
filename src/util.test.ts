@@ -1,6 +1,61 @@
 import { describe, expect, test } from "bun:test";
-import { addTarget, clearsBox, fuzzyScore, planReorder, sortCards, type FilterProject, type Rankable } from "./util";
-import type { CardView, DerivedState } from "./types";
+import {
+  addTarget,
+  clearsBox,
+  FIVE_HOUR_MS,
+  fuzzyScore,
+  nextReset,
+  planReorder,
+  RESET_MARGIN_MS,
+  schedulePreview,
+  sortCards,
+  type FilterProject,
+  type Rankable,
+} from "./util";
+import type { CardView, DerivedState, QuotaSample } from "./types";
+
+describe("schedulePreview", () => {
+  const now = Date.parse("2026-09-09T12:00:00Z");
+  const sample = (five: string | null, week: string | null): QuotaSample => ({
+    at: new Date(now).toISOString(),
+    five_hour: five ? { used_percentage: 95, resets_at: five } : null,
+    seven_day: week ? { used_percentage: 80, resets_at: week } : null,
+    source: "statusline",
+  });
+
+  test("the next reset carries the margin the node adds", () => {
+    const p = schedulePreview(sample("2026-09-09T14:00:00Z", null), now);
+    expect(Date.parse(p.next_reset!)).toBe(Date.parse("2026-09-09T14:00:00Z") + RESET_MARGIN_MS);
+  });
+
+  test("the following cycle is one window later", () => {
+    const p = schedulePreview(sample("2026-09-09T14:00:00Z", null), now);
+    expect(Date.parse(p.following_cycle!) - Date.parse(p.next_reset!)).toBe(FIVE_HOUR_MS);
+  });
+
+  test("a sample taken before the reset it names still points forward", () => {
+    // The machine slept. The window reset twice while it was away.
+    const p = schedulePreview(sample("2026-09-09T02:00:00Z", null), now);
+    // 02:00 plus three windows is 17:00, the first reset that is still ahead.
+    expect(Date.parse(p.next_reset!)).toBe(Date.parse("2026-09-09T17:00:00Z") + RESET_MARGIN_MS);
+  });
+
+  test("a node with no sample offers no cycle", () => {
+    expect(schedulePreview(null, now)).toEqual({});
+    expect(schedulePreview(sample(null, null), now)).toEqual({});
+  });
+
+  test("the weekly reset comes only from the weekly window", () => {
+    const p = schedulePreview(sample(null, "2026-09-12T09:00:00Z"), now);
+    expect(p.weekly_reset).toBeDefined();
+    expect(p.next_reset).toBeUndefined();
+  });
+
+  test("a reset time that cannot be read is no reset", () => {
+    expect(nextReset("not a time", FIVE_HOUR_MS, now)).toBeNull();
+    expect(nextReset(null, FIVE_HOUR_MS, now)).toBeNull();
+  });
+});
 
 /** One card in a column, for the reorder tests. */
 const c = (key: string, priority = 0, node = "local"): Rankable => ({ key, node, id: key, priority });

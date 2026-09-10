@@ -57,6 +57,7 @@ kari keeps itself current after that on both platforms. See "Updates".
 - Proposals: when quota expires unused, kari offers a plan. Start, Start all, Snooze or Dismiss.
 - Model per card: a task can name the model it runs with, for example Fable for a deep review and Sonnet for operational work.
 - Run log and kill switch: every background job kari starts writes a state history on its card. The tray stops all jobs after a confirm click.
+- Booked runs: a card can start at a time you pick, such as after the rate limit resets, or one cycle later. The booking ignores the automation mode.
 - One switch for the automatic behaviour: Off, Ask or Auto. Off keeps the quota for you. Auto starts a weekly-reset plan by itself, with a notice and a Stop button.
 - A queue strip that names the next runs in order, the cost of each step, and its start time. It starts nothing.
 - Remote nodes: another host runs `kari-node serve` and its cards join the same board; quota meters are grouped by Claude Code account. See "Remote nodes".
@@ -154,6 +155,32 @@ A running session decides for itself whether it takes the prompt at once. Its in
 
 Stop one job from the card drawer. Stop everything from the tray: the first click arms the item, the second click within 10 seconds stops the jobs. The tray tooltip shows how many sessions work and how many need you.
 
+## Booked runs
+
+A plan waits for a trigger. A booked run waits for a time.
+
+Press "Schedule" in the card drawer when the 5-hour window has no room left. The block offers three cycles and one free time:
+
+| Choice | When the run starts |
+|---|---|
+| When the window resets | At the next reset of the 5-hour window, plus two minutes. |
+| The cycle after that | One 5-hour window later. |
+| When the week resets | At the next reset of the 7-day window, plus two minutes. |
+| A time you pick | At that time. |
+
+Each button carries the time it would book. The times come from the rate-limit sample of the node that holds the card, because the windows belong to the Claude Code account that node is signed in to. A node with no sample cannot offer a cycle. Install the status line wrapper, or pick a time.
+
+A booked run is a manual start with a delay. The automation mode, the budget and the planner do not gate it, and a card holds one booking at a time. The one-off prompt field in the drawer goes with the booking, so you can book a follow-up on a session card instead of a fresh run.
+
+The card shows a clock chip with the time. The queue strip lists the booking first, with a clock in place of the step number. Cancel it in the drawer.
+
+Four rules end a booking:
+
+- The run starts. kari clears the booking and sends a notice.
+- The run cannot start, for example because the project directory is gone. kari clears the booking and says why.
+- The card is busy at its time, or every job slot is full. kari holds the booking and looks again every 15 seconds.
+- The booked time passed more than 24 hours ago. kari clears the booking and says so. A host that slept through the reset still runs the card when it wakes. A host that slept for a day does not.
+
 ## The automation switch
 
 One control in the top bar holds three states:
@@ -170,7 +197,7 @@ The mode belongs to a node, because every node runs its own planner. The switch 
 
 ## The queue
 
-The strip under the filter bar is a dry run of the planner. It names each step in order: the card, the cost as a percent of the 5-hour window, the state of the window after it, and the start time. A step outside the budget says so. If nothing can run at all, the strip gives the reason: the mode is off, no quota sample arrived, every job slot is busy, the budget is too small, or no card is marked "May run unattended".
+The strip under the filter bar is a dry run of the planner, with the booked runs in front of it. It names each step in order: the card, the cost as a percent of the 5-hour window, the state of the window after it, and the start time. A booked run carries a clock in place of its number, and a run booked after the reset counts against an empty window. A step outside the budget says so. If nothing can run at all, the strip gives the reason: the mode is off, no quota sample arrived, every job slot is busy, the budget is too small, or no card is marked "May run unattended".
 
 The strip starts nothing. The plan panel keeps the buttons.
 

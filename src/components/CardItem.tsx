@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import type { HubCard } from "../types";
 import { STATE_LABEL } from "../types";
-import { STATE_TONE, fmtM, fmtPct, relTime, weighted } from "../util";
+import { STATE_TONE, clock, fmtM, fmtPct, relTime, weighted } from "../util";
 
 interface Props {
   view: HubCard;
@@ -76,6 +76,11 @@ export function CardItem({ view, selected, overlay, showNode, offline, lastSeen,
         {view.card.kind === "task" && <span className="chip plain">task</span>}
         {view.card.kind === "session" && !live && !bg && view.state !== "done" && <span className="chip plain">exited</span>}
         {view.card.auto_run && <span className="chip plain">auto-run</span>}
+        {view.card.scheduled && (
+          <span className="chip booked" title={`Booked to start ${view.card.scheduled.reason}`}>
+            ⏱ {clock(view.card.scheduled.at)}
+          </span>
+        )}
         {view.card.model && <span className="chip plain" title="Model used when this card starts">{view.card.model}</span>}
         {view.card.kind === "task" && view.estimate && (
           <span className="chip plain" title={`estimate ${fmtM(view.estimate.weighted_tokens)} weighted tokens (${view.estimate.source})`}>

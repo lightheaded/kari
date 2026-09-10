@@ -417,6 +417,30 @@ impl ApiClient {
         self.get(&format!("/kari/v1/cards/{id}/conversation?limit={limit}"))
     }
 
+    /// Book a run of a card on that node. The route arrived after version
+    /// 0.9.0, so an older node answers 404. Say what to do about it.
+    pub fn schedule_card(&self, id: &str, req: &ScheduleRequest) -> anyhow::Result<Card> {
+        self.post(
+            &format!("/kari/v1/cards/{id}/schedule"),
+            Some(serde_json::to_value(req)?),
+        )
+        .map_err(|e| {
+            if e.to_string().contains("404") {
+                anyhow::anyhow!("this node runs a kari that cannot schedule a run; update it")
+            } else {
+                e
+            }
+        })
+    }
+
+    pub fn cancel_schedule(&self, id: &str) -> anyhow::Result<Card> {
+        self.send(
+            reqwest::Method::DELETE,
+            &format!("/kari/v1/cards/{id}/schedule"),
+            None,
+        )
+    }
+
     pub fn summarize_card(&self, id: &str) -> anyhow::Result<Summary> {
         self.post(&format!("/kari/v1/cards/{id}/summarize"), None)
     }

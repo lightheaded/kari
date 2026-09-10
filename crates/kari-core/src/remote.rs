@@ -344,6 +344,21 @@ impl HubApi for RemoteHub {
         ))
     }
 
+    fn schedule_card(&self, node: &str, card: &str, req: ScheduleRequest) -> anyhow::Result<Card> {
+        self.post(
+            &format!("/kari/v1/hub/nodes/{node}/cards/{card}/schedule"),
+            Some(serde_json::to_value(req)?),
+        )
+    }
+
+    fn cancel_schedule(&self, node: &str, card: &str) -> anyhow::Result<Card> {
+        self.send(
+            reqwest::Method::DELETE,
+            &format!("/kari/v1/hub/nodes/{node}/cards/{card}/schedule"),
+            None,
+        )
+    }
+
     fn stop_all(&self) -> anyhow::Result<usize> {
         let b: CountBody = self.post("/kari/v1/hub/stop-all", None)?;
         Ok(b.count)

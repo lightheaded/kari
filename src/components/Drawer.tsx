@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import type { CardPatch, Column, HubCard, JobLogEntry, NodeStatus, Project, Settings } from "../types";
+import type { CardPatch, Column, HubCard, JobLogEntry, NodeStatus, Project, QuotaSample, ScheduleWhen, Settings } from "../types";
 import { RUN_MODELS, STATE_LABEL } from "../types";
-import { clearsBox, clock, fmtM, fmtPct, noAutoFill, proseField, relTime, shortId, weighted } from "../util";
+import { clearsBox, clock, fmtM, fmtPct, noAutoFill, proseField, relTime, schedulePreview, shortId, untilTime, weighted } from "../util";
 import { useAutoGrow } from "../hooks";
 import { useCloseGuard } from "../dirty";
 import { UnsavedBar } from "./Modals";
@@ -19,6 +19,9 @@ interface Props {
   nodes?: NodeStatus[];
   /** Projects of this card's node, from the board. Used until the node answers. */
   projects?: Project[];
+  /** The rate-limit sample of this card's node. It dates the cycles the
+   *  schedule buttons offer. Without it the node cannot book a cycle. */
+  quota?: QuotaSample | null;
   /** Show which node the card comes from. Set when the board has more than one node. */
   showNode?: boolean;
   /** The node does not answer. Every action is off until it comes back. */
@@ -120,6 +123,7 @@ export function Drawer({
   settings,
   nodes = [],
   projects = [],
+  quota,
   showNode,
   offline,
   mobile,
@@ -138,6 +142,10 @@ export function Drawer({
   const prompt = useSavedText(c.run_prompt ?? "", (v) => patch({ run_prompt: v }));
   const notes = useSavedText(c.notes ?? "", (v) => patch({ notes: v }));
   const [draft, setDraft] = useState("");
+  /** The card whose schedule block is open, and the time typed into it. This
+   *  holds the card id, exactly as the move field does, so another card closes
+   *  the block and a poll of the board never does. */
+  const [booking, setBooking] = useState<{ card: string; at: string } | null>(null);
   const [log, setLog] = useState<JobLogEntry[]>([]);
   /** The project directory of the card. OTHER means "use the typed path". */
   const [cwd, setCwd] = useState(c.project_cwd ?? "");
@@ -262,6 +270,36 @@ export function Drawer({
   const jobBusy = !running && bg?.state === "working";
   const hasDir = !!(c.project_cwd ?? s?.cwd);
 
+  // The run the user booked, and the times each choice would book. The node
+  // resolves the real time from its own sample, so these labels are a preview.
+  const booked = c.scheduled;
+  const canBook = hasDir && bg?.state !== "working";
+  const bookingOpen = booking?.card === c.id;
+  const bookAt = bookingOpen ? booking.at : "";
+  const preview = useMemo(() => schedulePreview(quota), [quota]);
+  const cycles: { when: ScheduleWhen; label: string }[] = [
+    { when: "next_reset", label: "When the window resets" },
+    { when: "following_cycle", label: "The cycle after that" },
+    { when: "weekly_reset", label: "When the week resets" },
+  ];
+  /** Book the run. The composer at the foot holds the one-off prompt, so its
+   *  text goes with the booking and the box empties once the booking lands. */
+  const book = (when: ScheduleWhen, at?: string) => {
+    const text = draft.trim();
+    return onAction(
+      async () => {
+        await api.scheduleCard(node, c.id, when, { at, prompt: text || undefined });
+        setBooking(null);
+      },
+      "Run booked",
+      { done: "Booking cancelled", run: () => api.cancelSchedule(node, c.id), label: "Cancel" },
+      picked,
+    ).then((sent) => {
+      setDraft((d) => (clearsBox(d, text, sent) ? "" : d));
+      return sent;
+    });
+  };
+
   /** Where the composer sends, in one line, and the button that says so. */
   const target = running
     ? { label: "Send", hint: `Goes into the running session (pid ${view.live!.pid}). An idle session answers at once; a busy one takes it after the current turn.` }
@@ -312,6 +350,17 @@ export function Drawer({
           {!mobile && (
             <button className="btn primary sm" disabled={offline} onClick={() => onAction(() => api.jumpIn(node, c.id), "Opened", undefined, picked)}>
               Jump in
+            </button>
+          )}
+          {canBook && (
+            <button
+              className={`btn sm ${booked ? "primary" : ""}`}
+              disabled={offline}
+              title="Start this card at a set time, such as after the rate limit resets"
+              onClick={() => setBooking(bookingOpen ? null : { card: c.id, at: "" })}
+              aria-expanded={bookingOpen || !!booked}
+            >
+              ⏱ {booked ? `Booked ${clock(booked.at)}` : "Schedule"}
             </button>
           )}
           {bg?.state === "working" && (
@@ -385,6 +434,65 @@ export function Drawer({
             </button>
           )}
         </div>
+        {canBook && (bookingOpen || booked) && (
+          <div className="sched">
+            {booked && (
+              <div className="sched-now">
+                <b>⏱ {clock(booked.at)}</b>
+                <span className="hint">
+                  {booked.reason}
+                  {untilTime(booked.at) ? ` · in ${untilTime(booked.at)}` : " · due"}
+                  {booked.prompt ? " · with a one-off prompt" : ""}
+                </span>
+                <button
+                  className="btn ghost sm"
+                  disabled={offline}
+                  onClick={() => onAction(() => api.cancelSchedule(node, c.id), "Booking cancelled", undefined, picked)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {bookingOpen && (
+              <>
+                <div className="hint">
+                  kari starts this card at the time you pick, whatever the automation mode is. The times come from the
+                  rate-limit sample of {view.node_name}. Text in the box at the foot goes with the booking as a one-off
+                  prompt.
+                </div>
+                <div className="sched-opts">
+                  {cycles.map((o) => (
+                    <button
+                      key={o.when}
+                      className="btn sm"
+                      disabled={offline || !preview[o.when]}
+                      title={preview[o.when] ? clock(preview[o.when]) : "This node has no reset time for that window"}
+                      onClick={() => book(o.when)}
+                    >
+                      {o.label}
+                      <span className="at">{preview[o.when] ? clock(preview[o.when]) : "unknown"}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="sched-at">
+                  <input
+                    type="datetime-local"
+                    value={bookAt}
+                    onChange={(e) => setBooking({ card: c.id, at: e.target.value })}
+                    aria-label="Start at this time"
+                  />
+                  <button
+                    className="btn sm"
+                    disabled={offline || !bookAt}
+                    onClick={() => book("at", new Date(bookAt).toISOString())}
+                  >
+                    Book this time
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </header>
       <div className="body">
         {view.permission && (

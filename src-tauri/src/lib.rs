@@ -2,7 +2,7 @@ use kari_core::hub::HubEvent;
 use kari_core::hubapi::HubApi;
 use kari_core::{
     AutomationMode, Calibration, Card, CardPatch, Column, Engine, HubBoard, NewNode, NewTask,
-    NodePatch, NodeStatus, Project, Proposal, QuotaSample, Settings, Summary,
+    NodePatch, NodeStatus, Project, Proposal, QuotaSample, ScheduleRequest, Settings, Summary,
 };
 use std::sync::Arc;
 #[cfg(desktop)]
@@ -314,6 +314,26 @@ async fn start_card(
 #[tauri::command]
 async fn stop_card(state: State<'_, AppState>, node_id: String, card_id: String) -> R<()> {
     off_thread(&state.hub, move |h| h.stop_card(&node_id, &card_id)).await
+}
+
+/// Book a run of a card for a time. The window sends the cycle the user
+/// picked, and the node turns it into a time from its own quota sample.
+#[tauri::command]
+async fn schedule_card(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    req: ScheduleRequest,
+) -> R<Card> {
+    off_thread(&state.hub, move |h| {
+        h.schedule_card(&node_id, &card_id, req)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn cancel_schedule(state: State<'_, AppState>, node_id: String, card_id: String) -> R<Card> {
+    off_thread(&state.hub, move |h| h.cancel_schedule(&node_id, &card_id)).await
 }
 
 #[tauri::command]
@@ -841,6 +861,8 @@ macro_rules! handlers {
             stop_card,
             send_prompt,
             conversation,
+            schedule_card,
+            cancel_schedule,
             stop_all,
             quota_history,
             list_projects,

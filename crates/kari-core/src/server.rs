@@ -334,6 +334,27 @@ async fn hub_start_card(
     Ok(Json(IdBody { id }))
 }
 
+async fn hub_schedule_card(
+    State(st): State<ServerState>,
+    Path((node, card)): Path<(String, String)>,
+    Json(req): Json<ScheduleRequest>,
+) -> Result<Json<Card>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(
+        blocking(move || h.schedule_card(&node, &card, req)).await?,
+    ))
+}
+
+async fn hub_cancel_schedule(
+    State(st): State<ServerState>,
+    Path((node, card)): Path<(String, String)>,
+) -> Result<Json<Card>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(
+        blocking(move || h.cancel_schedule(&node, &card)).await?,
+    ))
+}
+
 async fn hub_stop_card(
     State(st): State<ServerState>,
     Path((node, card)): Path<(String, String)>,
@@ -703,6 +724,10 @@ pub fn router(registry: Arc<LinkRegistry>, token: String, hub: Option<Arc<Hub>>)
         .route(
             "/hub/nodes/{node}/cards/{card}/conversation",
             get(hub_conversation),
+        )
+        .route(
+            "/hub/nodes/{node}/cards/{card}/schedule",
+            post(hub_schedule_card).delete(hub_cancel_schedule),
         )
         .route("/hub/nodes/{node}/cards/{card}/jump", post(hub_jump_in))
         .route(

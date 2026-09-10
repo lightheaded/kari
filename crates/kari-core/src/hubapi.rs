@@ -79,6 +79,10 @@ pub trait HubApi: Send + Sync + 'static {
     fn send_prompt(&self, node: &str, card: &str, text: &str) -> anyhow::Result<String>;
     /// The prompts and replies of the card's session, the last `limit` of them.
     fn conversation(&self, node: &str, card: &str, limit: usize) -> anyhow::Result<Conversation>;
+    /// Book a run of a card for a time. The node turns the cycle the caller
+    /// names into a time from its own rate-limit sample.
+    fn schedule_card(&self, node: &str, card: &str, req: ScheduleRequest) -> anyhow::Result<Card>;
+    fn cancel_schedule(&self, node: &str, card: &str) -> anyhow::Result<Card>;
     fn stop_all(&self) -> anyhow::Result<usize>;
     fn summarize_card(&self, node: &str, card: &str) -> anyhow::Result<Summary>;
     fn job_log(&self, node: &str, card: &str, limit: usize) -> Vec<JobLogEntry>;
@@ -217,6 +221,12 @@ impl HubApi for crate::hub::Hub {
     }
     fn conversation(&self, node: &str, card: &str, limit: usize) -> anyhow::Result<Conversation> {
         crate::hub::Hub::conversation(self, node, card, limit)
+    }
+    fn schedule_card(&self, node: &str, card: &str, req: ScheduleRequest) -> anyhow::Result<Card> {
+        crate::hub::Hub::schedule_card(self, node, card, req)
+    }
+    fn cancel_schedule(&self, node: &str, card: &str) -> anyhow::Result<Card> {
+        crate::hub::Hub::cancel_schedule(self, node, card)
     }
     fn stop_all(&self) -> anyhow::Result<usize> {
         crate::hub::Hub::stop_all(self)
