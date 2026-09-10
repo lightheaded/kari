@@ -272,45 +272,80 @@ pub struct BgStart {
     pub raw: String,
 }
 
+/// An empty MCP configuration. With `--strict-mcp-config` it starts no server
+/// at all, whatever the Claude Code configuration of the user holds.
+pub const NO_MCP_SERVERS: &str = r#"{"mcpServers":{}}"#;
+
+/// What a background run needs besides its directory and its prompt.
+///
+/// These travel together because they all come from one card and one settings
+/// record. A parameter list would say the same, but every reader of the call
+/// would have to count the arguments to know which is which.
+pub struct RunOptions<'a> {
+    /// The name of the job, as the job list shows it.
+    pub name: Option<&'a str>,
+    pub permission_mode: &'a str,
+    /// The session to continue. None starts a new one.
+    pub resume: Option<&'a str>,
+    /// Model alias or full name. None takes the Claude Code default.
+    pub model: Option<&'a str>,
+    /// Directories the run may read besides its working directory.
+    pub extra_dirs: &'a [String],
+    /// Start the MCP servers of the Claude Code configuration. When false, the
+    /// run starts none.
+    pub mcp_servers: bool,
+}
+
+/// Everything after the program name for a background run.
+///
+/// The list is built apart from the process so that a test can read what a
+/// run is given. The order matters: `--add-dir` takes a list and would
+/// swallow whatever follows it, and `--` ends the options so that a prompt
+/// which starts with `-` stays a prompt.
+fn bg_argv(opts: &RunOptions, prompt: &str) -> Vec<String> {
+    fn pair(argv: &mut Vec<String>, flag: &str, value: &str) {
+        argv.push(flag.to_string());
+        argv.push(value.to_string());
+    }
+    let mut argv = vec!["--bg".to_string()];
+    if let Some(r) = opts.resume {
+        pair(&mut argv, "--resume", r);
+    }
+    pair(&mut argv, "--permission-mode", opts.permission_mode);
+    if let Some(m) = opts.model.map(str::trim).filter(|m| !m.is_empty()) {
+        pair(&mut argv, "--model", m);
+    }
+    // A run that starts no MCP server needs both flags: the empty
+    // configuration, and the word that says to ignore every other one.
+    if !opts.mcp_servers {
+        argv.push("--strict-mcp-config".to_string());
+        pair(&mut argv, "--mcp-config", NO_MCP_SERVERS);
+    }
+    for d in opts.extra_dirs {
+        pair(&mut argv, "--add-dir", d);
+    }
+    if let Some(n) = opts.name {
+        pair(&mut argv, "--name", n);
+    }
+    argv.push("--".to_string());
+    argv.push(prompt.to_string());
+    argv
+}
+
 /// `claude --bg [--resume <id>] [--model <model>] --permission-mode <mode> [--add-dir <dir>] --name <name> -- "<prompt>"` in `cwd`.
 ///
 /// `extra_dirs` names directories the run may read besides `cwd`. The
 /// attachments of a card go there. Without it the default permission mode
 /// (`auto`) refuses a file outside the project, the run asks for permission
 /// that nobody is there to give, and the job blocks on the first file.
-pub fn start_background(
-    cwd: &str,
-    prompt: &str,
-    name: Option<&str>,
-    permission_mode: &str,
-    resume: Option<&str>,
-    model: Option<&str>,
-    extra_dirs: &[String],
-) -> anyhow::Result<BgStart> {
+pub fn start_background(cwd: &str, prompt: &str, opts: &RunOptions) -> anyhow::Result<BgStart> {
     let claude =
         paths::which("claude").ok_or_else(|| anyhow::anyhow!("claude not found on PATH"))?;
     let mut cmd = Command::new(claude);
     crate::proc::quiet(&mut cmd);
     cmd.current_dir(cwd)
         .env("PATH", paths::child_path())
-        .arg("--bg");
-    if let Some(r) = resume {
-        cmd.args(["--resume", r]);
-    }
-    cmd.args(["--permission-mode", permission_mode]);
-    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
-        cmd.args(["--model", m]);
-    }
-    // `--add-dir` takes a list, so it must not be the last option before the
-    // prompt: it would swallow it. `--` below is what stops that in any case.
-    for d in extra_dirs {
-        cmd.args(["--add-dir", d]);
-    }
-    if let Some(n) = name {
-        cmd.args(["--name", n]);
-    }
-    // `--` ends the options. A prompt that starts with `-` stays a prompt.
-    cmd.arg("--").arg(prompt);
+        .args(bg_argv(opts, prompt));
     // The job id comes from stdout. Colour codes in it would break every later lookup.
     cmd.env("NO_COLOR", "1")
         .env_remove("FORCE_COLOR")
@@ -495,6 +530,61 @@ mod tests {
         }
         let c = herdr_remote_command("box").unwrap();
         assert!(c.ends_with("--remote 'box'"));
+    }
+
+    fn opts<'a>(mcp_servers: bool, extra_dirs: &'a [String]) -> RunOptions<'a> {
+        RunOptions {
+            name: Some("a-card"),
+            permission_mode: "bypassPermissions",
+            resume: None,
+            model: None,
+            extra_dirs,
+            mcp_servers,
+        }
+    }
+
+    /// The bug this guards: every background run started the MCP servers of
+    /// the Claude Code configuration. A server that reads the data of another
+    /// app makes macOS ask the person at the desk for permission, and nobody
+    /// answers a dialog that an unattended job raised.
+    #[test]
+    fn a_run_without_mcp_servers_says_so_twice() {
+        let argv = bg_argv(&opts(false, &[]), "do the thing");
+        assert!(
+            argv.contains(&"--strict-mcp-config".to_string()),
+            "{argv:?}"
+        );
+        // The empty configuration alone is not enough: without the strict
+        // flag Claude Code reads the other configurations as well.
+        let i = argv.iter().position(|a| a == "--mcp-config").unwrap();
+        assert_eq!(argv[i + 1], NO_MCP_SERVERS);
+    }
+
+    #[test]
+    fn a_run_with_mcp_servers_names_no_configuration() {
+        let argv = bg_argv(&opts(true, &[]), "do the thing");
+        assert!(
+            !argv.iter().any(|a| a.starts_with("--strict-mcp")),
+            "{argv:?}"
+        );
+        assert!(!argv.iter().any(|a| a == "--mcp-config"), "{argv:?}");
+    }
+
+    /// `--mcp-config` and `--add-dir` both take a list. Either one would eat
+    /// the prompt if it came last, so the prompt stays behind `--`.
+    #[test]
+    fn the_prompt_is_last_and_behind_the_end_of_the_options() {
+        let dirs = vec!["/tmp/files".to_string()];
+        let argv = bg_argv(&opts(false, &dirs), "-not-a-flag");
+        assert_eq!(argv.last().unwrap(), "-not-a-flag");
+        assert_eq!(argv[argv.len() - 2], "--");
+        let dash = argv.iter().position(|a| a == "--").unwrap();
+        for flag in ["--mcp-config", "--add-dir", "--name"] {
+            assert!(
+                argv.iter().position(|a| a == flag).unwrap() < dash,
+                "{flag}"
+            );
+        }
     }
 
     #[test]

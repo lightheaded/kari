@@ -303,6 +303,7 @@ impl Engine {
             permission_mode: None,
             model: None,
             estimate_weighted_tokens: None,
+            mcp_servers: RunMcp::default(),
             manual_column: None,
             manual_lock_priority: None,
             tags: vec![],
@@ -1640,6 +1641,12 @@ impl Engine {
             .or_else(|| Some(settings.default_run_model.clone()).filter(|m| !m.trim().is_empty()))
     }
 
+    /// Whether a run of this card starts the MCP servers of the Claude Code
+    /// configuration: what the card says, or the setting when it follows it.
+    fn run_mcp_servers(card: &Card, settings: &Settings) -> bool {
+        card.mcp_servers.resolve(settings.mcp_servers_in_runs)
+    }
+
     /// The permission mode kari runs this card under: the card's own mode, or
     /// the default for a card that names none.
     fn run_permission_mode(card: &Card, settings: &Settings) -> String {
@@ -2140,11 +2147,14 @@ impl Engine {
         let started = launcher::start_background(
             &cwd,
             &prompt,
-            Some(&name),
-            &mode,
-            resume,
-            model.as_deref(),
-            &extra_dirs,
+            &launcher::RunOptions {
+                name: Some(&name),
+                permission_mode: &mode,
+                resume,
+                model: model.as_deref(),
+                extra_dirs: &extra_dirs,
+                mcp_servers: Self::run_mcp_servers(card, &settings),
+            },
         )?;
         let mut c = card.clone();
         c.bg_job_id = Some(started.job_id.clone());
@@ -3185,6 +3195,7 @@ mod tests {
 
     fn card_with_job(job: Option<&str>) -> Card {
         Card {
+            mcp_servers: RunMcp::default(),
             id: "c1".into(),
             kind: CardKind::Task,
             title: None,
@@ -3210,6 +3221,57 @@ mod tests {
             updated_at: Utc::now(),
             done_at: None,
         }
+    }
+
+    /// The choice of the card wins over the setting, and a card that says
+    /// nothing follows the setting. A run must never start a password manager
+    /// server behind the back of the user.
+    #[test]
+    fn a_card_can_overrule_the_mcp_setting() {
+        let mut s = Settings::default();
+        let mut card = card_with_job(None);
+
+        // A new card follows the setting, whichever way the setting points.
+        assert_eq!(card.mcp_servers, RunMcp::Default);
+        assert!(!Engine::run_mcp_servers(&card, &s));
+        s.mcp_servers_in_runs = true;
+        assert!(Engine::run_mcp_servers(&card, &s));
+
+        // The card overrules it in both directions.
+        card.mcp_servers = RunMcp::Off;
+        assert!(!Engine::run_mcp_servers(&card, &s));
+        s.mcp_servers_in_runs = false;
+        card.mcp_servers = RunMcp::On;
+        assert!(Engine::run_mcp_servers(&card, &s));
+    }
+
+    /// The choice lives in a column of its own, so a wrong column index would
+    /// lose it. An older row holds nothing there and must read as `Default`.
+    #[test]
+    fn the_mcp_choice_of_a_card_survives_the_database() {
+        let dir = std::env::temp_dir().join(format!("kari-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("kari.db")).unwrap();
+
+        let mut card = card_with_job(None);
+        card.mcp_servers = RunMcp::On;
+        store.upsert_card(&card).unwrap();
+        let back = store.get_card(&card.id).unwrap().unwrap();
+        assert_eq!(back.mcp_servers, RunMcp::On);
+        // Every other field of the card must still read back as it was.
+        assert_eq!(back.id, card.id);
+        assert_eq!(back.started_by_autopilot, card.started_by_autopilot);
+
+        // A patch that names `Default` puts the card back on the setting.
+        let mut back = back;
+        back.apply_patch(&CardPatch {
+            mcp_servers: Some(RunMcp::Default),
+            ..Default::default()
+        });
+        store.upsert_card(&back).unwrap();
+        let again = store.get_card(&card.id).unwrap().unwrap();
+        assert_eq!(again.mcp_servers, RunMcp::Default);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The board lost a card about once a minute. A task card ran job A, its

@@ -2169,6 +2169,7 @@ mod tests {
     fn view(column_id: &str, state: DerivedState) -> CardView {
         CardView {
             card: Card {
+                mcp_servers: RunMcp::default(),
                 id: "c".into(),
                 kind: CardKind::Task,
                 title: None,

@@ -260,6 +260,7 @@ mod tests {
 
     fn card(id: &str) -> Card {
         Card {
+            mcp_servers: RunMcp::default(),
             id: id.into(),
             kind: CardKind::Task,
             title: Some("t".into()),

@@ -246,7 +246,7 @@ pub fn human_bytes(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{CardKind, MAX_ATTACHMENT_BYTES};
+    use crate::model::{CardKind, RunMcp, MAX_ATTACHMENT_BYTES};
 
     /// The kari directory is one static for the whole process, and `sweep`
     /// reads every directory under it. So these tests take a lock and start
@@ -264,6 +264,7 @@ mod tests {
 
     fn card(id: &str) -> Card {
         Card {
+            mcp_servers: RunMcp::default(),
             id: id.into(),
             kind: CardKind::Task,
             title: Some("t".into()),
