@@ -1591,6 +1591,15 @@ impl Engine {
             .or_else(|| Some(settings.default_run_model.clone()).filter(|m| !m.trim().is_empty()))
     }
 
+    /// The permission mode kari runs this card under: the card's own mode, or
+    /// the default for a card that names none.
+    fn run_permission_mode(card: &Card, settings: &Settings) -> String {
+        card.permission_mode
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or(settings.default_permission_mode.clone())
+    }
+
     /// Open the session where it lives. Returns a short description of what happened.
     /// Work out what "Jump in" must do for a card, and do the part that lives on
     /// this node: focus or open a herdr pane. The returned command, when not
@@ -1919,10 +1928,7 @@ impl Engine {
             _ => compose_prompt(card.kind, card.title.as_deref(), card.run_prompt.as_deref()),
         }
         .ok_or_else(|| anyhow::anyhow!("card has no prompt"))?;
-        let mode = card
-            .permission_mode
-            .clone()
-            .unwrap_or(settings.default_permission_mode.clone());
+        let mode = Self::run_permission_mode(card, &settings);
         let model = Self::run_model(card, &settings);
         let name = launcher::slugify(&cv.title);
         // A session that runs right now cannot be resumed a second time: Claude
@@ -1978,22 +1984,29 @@ impl Engine {
             .filter(|l| l.alive)
             .map(|l| (l.pid, l.session_id.clone()));
         if let Some((pid, sid)) = live {
-            peer::send(pid, &sid, text)?;
+            // That session's inbox classes a sender by permission mode and
+            // holds a message that does not match, until its own user
+            // approves it. So kari states the mode it runs this card under,
+            // and reports what the inbox did instead of assuming that the
+            // prompt arrived.
+            let mode = Self::run_permission_mode(&cv.card, &self.settings());
+            let outcome = peer::send(pid, &sid, text, peer::mode_class(&mode))?;
             // The run log is the card's own history, so a prompt handed over
             // belongs in it beside the job states, under the job when there is
             // one and under the session otherwise.
+            let mut detail = format!("prompt {}: {}", outcome.log_word(), truncate(text, 120));
+            if let Some(said) = outcome.detail() {
+                detail.push_str(&format!(" ({said})"));
+            }
             let _ = self.store.lock().unwrap().log_job(&JobLogEntry {
                 at: Utc::now(),
                 job_id: cv.card.bg_job_id.clone().unwrap_or_else(|| sid.clone()),
                 card_id: Some(card_id.to_string()),
                 state: Some("sent".into()),
-                detail: Some(format!(
-                    "prompt sent to the running session: {}",
-                    truncate(text, 120)
-                )),
+                detail: Some(detail),
             });
             self.emit_changed();
-            return Ok(format!("Sent to the running session (pid {pid})"));
+            return Ok(outcome.line(pid));
         }
         let job = self.start_card(card_id, Some(text.to_string()))?;
         Ok(format!("Started background job {job}"))
