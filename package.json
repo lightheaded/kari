@@ -12,6 +12,7 @@
     "demo": "node scripts/demo-fixtures.mjs && KARI_FIXTURES=docs/demo vite",
     "screenshots": "node scripts/screenshots.mjs",
     "tauri": "tauri",
+    "build:mac": "APPLE_SIGNING_IDENTITY=\"$(scripts/mac-signing-identity.sh)\" tauri build --bundles app --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
     "test": "bun test"
   },
   "dependencies": {

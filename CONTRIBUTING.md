@@ -34,6 +34,30 @@ scripts/check-privacy.sh
 
 CI runs the same commands, plus a gitleaks scan of the history. The last script refuses absolute home paths, email addresses, private network addresses and internal host names. Use `~` or a placeholder such as `/Users/you/` instead.
 
+### A macOS build you install
+
+Build the app for your own Mac with this command:
+
+```
+bun run build:mac
+```
+
+It signs the app with a local, self-signed identity, which it creates on the
+first run. Use it for every build that you install.
+
+macOS asks the user before an app reads the data of another app, controls
+another app, or replaces a bundle. It remembers the answer against the code
+signature of the app that asked. A build with no identity is signed ad-hoc, so
+the only stable part of its signature is the hash of the binary. Each build
+changes that hash, the remembered answer no longer applies, and macOS asks
+again after every install. The local identity holds the signature still, so
+you answer once.
+
+The certificate stays on your machine. It gives no Gatekeeper trust, and it is
+not a substitute for a Developer ID. `scripts/mac-signing-identity.sh`
+explains the detail. Keep the certificate: a new one is a new identity, and
+every answer starts again.
+
 ## Pull requests
 
 - Keep one change per pull request.
