@@ -157,6 +157,32 @@ export interface ScheduledRun {
 /** The cycle a caller names. The node turns it into a time of its own. */
 export type ScheduleWhen = "next_reset" | "following_cycle" | "weekly_reset" | "at";
 
+/** A file attached to a card. The name is the id: one card holds one file of
+ *  a name. The path is on the node, and the run prompt names it. */
+export interface Attachment {
+  name: string;
+  bytes: number;
+  mime: string;
+  path: string;
+  at: string;
+}
+
+/** One file on its way to a card. Base64, because every hop carries JSON. */
+export interface NewAttachment {
+  name: string;
+  data_b64: string;
+}
+
+export interface AttachmentData {
+  name: string;
+  mime: string;
+  data_b64: string;
+}
+
+/** The largest file one card takes. Matches `MAX_ATTACHMENT_BYTES` in the
+ *  core: the ceiling is the link frame that carries a file to a node. */
+export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+
 export interface PendingQuestion {
   question: string;
   options: string[];
@@ -365,6 +391,8 @@ export interface CardView {
   last_activity_at: string | null;
   reason: string;
   permission?: PendingPermission | null;
+  /** Files attached to the card, on the node that owns it. */
+  attachments?: Attachment[];
 }
 export interface BoardView {
   columns: Column[];
@@ -411,6 +439,8 @@ export interface Settings {
   weekly_warn_unused_pct: number;
   away_mode: boolean;
   away_hold_secs: number;
+  /** Days a done card keeps its attachments. An archive clears them at once. */
+  attachment_keep_days: number;
   listen_on: string;
   /** Install a new kari without asking. Desktop only; the node has a flag. */
   auto_update: boolean;

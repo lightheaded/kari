@@ -27,7 +27,7 @@ A card carries what you need to decide whether to open it.
 
 - The title. kari takes the custom title, else the AI title, else the first prompt.
 - A summary from Haiku when one exists, in two sentences.
-- Chips: the derived state, `task` for a card without a session, `exited` for a session without a process, `auto-run` for a task that may run unattended, a clock with the time of a booked run, the model, an estimate in percent of the 5-hour window, `bg working` or `bg done` for a background job, and the herdr pane.
+- Chips: the derived state, `task` for a card without a session, `exited` for a session without a process, `auto-run` for a task that may run unattended, a clock with the time of a booked run, the model, an estimate in percent of the 5-hour window, a paperclip with the number of attached files, `bg working` or `bg done` for a background job, and the herdr pane.
 - An open question with its options, when the session waits for an answer.
 - The project name, the time since the last activity, and the weighted token count.
 
@@ -70,6 +70,7 @@ The drawer shows one card in full, and it is where you talk to the session.
 - Run log: one line per state change of every background job that kari started for this card, and one line per prompt sent from here.
 - Conversation: the last prompt and the last reply. "Show all" lists every prompt and reply of the session, oldest first, with a search box. The button beside it opens the same conversation in a window of its own, with its own prompt box, so it can stay open while you work on the board.
 - The prompt box at the foot. A running session takes the prompt into its own queue, so the terminal you look at answers it: an idle session at once, a busy one after its current turn. A session that is not running resumes as a background job with the prompt. A task starts as a background job. Cmd+Enter sends. The toast says whether the session took the prompt or holds it for the person at that terminal to release.
+- Attachments, above the prompt box. Paste a screenshot into the box, or press "Attach" and pick a file. kari puts the file on the node that owns the card and names its path under every prompt, so the run reads it. A picture shows as a thumbnail. The ✕ on a chip removes that file. One file is at most 4 MB.
 
 The drawer in the image belongs to a task that ran as a background job. The job finished, opened a PR, and left the card in Validate.
 
@@ -92,6 +93,8 @@ The search field matches the title, the project name, the last prompt and the st
 ![The New task dialog with a title, a project, a run prompt and options](docs/screenshots/new-task.png)
 
 A task is a card without a session. Give it a title and a project directory. A run joins the title and the body with a blank line, so the title needs no repeating in the body. Pick a model and tick "May run unattended" when the planner may start it. The card appears in Backlog, or in Ready when it may run unattended.
+
+"Attachments" takes a file for the new card. Paste a screenshot into the body, or press "Attach". The files stay in the dialog until you press Add, so a change of node costs nothing. kari writes them on the node the card lands on.
 
 The foot of every column also holds "+ Add task". It opens a one-line draft in place: type the title and press Enter. "More" opens this dialog with what you typed. A draft added at the foot of Ready is marked "May run unattended" for you, and a draft added to any other column gets a manual lock on it.
 

@@ -289,6 +289,36 @@ async fn hub_restore_card(
     Ok(Json(blocking(move || h.restore_card(&node, card)).await?))
 }
 
+async fn hub_add_attachment(
+    State(st): State<ServerState>,
+    Path((node, card)): Path<(String, String)>,
+    Json(a): Json<NewAttachment>,
+) -> Result<Json<Attachment>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(
+        blocking(move || h.add_attachment(&node, &card, a)).await?,
+    ))
+}
+
+async fn hub_attachment(
+    State(st): State<ServerState>,
+    Path((node, card, name)): Path<(String, String, String)>,
+) -> Result<Json<AttachmentData>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(
+        blocking(move || h.attachment(&node, &card, &name)).await?,
+    ))
+}
+
+async fn hub_delete_attachment(
+    State(st): State<ServerState>,
+    Path((node, card, name)): Path<(String, String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    blocking(move || h.delete_attachment(&node, &card, &name)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn hub_move_card(
     State(st): State<ServerState>,
     Path((node, card)): Path<(String, String)>,
@@ -714,6 +744,14 @@ pub fn router(registry: Arc<LinkRegistry>, token: String, hub: Option<Arc<Hub>>)
             axum::routing::patch(hub_patch_card).delete(hub_delete_card),
         )
         .route("/hub/nodes/{node}/cards/{card}/move", post(hub_move_card))
+        .route(
+            "/hub/nodes/{node}/cards/{card}/attachments",
+            post(hub_add_attachment),
+        )
+        .route(
+            "/hub/nodes/{node}/cards/{card}/attachments/{name}",
+            get(hub_attachment).delete(hub_delete_attachment),
+        )
         .route(
             "/hub/nodes/{node}/cards/{card}/move-to-node",
             post(hub_move_card_to_node),

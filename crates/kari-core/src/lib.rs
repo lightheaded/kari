@@ -3,6 +3,7 @@
 pub mod account;
 pub mod agents;
 pub mod api;
+pub mod attach;
 pub mod client;
 pub mod engine;
 pub mod estimate;

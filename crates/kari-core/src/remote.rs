@@ -313,6 +313,32 @@ impl HubApi for RemoteHub {
         )
     }
 
+    fn add_attachment(
+        &self,
+        node: &str,
+        card: &str,
+        a: NewAttachment,
+    ) -> anyhow::Result<Attachment> {
+        self.post(
+            &format!("/kari/v1/hub/nodes/{node}/cards/{card}/attachments"),
+            v(a),
+        )
+    }
+
+    fn attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<AttachmentData> {
+        self.get(&format!(
+            "/kari/v1/hub/nodes/{node}/cards/{card}/attachments/{name}"
+        ))
+    }
+
+    fn delete_attachment(&self, node: &str, card: &str, name: &str) -> anyhow::Result<()> {
+        self.send(
+            reqwest::Method::DELETE,
+            &format!("/kari/v1/hub/nodes/{node}/cards/{card}/attachments/{name}"),
+            None,
+        )
+    }
+
     fn start_card(&self, node: &str, card: &str, prompt: Option<String>) -> anyhow::Result<String> {
         let b: IdBody = self.post(
             &format!("/kari/v1/hub/nodes/{node}/cards/{card}/start"),

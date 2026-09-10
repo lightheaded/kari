@@ -69,6 +69,7 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
           {s && weighted(s.tokens) > 0 ? ` · ${fmtM(weighted(s.tokens))}` : ""}
           {bg?.state ? ` · bg ${bg.state}` : ""}
           {c.scheduled ? ` · ⏱ ${clock(c.scheduled.at)}` : ""}
+          {view.attachments?.length ? ` · 📎 ${view.attachments.length}` : ""}
           {offline ? " · node offline" : ""}
         </div>
         {view.summary?.narrative && !q && actions && <div className="mnarr">{view.summary.narrative}</div>}

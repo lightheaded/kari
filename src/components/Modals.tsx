@@ -21,6 +21,12 @@ import { useAutoGrow, useSticky } from "../hooks";
 import type { CloseGuard } from "../dirty";
 import { useCloseGuard } from "../dirty";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
+import {
+  AttachButton,
+  PendingList,
+  collectFiles,
+  type PendingFile,
+} from "./Attachments";
 import type { Updater } from "../update";
 
 /** The bar a first Escape shows on a form that holds unsaved input. */
@@ -112,7 +118,9 @@ interface AddTaskProps {
   /** Projects taken from the cards of each node. Used until the node answers. */
   projectsByNode: Record<string, Project[]>;
   onClose: () => void;
-  onSubmit: (nodeId: string, t: NewTask) => void;
+  /** The files go up after the card exists, because an attachment belongs to
+   *  a card on a node. */
+  onSubmit: (nodeId: string, t: NewTask, files: PendingFile[]) => void;
 }
 
 /** Whether "May run unattended" starts checked. A card added to a column must
@@ -156,6 +164,15 @@ export function AddTaskModal({
   const [priority, setPriority] = useState(0);
   const [notes, setNotes] = useState("");
   const [model, setModel] = useState("");
+  /** Files picked before the card exists. They stay in the page, so a change
+   *  of node costs nothing: nothing is written until Add. */
+  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [refused, setRefused] = useState<string[]>([]);
+  const pick = async (list: FileList | File[] | null) => {
+    const got = await collectFiles(list);
+    setFiles((f) => [...f, ...got.files]);
+    setRefused(got.refused);
+  };
   const promptGrow = useAutoGrow("add.prompt", prompt);
   const notesGrow = useAutoGrow("add.notes", notes);
   // The node answers with its projects. Until then the cards of that node name them.
@@ -179,7 +196,8 @@ export function AddTaskModal({
     { value: "__custom", label: "Other path…" },
   ];
   // A typed draft is worth more than a stray Escape. The first close asks.
-  const dirty = [title, prompt, notes, custom].some((v) => v.trim() !== "");
+  const dirty =
+    [title, prompt, notes, custom].some((v) => v.trim() !== "") || files.length > 0;
   const guard = useCloseGuard(dirty, onClose);
 
   useEffect(() => {
@@ -210,7 +228,9 @@ export function AddTaskModal({
             className="btn primary"
             disabled={!title.trim()}
             onClick={() =>
-              onSubmit(node, {
+              onSubmit(
+                node,
+                {
                 title: title.trim(),
                 project_cwd: dir || null,
                 run_prompt: prompt.trim() || null,
@@ -219,7 +239,9 @@ export function AddTaskModal({
                 notes: notes.trim() || null,
                 model: model || null,
                 column_id: columnId,
-              })
+                },
+                files,
+              )
             }
           >
             Add
@@ -286,8 +308,34 @@ export function AddTaskModal({
           {...promptGrow}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
+          onPaste={(e) => {
+            // A screenshot on the clipboard is a file here, not text.
+            const dropped = Array.from(e.clipboardData.files);
+            if (dropped.length > 0) {
+              e.preventDefault();
+              void pick(dropped);
+            }
+          }}
           placeholder="Detail, links, where to start. The title is always the first line, so it needs no repeating."
         />
+      </div>
+      <div className="field">
+        <label>Attachments</label>
+        <PendingList
+          items={files}
+          onRemove={(i) => setFiles((f) => f.filter((_, n) => n !== i))}
+        />
+        <div className="attachrow">
+          <AttachButton onPick={(l) => void pick(l)} />
+          <span className="hint">
+            {files.length > 0
+              ? `The ${files.length === 1 ? "file goes" : "files go"} to ${nodes.find((n) => n.id === node)?.name ?? "the node"} with the card, and the run prompt names ${files.length === 1 ? "it" : "them"}.`
+              : "A screenshot or a file the run must read. Paste one into the body as well. 4 MB each."}
+          </span>
+        </div>
+        {refused.length > 0 && (
+          <div className="hint warn">{refused.join(". ")}.</div>
+        )}
       </div>
       <div className="grid2">
         <div className="field">
@@ -1145,6 +1193,17 @@ export function SettingsModal({
             type="number"
             value={s.stale_after_days}
             onChange={num("stale_after_days")}
+          />
+        </div>
+        <div className="field">
+          <label>Keep attachments after done (days)</label>
+          <input
+            {...noAutoFill}
+            type="number"
+            min={0}
+            value={s.attachment_keep_days}
+            onChange={num("attachment_keep_days")}
+            title="Days a done card keeps its attached files. An archive or a delete removes them whatever this says. Zero clears them as soon as the card is done."
           />
         </div>
         <div className="field">

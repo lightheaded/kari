@@ -1,8 +1,9 @@
 use kari_core::hub::HubEvent;
 use kari_core::hubapi::HubApi;
 use kari_core::{
-    AutomationMode, Calibration, Card, CardPatch, Column, Engine, HubBoard, NewNode, NewTask,
-    NodePatch, NodeStatus, Project, Proposal, QuotaSample, ScheduleRequest, Settings, Summary,
+    Attachment, AttachmentData, AutomationMode, Calibration, Card, CardPatch, Column, Engine,
+    HubBoard, NewAttachment, NewNode, NewTask, NodePatch, NodeStatus, Project, Proposal,
+    QuotaSample, ScheduleRequest, Settings, Summary,
 };
 use std::sync::Arc;
 #[cfg(desktop)]
@@ -135,6 +136,46 @@ async fn delete_card(state: State<'_, AppState>, node_id: String, card_id: Strin
 #[tauri::command]
 async fn restore_card(state: State<'_, AppState>, node_id: String, card: Card) -> R<Card> {
     off_thread(&state.hub, move |h| h.restore_card(&node_id, card)).await
+}
+
+/// Put a file on a card. The bytes go to the node that owns the card, because
+/// a run reads a file from a path on that host.
+#[tauri::command]
+async fn add_attachment(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    name: String,
+    data_b64: String,
+) -> R<Attachment> {
+    off_thread(&state.hub, move |h| {
+        h.add_attachment(&node_id, &card_id, NewAttachment { name, data_b64 })
+    })
+    .await
+}
+
+/// The bytes of one attachment, base64, so the drawer can show a preview.
+#[tauri::command]
+async fn attachment(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    name: String,
+) -> R<AttachmentData> {
+    off_thread(&state.hub, move |h| h.attachment(&node_id, &card_id, &name)).await
+}
+
+#[tauri::command]
+async fn delete_attachment(
+    state: State<'_, AppState>,
+    node_id: String,
+    card_id: String,
+    name: String,
+) -> R<()> {
+    off_thread(&state.hub, move |h| {
+        h.delete_attachment(&node_id, &card_id, &name)
+    })
+    .await
 }
 
 /// Move one task card to another node. Returns the new card, which has a new
@@ -842,6 +883,9 @@ macro_rules! handlers {
             patch_card,
             delete_card,
             restore_card,
+            add_attachment,
+            attachment,
+            delete_attachment,
             move_card_to_node,
             set_dirty,
             quit_now,

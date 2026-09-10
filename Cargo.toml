@@ -34,6 +34,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # at all — every reqwest call went to a node on loopback — so an https server
 # failed with "invalid URL, scheme is not http", which reads like a bad address
 # rather than a missing feature.
+# An attachment travels as base64: the link carries JSON frames and a client
+# posts JSON, so bytes cannot go over either as they are.
+base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = [
   "blocking",
   "json",

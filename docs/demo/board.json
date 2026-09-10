@@ -187,6 +187,7 @@
       },
       "last_activity_at": "2026-08-29T10:00:00.000Z",
       "reason": "task without a session",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -239,6 +240,7 @@
       },
       "last_activity_at": "2026-08-31T10:00:00.000Z",
       "reason": "task without a session",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -291,6 +293,7 @@
       },
       "last_activity_at": "2026-09-02T10:00:00.000Z",
       "reason": "may run unattended, prompt set",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -343,6 +346,7 @@
       },
       "last_activity_at": "2026-09-02T14:00:00.000Z",
       "reason": "may run unattended, prompt set",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -400,6 +404,7 @@
       },
       "last_activity_at": "2026-09-02T04:00:00.000Z",
       "reason": "may run unattended, prompt set",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -519,6 +524,7 @@
       "estimate": null,
       "last_activity_at": "2026-09-03T09:59:00.000Z",
       "reason": "registry status busy",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -582,6 +588,7 @@
       },
       "last_activity_at": "2026-09-03T09:57:00.000Z",
       "reason": "background job working",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -690,6 +697,7 @@
       "estimate": null,
       "last_activity_at": "2026-09-03T09:54:00.000Z",
       "reason": "process idle, turn finished",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -801,6 +809,7 @@
       "estimate": null,
       "last_activity_at": "2026-09-03T09:48:00.000Z",
       "reason": "AskUserQuestion pending",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -897,6 +906,7 @@
       "estimate": null,
       "last_activity_at": "2026-09-03T09:58:00.000Z",
       "reason": "permission prompt pending",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -986,6 +996,7 @@
       "estimate": null,
       "last_activity_at": "2026-09-03T05:00:00.000Z",
       "reason": "summary judged waiting on others",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -1098,6 +1109,22 @@
       },
       "last_activity_at": "2026-09-03T09:35:00.000Z",
       "reason": "background job done",
+      "attachments": [
+        {
+          "name": "empty-transcript.png",
+          "bytes": 148320,
+          "mime": "image/png",
+          "path": "/Users/you/.config/kari/attachments/task_crash/empty-transcript.png",
+          "at": "2026-09-03T09:30:00.000Z"
+        },
+        {
+          "name": "stack-trace.txt",
+          "bytes": 2140,
+          "mime": "text/plain",
+          "path": "/Users/you/.config/kari/attachments/task_crash/stack-trace.txt",
+          "at": "2026-09-03T09:30:00.000Z"
+        }
+      ],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -1173,6 +1200,7 @@
       "estimate": null,
       "last_activity_at": "2026-09-02T10:00:00.000Z",
       "reason": "manual move",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -1248,6 +1276,7 @@
       "estimate": null,
       "last_activity_at": "2026-08-30T10:00:00.000Z",
       "reason": "no activity for 3 days, judged done",
+      "attachments": [],
       "node_id": "local",
       "node_name": "studio"
     },
@@ -1300,6 +1329,7 @@
       },
       "last_activity_at": "2026-08-30T10:00:00.000Z",
       "reason": "task without a session",
+      "attachments": [],
       "node_id": "lab",
       "node_name": "lab"
     },
@@ -1352,6 +1382,7 @@
       },
       "last_activity_at": "2026-09-02T20:00:00.000Z",
       "reason": "may run unattended, prompt set",
+      "attachments": [],
       "node_id": "lab",
       "node_name": "lab"
     },
@@ -1450,6 +1481,7 @@
       "estimate": null,
       "last_activity_at": "2026-09-03T09:58:00.000Z",
       "reason": "registry status busy",
+      "attachments": [],
       "node_id": "lab",
       "node_name": "lab"
     },
@@ -1557,6 +1589,7 @@
       },
       "last_activity_at": "2026-09-03T09:42:00.000Z",
       "reason": "background job done",
+      "attachments": [],
       "node_id": "lab",
       "node_name": "lab"
     }

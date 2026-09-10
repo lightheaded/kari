@@ -6,6 +6,7 @@
 //! serves it as a headless node. Every route except health needs the token
 //! from `~/.config/kari/hook-token` in the `x-kari-token` header.
 
+use crate::attach::{b64_decode, b64_encode};
 use crate::model::*;
 use crate::{hooks, Engine, Event};
 use axum::{
@@ -240,6 +241,53 @@ async fn patch_card(
 async fn delete_card(State(st): State<ApiState>, Path(id): Path<String>) -> R<()> {
     let e = st.engine;
     blocking(move || e.delete_card(&id)).await
+}
+
+async fn list_attachments(
+    State(st): State<ApiState>,
+    Path(id): Path<String>,
+) -> R<Vec<Attachment>> {
+    let e = st.engine;
+    blocking(move || Ok(e.attachments(&id))).await
+}
+
+/// Put one file on a card. Base64 in, because this route is also reached over
+/// the link, where a frame is JSON.
+async fn add_attachment(
+    State(st): State<ApiState>,
+    Path(id): Path<String>,
+    Json(a): Json<NewAttachment>,
+) -> R<Attachment> {
+    let e = st.engine;
+    blocking(move || {
+        let data = b64_decode(&a.data_b64)?;
+        e.add_attachment(&id, &a.name, &data)
+    })
+    .await
+}
+
+async fn get_attachment(
+    State(st): State<ApiState>,
+    Path((id, name)): Path<(String, String)>,
+) -> R<AttachmentData> {
+    let e = st.engine;
+    blocking(move || {
+        let (mime, data) = e.attachment_data(&id, &name)?;
+        Ok(AttachmentData {
+            name,
+            mime,
+            data_b64: b64_encode(&data),
+        })
+    })
+    .await
+}
+
+async fn delete_attachment(
+    State(st): State<ApiState>,
+    Path((id, name)): Path<(String, String)>,
+) -> R<()> {
+    let e = st.engine;
+    blocking(move || e.delete_attachment(&id, &name)).await
 }
 
 async fn restore_card(State(st): State<ApiState>, Json(card): Json<Card>) -> R<Card> {
@@ -485,6 +533,14 @@ pub fn router(engine: Arc<Engine>, token: String) -> Router {
         .route("/cards/{id}/summarize", post(summarize_card))
         .route("/cards/{id}/jump", post(jump))
         .route("/cards/{id}/jobs", get(job_log))
+        .route(
+            "/cards/{id}/attachments",
+            get(list_attachments).post(add_attachment),
+        )
+        .route(
+            "/cards/{id}/attachments/{name}",
+            get(get_attachment).delete(delete_attachment),
+        )
         .route("/columns", get(get_columns).put(set_columns))
         .route("/columns/reset", post(reset_columns))
         .route(

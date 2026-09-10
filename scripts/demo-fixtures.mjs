@@ -235,7 +235,21 @@ function view(o) {
     estimate: o.estimate ?? null,
     last_activity_at: o.last_activity_at ?? null,
     reason: o.reason,
+    attachments: o.attachments ?? [],
   };
+}
+
+/** One attached file, for a card that carries a screenshot. Every value is
+ *  invented, and the path uses the `/Users/you/` placeholder the privacy check
+ *  allows. */
+function attachment(cardId, name, bytes, mime = "image/png") {
+    return {
+        name,
+        bytes,
+        mime,
+        path: `/Users/you/.config/kari/attachments/${cardId}/${name}`,
+        at: min(30),
+    };
 }
 
 function summary(sessionId, narrative, judged, confidence, o = {}) {
@@ -598,6 +612,10 @@ const localCards = [
     estimate: estimate(1_100_000, "project", 3),
     last_activity_at: min(25),
     reason: "background job done",
+    attachments: [
+      attachment("task_crash", "empty-transcript.png", 148_320),
+      attachment("task_crash", "stack-trace.txt", 2_140, "text/plain"),
+    ],
   }),
 
   // Done.

@@ -16,6 +16,7 @@ import { restartApp, updatesSupported, useUpdater } from "./update";
 import { useSticky } from "./hooks";
 import { anyDirty } from "./dirty";
 import { addTarget, noAutoFill } from "./util";
+import { uploadPending } from "./components/Attachments";
 
 /** Joins a node id and a project directory into one filter value. */
 const PROJ_SEP = "\u0001";
@@ -426,11 +427,23 @@ export default function App() {
             setAddTitle("");
             setModal(null);
           }}
-          onSubmit={(nodeId, t) =>
-            run(() => api.addTask(nodeId, t), "Task added", (c) => ({
-              done: "Task taken off the board",
-              run: () => api.deleteCard(nodeId, c.id),
-            })).then(() => {
+          onSubmit={(nodeId, t, files) =>
+            run(
+              async () => {
+                const card = await api.addTask(nodeId, t);
+                // The files go up after the card exists, because an
+                // attachment belongs to a card on a node. A file that is
+                // refused is named, and the card stays.
+                const failed = await uploadPending(nodeId, card.id, files);
+                for (const line of failed) toast(line, { err: true });
+                return card;
+              },
+              files.length > 0 ? `Task added with ${files.length} file(s)` : "Task added",
+              (c) => ({
+                done: "Task taken off the board",
+                run: () => api.deleteCard(nodeId, c.id),
+              }),
+            ).then(() => {
               rememberProject(nodeId, t.project_cwd);
               setAddTitle("");
               setModal(null);
