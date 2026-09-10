@@ -17,6 +17,7 @@ pub mod launcher;
 pub mod link;
 pub mod model;
 pub mod net;
+pub mod outbox;
 pub mod owner;
 pub mod paths;
 pub mod peer;

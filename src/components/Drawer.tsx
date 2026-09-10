@@ -394,13 +394,21 @@ export function Drawer({
       </button>
       <UnsavedBar guard={guard} text="The prompt you typed is not sent." />
       <header>
-        <TitleEdit title={view.title} saved={c.title ?? ""} disabled={offline} onSave={(t) => patch({ title: t })} />
+        <TitleEdit title={view.title} saved={c.title ?? ""} onSave={(t) => patch({ title: t })} />
         <div className="hint">
           {showNode ? `${view.node_name} · ` : ""}
           {STATE_LABEL[view.state]} · {view.reason}
           {view.locked ? " · manual placement" : ""}
         </div>
-        {offline && <div className="hint offline-note">This node is offline. Actions return when it reconnects.</div>}
+        {offline && (
+          <div className="hint offline-note">
+            This node is offline. kari keeps your edits and sends them when the node comes back. To
+            run, stop or open a session, the node must answer.
+          </div>
+        )}
+        {view.pending && (
+          <div className="hint offline-note">This card is not on the node yet. It goes there when the node answers.</div>
+        )}
         <div className="actions">
           {!mobile && (
             <button className="btn primary sm" disabled={offline} onClick={() => onAction(() => api.jumpIn(node, c.id), "Opened", undefined, picked)}>
@@ -454,7 +462,6 @@ export function Drawer({
           )}
           <button
             className="btn ghost sm"
-            disabled={offline}
             onClick={() =>
               onAction(
                 () => api.patchCard(node, c.id, { archived: true }),
@@ -472,7 +479,6 @@ export function Drawer({
           {c.kind === "task" && (
             <button
               className="btn ghost sm"
-              disabled={offline}
               onClick={() =>
                 onAction(
                   () => api.deleteCard(node, c.id),
@@ -805,14 +811,13 @@ export function Drawer({
                     {...noAutoFill}
                     type="number"
                     value={c.priority}
-                    disabled={offline}
                     onChange={(e) => patch({ priority: Number(e.target.value) })}
                     title="0 means automatic order. Dragging the card on the board writes this number."
                   />
                 </label>
                 <label>
                   <span>Model</span>
-                  <select value={c.model ?? ""} disabled={offline} onChange={(e) => patch({ model: e.target.value })}>
+                  <select value={c.model ?? ""} onChange={(e) => patch({ model: e.target.value })}>
                     {RUN_MODELS.map((m) => (
                       <option key={m.value} value={m.value}>
                         {m.label}
@@ -822,7 +827,7 @@ export function Drawer({
                 </label>
                 <label>
                   <span>Permissions</span>
-                  <select value={c.permission_mode ?? ""} disabled={offline} onChange={(e) => patch({ permission_mode: e.target.value })}>
+                  <select value={c.permission_mode ?? ""} onChange={(e) => patch({ permission_mode: e.target.value })}>
                     {MODES.map((m) => (
                       <option key={m} value={m}>
                         {m || `default (${settings?.default_permission_mode ?? "auto"})`}
@@ -832,7 +837,7 @@ export function Drawer({
                 </label>
               </div>
               <label className="field inline" style={{ marginTop: 6 }}>
-                <input type="checkbox" checked={c.auto_run} disabled={offline} onChange={(e) => patch({ auto_run: e.target.checked })} />
+                <input type="checkbox" checked={c.auto_run} onChange={(e) => patch({ auto_run: e.target.checked })} />
                 <span>May run unattended when quota is left over</span>
               </label>
             </dd>
@@ -842,7 +847,6 @@ export function Drawer({
                 {...proseField}
                 {...promptGrow}
                 value={prompt.draft}
-                disabled={offline}
                 onChange={(e) => prompt.setDraft(e.target.value)}
                 onBlur={prompt.flush}
                 placeholder={c.session_id ? "Continue with the next step. Stop when done." : "Detail, links, where to start. The title is always the first line."}
@@ -855,7 +859,7 @@ export function Drawer({
             </dd>
             <dt>Notes</dt>
             <dd>
-              <textarea {...proseField} {...notesGrow} value={notes.draft} disabled={offline} onChange={(e) => notes.setDraft(e.target.value)} onBlur={notes.flush} placeholder="For you. A run never sees this." />
+              <textarea {...proseField} {...notesGrow} value={notes.draft} onChange={(e) => notes.setDraft(e.target.value)} onBlur={notes.flush} placeholder="For you. A run never sees this." />
             </dd>
           </dl>
         </div>

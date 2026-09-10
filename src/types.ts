@@ -510,10 +510,19 @@ export interface NodeStatus {
   addresses: string[];
   /** How much automatic behaviour the node allows. Empty from an older node. */
   automation_mode: AutomationMode | "";
+  /** Card writes the hub holds for this node until it answers again. */
+  pending_writes?: number;
+  /** Why the queue is not moving: what the node said about the write at the
+   *  head of it. */
+  pending_error?: string | null;
 }
 export interface HubCard extends CardView {
   node_id: string;
   node_name: string;
+  /** True while the hub still holds a write for this card, because the node
+   *  that owns it is away. The card is on the board, and the node has not
+   *  seen it yet. */
+  pending?: boolean;
 }
 export interface NodeQuota {
   node_id: string;

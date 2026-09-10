@@ -275,6 +275,11 @@ export function AddTaskModal({
               </option>
             ))}
           </select>
+          {nodes.find((n) => n.id === node)?.online === false && (
+            <div className="hint">
+              That node is offline. kari keeps the card and sends it when the node comes back.
+            </div>
+          )}
         </div>
       )}
       <div className="field">
@@ -630,6 +635,8 @@ function NodeRow({
               : `127.0.0.1:${node.remote_port}`}
         {node.version ? ` · ${node.version}` : ""}
         {node.last_seen ? ` · seen ${relTime(node.last_seen)} ago` : ""}
+        {node.pending_writes ? ` · ${node.pending_writes} change${node.pending_writes === 1 ? "" : "s"} waiting` : ""}
+        {node.pending_error ? ` · the node refused one: ${node.pending_error}` : ""}
         {!local && !node.paired ? " · not paired" : ""}
         {node.primary
           ? " · columns: this device"

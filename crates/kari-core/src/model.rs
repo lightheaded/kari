@@ -317,6 +317,109 @@ pub struct AttachmentData {
 /// screenshot is far under it.
 pub const MAX_ATTACHMENT_BYTES: u64 = 4 * 1024 * 1024;
 
+impl Card {
+    /// The card a new task starts as.
+    ///
+    /// The project directory is taken as it is given: only the node that owns
+    /// the card can say whether the path is a directory there, and a hub that
+    /// holds the task for a sleeping node cannot ask.
+    ///
+    /// A task added at the foot of a column must appear there. Backlog and
+    /// Ready need no lock, because a task derives one of those two states on
+    /// its own. Every other column gets a manual lock instead.
+    pub fn new_task(t: NewTask, project_cwd: Option<String>, columns: &[Column]) -> Card {
+        let now = Utc::now();
+        let target = t
+            .column_id
+            .as_deref()
+            .and_then(|id| columns.iter().find(|c| c.id == id));
+        let auto_run =
+            t.auto_run || target.is_some_and(|c| c.accepts.contains(&DerivedState::Ready));
+        let lock = target.filter(|c| {
+            !c.accepts.contains(&DerivedState::Ready) && !c.accepts.contains(&DerivedState::Backlog)
+        });
+        Card {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: CardKind::Task,
+            title: Some(t.title),
+            session_id: None,
+            project_cwd,
+            priority: t.priority,
+            auto_run,
+            run_prompt: t.run_prompt,
+            permission_mode: None,
+            model: t.model.filter(|m| !m.trim().is_empty()),
+            estimate_weighted_tokens: None,
+            manual_column: lock.map(|c| c.id.clone()),
+            manual_lock_priority: lock.map(|_| 0),
+            tags: vec![],
+            notes: t.notes,
+            archived: false,
+            bg_job_id: None,
+            last_job_state: None,
+            last_job_at: None,
+            scheduled: None,
+            created_at: now,
+            updated_at: now,
+            done_at: None,
+        }
+    }
+
+    /// Write every field the patch sets into the card. An empty string clears
+    /// a text field.
+    ///
+    /// The project directory is taken as it is given. Only the node that owns
+    /// the card can say whether a path is a directory there, so the caller
+    /// checks it first when it runs on that node.
+    pub fn apply_patch(&mut self, p: &CardPatch) {
+        let text = |v: &String| {
+            if v.trim().is_empty() {
+                None
+            } else {
+                Some(v.clone())
+            }
+        };
+        if let Some(v) = &p.title {
+            self.title = text(v);
+        }
+        if let Some(v) = &p.project_cwd {
+            self.project_cwd = text(v);
+        }
+        if let Some(v) = p.priority {
+            self.priority = v;
+        }
+        if let Some(v) = p.auto_run {
+            self.auto_run = v;
+        }
+        if let Some(v) = &p.run_prompt {
+            self.run_prompt = text(v);
+        }
+        if let Some(v) = &p.permission_mode {
+            self.permission_mode = text(v);
+        }
+        if let Some(v) = &p.model {
+            self.model = text(v);
+        }
+        if let Some(v) = &p.notes {
+            self.notes = text(v);
+        }
+        if let Some(v) = &p.tags {
+            self.tags = v.clone();
+        }
+        if let Some(v) = p.archived {
+            self.archived = v;
+            // An archived card leaves the board, so nothing would ever start
+            // its booked run or show that one waits. Drop it with the card.
+            if v {
+                self.scheduled = None;
+            }
+        }
+        if let Some(v) = p.estimate_weighted_tokens {
+            self.estimate_weighted_tokens = Some(v);
+        }
+    }
+}
+
 /// One pending tool call at the tail of a transcript.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PendingTool {
@@ -690,6 +793,27 @@ pub struct BoardView {
     pub automation_mode: String,
 }
 
+impl BoardView {
+    /// A board with no cards: what a node that has never answered has.
+    pub fn empty(columns: Vec<Column>) -> BoardView {
+        BoardView {
+            columns,
+            cards: vec![],
+            quota: None,
+            generated_at: Utc::now(),
+            scanning: false,
+            herdr_connected: false,
+            hooks_installed: false,
+            hooks_port: 0,
+            calibration: Calibration::default(),
+            proposal: None,
+            away_mode: false,
+            queue: None,
+            automation_mode: String::new(),
+        }
+    }
+}
+
 /// How much of the automatic behaviour is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1012,6 +1136,33 @@ pub struct CardPatch {
     pub estimate_weighted_tokens: Option<f64>,
 }
 
+impl CardPatch {
+    /// Take every field the later patch sets. Two edits of one card fold into
+    /// one write this way, and the last word wins, field by field.
+    pub fn merge(&mut self, later: CardPatch) {
+        macro_rules! take {
+            ($($f:ident),*) => {$(
+                if later.$f.is_some() {
+                    self.$f = later.$f;
+                }
+            )*};
+        }
+        take!(
+            title,
+            project_cwd,
+            model,
+            priority,
+            auto_run,
+            run_prompt,
+            permission_mode,
+            notes,
+            tags,
+            archived,
+            estimate_weighted_tokens
+        );
+    }
+}
+
 /// One hook call from Claude Code, reduced to the fields kari uses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookEvent {
@@ -1223,6 +1374,13 @@ pub struct NodeStatus {
     /// How much automatic behaviour the node allows: `off`, `ask` or `auto`.
     #[serde(default)]
     pub automation_mode: String,
+    /// Card writes the hub holds for this node until it answers again.
+    #[serde(default)]
+    pub pending_writes: u32,
+    /// Why the queue is not moving: what the node said when it refused the
+    /// write at the head of it.
+    #[serde(default)]
+    pub pending_error: Option<String>,
 }
 
 /// Who may push columns to a node. One row per node, kept in its `kv` table.
@@ -1260,6 +1418,11 @@ pub struct LeaseClaim {
 pub struct HubCard {
     pub node_id: String,
     pub node_name: String,
+    /// True while the hub still holds a write for this card, because the node
+    /// that owns it is away. The card is on the board, and the node has not
+    /// seen it yet.
+    #[serde(default)]
+    pub pending: bool,
     #[serde(flatten)]
     pub view: CardView,
 }

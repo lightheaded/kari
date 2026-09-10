@@ -14,6 +14,7 @@
 
 use crate::client::{ApiClient, EventItem};
 use crate::model::*;
+use crate::outbox::{self, PendingWrite, Queued};
 use crate::{keychain, launcher, paths, tunnel::Tunnel, Engine, Event};
 use chrono::{DateTime, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -652,6 +653,14 @@ impl Hub {
                 warn!("node {}: columns not pushed: {e}", identity.node_name);
             }
         }
+        // The node is back. Everything written while it was away goes now,
+        // before the board is published, so the first board a person sees
+        // already holds it.
+        let board = if self.flush_outbox(&rec.id, &client, &board) {
+            client.board().unwrap_or(board)
+        } else {
+            board
+        };
         {
             let mut st = state.lock().unwrap();
             st.online = true;
@@ -904,10 +913,14 @@ impl Hub {
             away_mode: self.engine.settings().away_mode,
             addresses: crate::net::bound_reachable(),
             automation_mode: self.engine.settings().automation().key().into(),
+            // This machine writes to its own store. Nothing waits for it.
+            pending_writes: 0,
+            pending_error: None,
         }
     }
 
     fn status_of(&self, r: &Remote) -> NodeStatus {
+        let queued = self.queued_for(&r.rec.id);
         let st = r.state.lock().unwrap();
         NodeStatus {
             id: r.rec.id.clone(),
@@ -942,6 +955,8 @@ impl Hub {
                 .as_ref()
                 .map(|b| b.automation_mode.clone())
                 .unwrap_or_default(),
+            pending_writes: queued.len() as u32,
+            pending_error: queued.first().and_then(|q| q.last_error.clone()),
         }
     }
 
@@ -999,6 +1014,8 @@ impl Hub {
             cards.extend(lb.cards.iter().cloned().map(|view| HubCard {
                 node_id: LOCAL.into(),
                 node_name: local_name.clone(),
+                // This machine writes to its own store, so it never waits.
+                pending: false,
                 view,
             }));
             quotas.push(NodeQuota {
@@ -1025,17 +1042,51 @@ impl Hub {
                 proposal: p,
             }));
         }
+        // One query for every node, so a board with nothing held costs one.
+        let held = self.engine.outbox_counts();
+        let settings = self.engine.settings();
         for r in self.remotes.read().unwrap().iter() {
             let status = self.status_of(r);
+            // Read before the node's state is locked, so the two locks are
+            // always taken in one order.
+            let queued = if held.get(&r.rec.id).copied().unwrap_or(0) > 0 {
+                self.queued_for(&r.rec.id)
+            } else {
+                vec![]
+            };
             let st = r.state.lock().unwrap();
             if r.rec.enabled {
+                // A node that has never answered has no board to draw on. The
+                // cards written for it are still the user's, so they get one.
+                if !queued.is_empty() && st.board.is_none() {
+                    let mut b = BoardView::empty(columns.clone());
+                    outbox::apply(&mut b, &queued, &settings);
+                    for view in b.cards {
+                        cards.push(HubCard {
+                            node_id: r.rec.id.clone(),
+                            node_name: status.name.clone(),
+                            pending: true,
+                            view,
+                        });
+                    }
+                }
                 if let Some(b) = &st.board {
+                    // The writes this hub still holds for the node are drawn
+                    // on the board the node last sent, so a card added to a
+                    // sleeping laptop is on the board like any other.
+                    let mut b = std::borrow::Cow::Borrowed(b);
+                    let mut pending: Vec<String> = vec![];
+                    if !queued.is_empty() {
+                        pending = outbox::touched(&queued);
+                        outbox::apply(b.to_mut(), &queued, &settings);
+                    }
                     for view in &b.cards {
                         let mut v = view.clone();
                         v.column_id = Self::map_column(&columns, &v);
                         cards.push(HubCard {
                             node_id: r.rec.id.clone(),
                             node_name: status.name.clone(),
+                            pending: pending.iter().any(|id| id == &v.card.id),
                             view: v,
                         });
                     }
@@ -1159,6 +1210,122 @@ impl Hub {
         Ok(out)
     }
 
+    // -------------------------------------------------- writes held for a node
+
+    /// True when a node is on the board but is not answering.
+    ///
+    /// A card write for such a node is held rather than refused. A node the
+    /// user disabled is not away: it was taken off the board on purpose, and
+    /// its cards are not drawn, so there is nothing there to write to.
+    fn is_away(&self, node_id: &str) -> bool {
+        if node_id == LOCAL || node_id.is_empty() {
+            return false;
+        }
+        self.remotes
+            .read()
+            .unwrap()
+            .iter()
+            .find(|r| r.rec.id == node_id)
+            .is_some_and(|r| r.rec.enabled && !r.state.lock().unwrap().online)
+    }
+
+    fn queued_for(&self, node_id: &str) -> Vec<Queued> {
+        self.engine.outbox(node_id)
+    }
+
+    /// Hold one write for a node, and tell the board it has one more.
+    fn hold(&self, node_id: &str, w: PendingWrite) -> anyhow::Result<()> {
+        self.engine.queue_write(node_id, w)?;
+        self.emit(HubEvent::BoardChanged {
+            node_id: node_id.to_string(),
+        });
+        Ok(())
+    }
+
+    /// The columns of a node, as the node itself last reported them. A node
+    /// that has never answered gets this hub's columns, which is what the hub
+    /// pushes to it in any case.
+    fn columns_of(&self, node_id: &str) -> Vec<Column> {
+        let cached = self
+            .remotes
+            .read()
+            .unwrap()
+            .iter()
+            .find(|r| r.rec.id == node_id)
+            .and_then(|r| {
+                r.state
+                    .lock()
+                    .unwrap()
+                    .board
+                    .as_ref()
+                    .map(|b| b.columns.clone())
+            })
+            .filter(|c| !c.is_empty());
+        cached.unwrap_or_else(|| self.engine.columns())
+    }
+
+    /// The node's last board with the held writes drawn on it.
+    ///
+    /// A node that has never answered has no board of its own. It still gets
+    /// one here, holding the cards written for it and nothing else.
+    fn drawn_board(&self, node_id: &str) -> Option<BoardView> {
+        let cached = {
+            let rs = self.remotes.read().unwrap();
+            let r = rs.iter().find(|r| r.rec.id == node_id)?;
+            let board = r.state.lock().unwrap().board.clone();
+            board
+        };
+        let mut board = cached.unwrap_or_else(|| BoardView::empty(self.engine.columns()));
+        outbox::apply(
+            &mut board,
+            &self.queued_for(node_id),
+            &self.engine.settings(),
+        );
+        Some(board)
+    }
+
+    /// Send the writes held for a node, oldest first.
+    ///
+    /// A write the node refuses stays at the head of the queue and stops the
+    /// flush there, so the writes behind it keep their order and none is lost.
+    /// The node's row carries the reason. An edit of the same card rewrites
+    /// the held write, so a person can repair one that cannot land.
+    ///
+    /// A write for a card the node no longer holds is dropped instead. The
+    /// card was deleted where it lives, and an edit of a card that is gone has
+    /// nothing to say.
+    ///
+    /// Returns true when the node took at least one write, so the caller knows
+    /// to read the board again.
+    fn flush_outbox(&self, node_id: &str, client: &ApiClient, board: &BoardView) -> bool {
+        let mut sent = false;
+        for q in self.queued_for(node_id) {
+            let known = board.cards.iter().any(|v| v.card.id == q.write.card_id());
+            let r = match &q.write {
+                PendingWrite::Put { card } => client.restore_card(card).map(|_| ()),
+                PendingWrite::Patch { card_id, patch } if known => {
+                    client.patch_card(card_id, patch).map(|_| ())
+                }
+                PendingWrite::Delete { card_id } if known => client.delete_card(card_id),
+                // The card is gone from the node. Nothing to change there, and
+                // nothing to delete.
+                _ => Ok(()),
+            };
+            match r {
+                Ok(()) => {
+                    self.engine.drop_write(q.seq);
+                    sent = true;
+                }
+                Err(e) => {
+                    warn!("node {node_id}: a held write was refused: {e}");
+                    self.engine.mark_write_error(q.seq, &e.to_string());
+                    return sent;
+                }
+            }
+        }
+        sent
+    }
+
     // ------------------------------------------------------------ card actions
 
     pub fn move_card(&self, node: &str, card: &str, column: &str) -> anyhow::Result<()> {
@@ -1170,11 +1337,44 @@ impl Hub {
     }
 
     pub fn add_task(&self, node: &str, t: NewTask) -> anyhow::Result<Card> {
+        // The node is away, so it cannot make the card and it cannot check the
+        // path. The hub makes the card, with the id the node adopts later, and
+        // holds it. The board shows it at once.
+        if self.is_away(node) {
+            let cwd = t.project_cwd.clone().filter(|p| !p.trim().is_empty());
+            let card = Card::new_task(t, cwd, &self.columns_of(node));
+            self.hold(
+                node,
+                PendingWrite::Put {
+                    card: Box::new(card.clone()),
+                },
+            )?;
+            return Ok(card);
+        }
         let t2 = t.clone();
         self.on_node(node, move |e| e.add_task(t), move |c| c.add_task(&t2))
     }
 
     pub fn patch_card(&self, node: &str, card: &str, p: CardPatch) -> anyhow::Result<Card> {
+        if self.is_away(node) {
+            let Some(mut c) = self
+                .drawn_board(node)
+                .and_then(|b| b.cards.into_iter().find(|v| v.card.id == card))
+                .map(|v| v.card)
+            else {
+                anyhow::bail!("card not found")
+            };
+            c.apply_patch(&p);
+            c.updated_at = Utc::now();
+            self.hold(
+                node,
+                PendingWrite::Patch {
+                    card_id: card.to_string(),
+                    patch: p,
+                },
+            )?;
+            return Ok(c);
+        }
         let p2 = p.clone();
         self.on_node(
             node,
@@ -1184,10 +1384,28 @@ impl Hub {
     }
 
     pub fn delete_card(&self, node: &str, card: &str) -> anyhow::Result<()> {
+        if self.is_away(node) {
+            return self.hold(
+                node,
+                PendingWrite::Delete {
+                    card_id: card.to_string(),
+                },
+            );
+        }
         self.on_node(node, |e| e.delete_card(card), |c| c.delete_card(card))
     }
 
     pub fn restore_card(&self, node: &str, card: Card) -> anyhow::Result<Card> {
+        if self.is_away(node) {
+            let back = card.clone();
+            self.hold(
+                node,
+                PendingWrite::Put {
+                    card: Box::new(card),
+                },
+            )?;
+            return Ok(back);
+        }
         let c2 = card.clone();
         self.on_node(
             node,

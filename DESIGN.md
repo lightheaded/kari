@@ -607,6 +607,53 @@ node, and every card with its node id and node name. Rules:
 - A task belongs to the host that holds its project directory. Cards do not
   move between nodes.
 
+### Writes held for a node that is away
+
+A node keeps the cards of its own machine, so every card write goes to the node
+that owns the card. A node that is asleep, off the network or shut down cannot
+take the write. kari refused it, and a person lost the note they had typed
+because a laptop was closed.
+
+The hub holds the write instead. The rule that decides is this: a write that
+only asks the node to remember something is held, and an action that needs the
+machine is refused by name. So a new task, an edit of a card, and a delete all
+work while the node is away. Run, stop, jump in and summarize do not, because a
+held one would start work at a time nobody asked for.
+
+- **The queue is in the hub's store**, in the table `outbox`, one row per write.
+  It survives a restart of the hub, next to the node's last board in
+  `node_cache`.
+- **One write per card.** A card that is added and then edited five times is
+  one card to send, not six calls. A new write folds into the write already
+  held for that card: an edit of a card that is not on the node yet goes into
+  the card, and two edits of the same card merge field by field.
+- **A card added and then deleted leaves nothing to send.** The node never saw
+  it.
+- **The board draws the queue** over the node's last board. The card is on the
+  board at once, marked "waiting for node", and the node row counts the writes
+  it holds. A node that has never answered gets a board of its own writes.
+- **The queue goes first when the node answers**, oldest first, before the hub
+  publishes the board. The card carries the id the hub gave it, so the node
+  adopts that id and every write behind it still names a card that exists.
+  `POST /kari/v1/cards/restore` takes a whole card, which is why the queue
+  needs no new route.
+- **A write the node refuses stops the flush there.** It stays at the head of
+  the queue, the writes behind it keep their order, and the node row shows the
+  reason. An edit of the same card rewrites the held write, so a person can
+  repair a card the node would refuse again. A write for a card the node no
+  longer holds is dropped instead: the card was deleted where it lives.
+
+Two things stay with the node. A move between columns is not held, because the
+column rules belong to the node, and neither is a manual reorder. And the hub
+cannot check a project directory of a machine it cannot reach, so a task
+written for a node that is away lands there with the path as it was typed. The
+project picker offers the paths the node's own cards name, which is why the
+path is usually right.
+
+With a server, the server is the party that holds the queue, because the nodes
+are its own. A client with no route to the server is a different case, and this
+does not answer it.
+
 ### The primary lease
 
 Two hubs can watch the same nodes: the desktop and a phone. Only one pushes
@@ -808,8 +855,9 @@ The rules from "One board" hold, with one correction each:
   not move between nodes.
 - A node that is offline no longer empties the board. The server serves its last
   board, dimmed, with the time it was last seen, from its own store rather than
-  from a client's memory. Actions on such a card are refused with the node's
-  name, not silently dropped.
+  from a client's memory. A card write for such a node is held on the server and
+  sent when the node answers; an action that needs the machine is refused with
+  the node's name, not silently dropped.
 
 ### The lease is gone
 

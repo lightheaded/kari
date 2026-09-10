@@ -71,6 +71,7 @@ export function MobileCard({ view, columns, showNode, offline, actions, onOpen, 
           {c.scheduled ? ` · ⏱ ${clock(c.scheduled.at)}` : ""}
           {view.attachments?.length ? ` · 📎 ${view.attachments.length}` : ""}
           {offline ? " · node offline" : ""}
+          {view.pending ? " · waiting for node" : ""}
         </div>
         {view.summary?.narrative && !q && actions && <div className="mnarr">{view.summary.narrative}</div>}
         {bg?.waiting_for && <div className="mq">{bg.waiting_for}</div>}

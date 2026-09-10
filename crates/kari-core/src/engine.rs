@@ -1302,54 +1302,16 @@ impl Engine {
     }
 
     pub fn add_task(&self, t: NewTask) -> anyhow::Result<Card> {
-        let now = Utc::now();
         // A path that is not a directory here gives a card that can neither run
         // nor open a terminal. Refuse it while the dialog is still open.
         let project_cwd = paths::checked_project_cwd(t.project_cwd.as_deref())?;
-        let columns = self.columns();
-        let target = t
-            .column_id
-            .as_deref()
-            .and_then(|id| columns.iter().find(|c| c.id == id));
-        // A task added at the foot of a column must appear there. Backlog and
-        // Ready need no lock, because a task derives one of those two states on
-        // its own. Every other column gets a manual lock instead.
-        let auto_run =
-            t.auto_run || target.is_some_and(|c| c.accepts.contains(&DerivedState::Ready));
-        let lock = target.filter(|c| {
-            !c.accepts.contains(&DerivedState::Ready) && !c.accepts.contains(&DerivedState::Backlog)
-        });
-        let card = Card {
-            id: uuid::Uuid::new_v4().to_string(),
-            kind: CardKind::Task,
-            title: Some(t.title),
-            session_id: None,
-            project_cwd,
-            priority: t.priority,
-            auto_run,
-            run_prompt: t.run_prompt,
-            permission_mode: None,
-            model: t.model.filter(|m| !m.trim().is_empty()),
-            estimate_weighted_tokens: None,
-            manual_column: lock.map(|c| c.id.clone()),
-            manual_lock_priority: lock.map(|_| 0),
-            tags: vec![],
-            notes: t.notes,
-            archived: false,
-            bg_job_id: None,
-            last_job_state: None,
-            last_job_at: None,
-            scheduled: None,
-            created_at: now,
-            updated_at: now,
-            done_at: None,
-        };
+        let card = Card::new_task(t, project_cwd, &self.columns());
         self.store.lock().unwrap().upsert_card(&card)?;
         self.emit_changed();
         Ok(card)
     }
 
-    pub fn patch_card(&self, id: &str, p: CardPatch) -> anyhow::Result<Card> {
+    pub fn patch_card(&self, id: &str, mut p: CardPatch) -> anyhow::Result<Card> {
         // Archiving retires the card, so it closes the herdr tab as a move to
         // Done does. The board is read first, and only while the option is on:
         // an archived card is off the board, and the pane cannot be found once
@@ -1369,46 +1331,14 @@ impl Engine {
         let Some(mut c) = store.get_card(id)? else {
             anyhow::bail!("card not found")
         };
-        if let Some(v) = p.title {
-            c.title = if v.trim().is_empty() { None } else { Some(v) };
-        }
         // The project directory must be a directory on this node. An empty
-        // value clears it, and every other bad value is refused.
-        if let Some(v) = p.project_cwd {
+        // value clears it, and every other bad value is refused. The rest of
+        // the fields need no machine, so a hub applies them to its own copy
+        // with the same code while this node is away.
+        if let Some(v) = p.project_cwd.take() {
             c.project_cwd = paths::checked_project_cwd(Some(&v))?;
         }
-        if let Some(v) = p.priority {
-            c.priority = v;
-        }
-        if let Some(v) = p.auto_run {
-            c.auto_run = v;
-        }
-        if let Some(v) = p.run_prompt {
-            c.run_prompt = if v.trim().is_empty() { None } else { Some(v) };
-        }
-        if let Some(v) = p.permission_mode {
-            c.permission_mode = if v.trim().is_empty() { None } else { Some(v) };
-        }
-        if let Some(v) = p.model {
-            c.model = if v.trim().is_empty() { None } else { Some(v) };
-        }
-        if let Some(v) = p.notes {
-            c.notes = if v.trim().is_empty() { None } else { Some(v) };
-        }
-        if let Some(v) = p.tags {
-            c.tags = v;
-        }
-        if let Some(v) = p.archived {
-            c.archived = v;
-            // An archived card leaves the board, so nothing would ever start
-            // its booked run or show that one waits. Drop it with the card.
-            if v {
-                c.scheduled = None;
-            }
-        }
-        if let Some(v) = p.estimate_weighted_tokens {
-            c.estimate_weighted_tokens = Some(v);
-        }
+        c.apply_patch(&p);
         c.updated_at = Utc::now();
         store.upsert_card(&c)?;
         drop(store);
@@ -1982,6 +1912,49 @@ impl Engine {
         if cleared > 0 {
             info!("attachment sweep cleared {cleared} card(s)");
             self.emit_changed();
+        }
+    }
+
+    // ---- the outbox of a hub: writes it holds for a node that is away ----
+
+    pub fn outbox(&self, node_id: &str) -> Vec<crate::outbox::Queued> {
+        self.store
+            .lock()
+            .unwrap()
+            .outbox(node_id)
+            .unwrap_or_default()
+    }
+
+    pub fn outbox_counts(&self) -> std::collections::HashMap<String, u32> {
+        self.store
+            .lock()
+            .unwrap()
+            .outbox_counts()
+            .unwrap_or_default()
+    }
+
+    /// Put one write in the queue, folded into the writes already there.
+    pub fn queue_write(&self, node_id: &str, w: crate::outbox::PendingWrite) -> anyhow::Result<()> {
+        let store = self.store.lock().unwrap();
+        let f = crate::outbox::fold(&store.outbox(node_id)?, w);
+        for seq in f.drop {
+            store.drop_write(seq)?;
+        }
+        if let Some(w) = f.write {
+            store.queue_write(node_id, &w)?;
+        }
+        Ok(())
+    }
+
+    pub fn drop_write(&self, seq: i64) {
+        if let Err(e) = self.store.lock().unwrap().drop_write(seq) {
+            warn!("outbox: {e}");
+        }
+    }
+
+    pub fn mark_write_error(&self, seq: i64, err: &str) {
+        if let Err(e) = self.store.lock().unwrap().mark_write_error(seq, err) {
+            warn!("outbox: {e}");
         }
     }
 
