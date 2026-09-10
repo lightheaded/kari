@@ -183,7 +183,8 @@ export default function MobileApp() {
             columnId={null}
             columns={board.columns}
             projectsByNode={projectsByNode}
-            onClose={() => setTab("inbox")}
+            // Back, and Cancel, leave the form for the board the app opens on.
+            onClose={() => setTab("board")}
             onSubmit={(nodeId, t, files) =>
               run(
                 async () => {

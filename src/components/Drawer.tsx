@@ -4,6 +4,7 @@ import type { Attachment, CardPatch, Column, HubCard, JobLogEntry, NodeStatus, P
 import { RUN_MODELS, STATE_LABEL } from "../types";
 import { clearsBox, clock, fmtM, fmtPct, noAutoFill, proseField, relTime, schedulePreview, shortId, untilTime, weighted } from "../util";
 import { useAutoGrow } from "../hooks";
+import { useBackClose } from "../back";
 import { useCloseGuard } from "../dirty";
 import { UnsavedBar } from "./Modals";
 import type { Act } from "../toasts";
@@ -251,10 +252,13 @@ export function Drawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [guard, flush]);
 
-  const close = () => {
+  const close = useCallback(() => {
     flush();
     guard.requestClose();
-  };
+  }, [flush, guard]);
+
+  // The system Back button on a phone closes the card, the way Escape does.
+  useBackClose(close);
 
   // Only a task card that never ran can move. A session card follows a
   // transcript that stays on its own machine.

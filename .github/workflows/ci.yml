@@ -208,6 +208,7 @@ jobs:
         run: |
           bun tauri android init
           scripts/android-icons.sh
+          scripts/android-back.sh
           bun tauri android build --debug --apk --target aarch64
           ls -la src-tauri/gen/android/app/build/outputs/apk/*/debug/*.apk
 
