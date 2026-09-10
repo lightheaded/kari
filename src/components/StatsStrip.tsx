@@ -1,18 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import type { AccountQuota, NodeStatus, QuotaWindow } from "../types";
-import { fmtPct, nodeDot, relTime, untilTime } from "../util";
+import { fmtPct, nodeDot, relTime, resetIn, resetTitle } from "../util";
 
-/** One window of one account. Every part keeps its box when it has nothing to
- *  show, so the bars of two rows stand in one column. */
-function Meter({ label, w }: { label: string; w: QuotaWindow | null }) {
+/** One window of one account: the name of the window, the bar, the percentage
+ *  and the reset time.
+ *
+ *  The four parts are grid items of the row, not a box of their own, so each
+ *  part stands in a column that every row of the strip shares. A long name, a
+ *  three-digit percentage or a reset time of "11h 22m" moves the whole column
+ *  and never one bar. Every part always renders, so a window kari has no
+ *  reading for keeps its place in the line. */
+function Meter({ label, w, track, note }: { label: string; w: QuotaWindow | null; track: "w5" | "w7"; note: string }) {
   const pct = w ? Math.max(0, Math.min(100, w.used_percentage)) : 0;
   const cls = pct >= 90 ? "hot" : pct >= 70 ? "warn" : "";
+  // The meter carries no box of its own, so each part holds the tooltip. It
+  // names the window and the sample the row was read from.
+  const title = `${resetTitle(label, w)}\n${note}`;
   return (
-    <span className="m" title={w?.resets_at ? `${label}: resets in ${untilTime(w.resets_at)}` : label}>
-      <span className="mk">{label}</span>
-      <span className="bar">{w && <i className={cls} style={{ width: `${pct}%` }} />}</span>
-      <b>{w ? `${pct.toFixed(0)}%` : "—"}</b>
-      <span className="mr">{w?.resets_at ? untilTime(w.resets_at) : ""}</span>
+    <span className={`m ${track}`}>
+      <span className="mk" title={title}>
+        {label}
+      </span>
+      <span className="bar" title={title}>
+        {w && <i className={cls} style={{ width: `${pct}%` }} />}
+      </span>
+      <b title={title}>{w ? `${pct.toFixed(0)}%` : "—"}</b>
+      <span className={w?.resets_at ? "mr" : "mr soft"} title={title}>
+        {resetIn(w)}
+      </span>
     </span>
   );
 }
@@ -89,6 +104,7 @@ function Row({ row, byId, showNodes, onFill, onHelp, onRename, onRefresh, refres
   const cal = row.calibration
     ? `\ncalibration ${fmtPct(row.calibration.pct_per_mtok)} of the 5-hour window per 1M weighted tokens (${row.calibration.source})`
     : "";
+  const note = quota ? `sampled ${relTime(quota.at)} ago via ${quota.source}${cal}` : "";
   return (
     <div className="srow">
       <Name row={row} onRename={onRename} />
@@ -106,9 +122,9 @@ function Row({ row, byId, showNodes, onFill, onHelp, onRename, onRefresh, refres
         </span>
       )}
       {quota ? (
-        <span className="smeters" title={`sampled ${relTime(quota.at)} ago via ${quota.source}${cal}`}>
-          <Meter label="5h" w={quota.five_hour} />
-          <Meter label="7d" w={quota.seven_day} />
+        <span className="smeters">
+          <Meter label="5h" w={quota.five_hour} track="w5" note={note} />
+          <Meter label="7d" w={quota.seven_day} track="w7" note={note} />
         </span>
       ) : (
         <button className="snone" onClick={onHelp} title="How to switch quota tracking on">

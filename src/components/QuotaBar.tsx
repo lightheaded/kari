@@ -1,21 +1,22 @@
 import type { Calibration, QuotaSample, QuotaWindow } from "../types";
-import { clock, fmtPct, relTime, untilTime } from "../util";
+import { fmtPct, relTime, resetIn, resetTitle } from "../util";
 
+/** One window. The meter keeps its box when kari has no reading for the
+ *  window, so the bars of two accounts stand in one column. Every window names
+ *  its reset, or says why it has none. */
 function Meter({ label, w }: { label: string; w: QuotaWindow | null }) {
-  if (!w) return null;
-  const pct = Math.max(0, Math.min(100, w.used_percentage));
+  const pct = w ? Math.max(0, Math.min(100, w.used_percentage)) : 0;
   const cls = pct >= 90 ? "hot" : pct >= 70 ? "warn" : "";
   return (
-    <div className="meter" title={w.resets_at ? `resets ${clock(w.resets_at)} (in ${untilTime(w.resets_at)})` : undefined}>
+    <div className="meter" title={resetTitle(label, w)}>
       <div className="l">
         <span>{label}</span>
         <b>
-          {pct.toFixed(0)}%{w.resets_at ? ` · resets in ${untilTime(w.resets_at)}` : ""}
+          {w ? `${pct.toFixed(0)}%` : "—"}
+          <span className={w?.resets_at ? "mr" : "mr soft"}>{resetIn(w)}</span>
         </b>
       </div>
-      <div className="bar">
-        <i className={cls} style={{ width: `${pct}%` }} />
-      </div>
+      <div className="bar">{w && <i className={cls} style={{ width: `${pct}%` }} />}</div>
     </div>
   );
 }
