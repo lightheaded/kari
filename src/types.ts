@@ -304,6 +304,10 @@ export interface HookState {
   idle_since: string | null;
   turn_active: boolean;
   events_seen: number;
+  /** The last release-shaped command kari refused in an autopilot run. */
+  blocked_command: string | null;
+  blocked_kind: string | null;
+  blocked_at: string | null;
 }
 export interface Summary {
   session_id: string;

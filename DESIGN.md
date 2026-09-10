@@ -436,6 +436,35 @@ Cleanup, on the poll loop:
 - A directory that belongs to no card waits a day, because a delete is undoable
   from its toast and `restore_card` gives the card back its own id.
 
+### What an autopilot run cannot do
+
+Autopilot can do the work and open a pull request. It stops there. A run that
+autopilot started carries `started_by_autopilot` on its card, and kari refuses
+four kinds of command in such a run:
+
+| Refused | Examples |
+|---|---|
+| A merge | `gh pr merge`, a push that moves `main` |
+| A release | `gh release ...`, `git tag v1.2.3`, `git push --tags` |
+| An image push | `skopeo copy ... docker://...`, `docker push`, `podman push` |
+| A commit where a commit deploys | a commit or a push under `autopilot_protected_paths` |
+
+The gate is a `PreToolUse` hook on `Bash`. A permission prompt cannot do this
+work, because an autopilot run uses `bypassPermissions` and sees no prompt.
+kari answers the hook with `permissionDecision: deny` and a reason, so the run
+reads why and can open a pull request instead. The refusal also goes on the
+card and into a notice, because a silent deny wastes the run and teaches the
+user nothing.
+
+The match reads intent, not text. The command line is split the way a shell
+splits it, and each part is reduced to a program and its arguments. So
+`/opt/homebrew/bin/gh pr merge 1` is a refusal, `nix run nixpkgs#skopeo -- copy`
+is a refusal, and a commit message that holds the words `gh release` is not.
+
+A session that a person starts is never judged, and behaves as it did before.
+`autopilot_protected_paths` is empty by default, because those directories
+belong to the user and not to this repository.
+
 ## 10. Jump in
 
 | Where the session lives | Action |

@@ -2186,6 +2186,7 @@ mod tests {
                 notes: None,
                 archived: false,
                 bg_job_id: None,
+                started_by_autopilot: false,
                 last_job_state: None,
                 last_job_at: None,
                 scheduled: None,

@@ -59,6 +59,11 @@ export function CardItem({ view, selected, overlay, showNode, offline, lastSeen,
         </span>
       )}
       <div className="title">{view.title}</div>
+      {view.hooks?.blocked_command && (
+        <div className="blocked" title={view.hooks.blocked_command}>
+          Stopped short of a {view.hooks.blocked_kind ?? "release"}: <code>{view.hooks.blocked_command}</code>
+        </div>
+      )}
       {view.summary?.narrative && !q && <div className="narrative">{view.summary.narrative}</div>}
       <div className="chips">
         <span className="chip">

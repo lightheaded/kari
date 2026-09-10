@@ -2,8 +2,8 @@
 
 use crate::model::*;
 use crate::{
-    agents, attach, estimate, herdr, hooks, infer, launcher, paths, peer, planner, quota, registry,
-    store::Store, summary, transcript,
+    agents, attach, estimate, gate, herdr, hooks, infer, launcher, paths, peer, planner, quota,
+    registry, store::Store, summary, transcript,
 };
 use chrono::{DateTime, Duration, Utc};
 use notify::RecursiveMode;
@@ -298,6 +298,7 @@ impl Engine {
             project_cwd: cwd.map(|s| s.to_string()),
             priority: 0,
             auto_run: false,
+            started_by_autopilot: false,
             run_prompt: None,
             permission_mode: None,
             model: None,
@@ -652,6 +653,103 @@ impl Engine {
         self.detect_transitions();
         self.emit_changed();
         Ok(())
+    }
+
+    // ---------------------------------------------------------------- the autopilot gate
+
+    /// True when autopilot started the run that owns this session.
+    ///
+    /// The card that autopilot started carries the marker, but it holds only
+    /// a job id at first: the session id arrives when `link_jobs` sees the
+    /// job. So the job list is asked as well, and it answers during the
+    /// window before the link exists.
+    fn autopilot_session(&self, session_id: &str) -> bool {
+        let by_session = self
+            .store
+            .lock()
+            .unwrap()
+            .card_by_session(session_id)
+            .ok()
+            .flatten();
+        if let Some(c) = by_session {
+            return c.started_by_autopilot;
+        }
+        let job_id = self
+            .snap
+            .read()
+            .unwrap()
+            .jobs
+            .iter()
+            .find(|j| j.session_id.as_deref() == Some(session_id))
+            .and_then(|j| j.id.clone());
+        let Some(job_id) = job_id else { return false };
+        self.store
+            .lock()
+            .unwrap()
+            .list_cards()
+            .unwrap_or_default()
+            .iter()
+            .any(|c| c.bg_job_id.as_deref() == Some(job_id.as_str()) && c.started_by_autopilot)
+    }
+
+    /// The reason to refuse this tool call, or None when the run may make it.
+    ///
+    /// Only a Bash call of an autopilot run is judged. Everything else, and
+    /// every session a person started, passes without a change in behaviour.
+    /// A refusal is recorded on the session and announced, because a silent
+    /// deny would waste the run and teach the user nothing.
+    pub fn gate_refusal(self: &Arc<Self>, payload: &serde_json::Value) -> Option<String> {
+        let (session_id, command) = gate_target(payload)?;
+        if !self.autopilot_session(session_id) {
+            return None;
+        }
+        let cwd = payload.get("cwd").and_then(|v| v.as_str());
+        let settings = self.settings();
+        // The branch matters only for a push with no refspec, and reading it
+        // costs a subprocess, so ask only when a push is in the command.
+        let branch = if command.contains("push") {
+            cwd.and_then(current_branch)
+        } else {
+            None
+        };
+        let refusal = gate_decision(
+            payload,
+            true,
+            &settings.autopilot_protected_paths,
+            branch.as_deref(),
+        )?;
+        self.record_refusal(session_id, command, refusal);
+        Some(refusal.reason().to_string())
+    }
+
+    /// Put the refusal where the user sees it: on the session, and in a notice.
+    fn record_refusal(self: &Arc<Self>, session_id: &str, command: &str, r: gate::Refusal) {
+        let short_command: String = command.chars().take(200).collect();
+        {
+            let mut snap = self.snap.write().unwrap();
+            let st = snap.hooks.entry(session_id.to_string()).or_default();
+            st.blocked_command = Some(short_command.clone());
+            st.blocked_kind = Some(r.label().to_string());
+            st.blocked_at = Some(Utc::now());
+        }
+        let card_id = self
+            .store
+            .lock()
+            .unwrap()
+            .card_by_session(session_id)
+            .ok()
+            .flatten()
+            .map(|c| c.id);
+        warn!(
+            "gate: refused a {} command from an autopilot run: {short_command}",
+            r.label()
+        );
+        let _ = self.tx.send(Event::Notice {
+            title: format!("Autopilot was stopped short of a {}", r.label()),
+            body: format!("The run wanted to run: {short_command}"),
+            card_id,
+        });
+        self.emit_changed();
     }
 
     // ---------------------------------------------------------------- held permissions
@@ -1959,10 +2057,28 @@ impl Engine {
     }
 
     /// Start a card as a background job. Task cards start fresh; session cards resume.
+    ///
+    /// A person asks for this. Autopilot goes through `start_card_auto`, so
+    /// that the run carries where it came from and the gate can hold it back
+    /// from a release.
     pub fn start_card(
         &self,
         card_id: &str,
         prompt_override: Option<String>,
+    ) -> anyhow::Result<String> {
+        self.start_card_from(card_id, prompt_override, false)
+    }
+
+    /// Start a card the way autopilot does: with no click, and marked.
+    pub fn start_card_auto(&self, card_id: &str) -> anyhow::Result<String> {
+        self.start_card_from(card_id, None, true)
+    }
+
+    fn start_card_from(
+        &self,
+        card_id: &str,
+        prompt_override: Option<String>,
+        auto: bool,
     ) -> anyhow::Result<String> {
         let settings = self.settings();
         let board = self.board();
@@ -2032,6 +2148,9 @@ impl Engine {
         )?;
         let mut c = card.clone();
         c.bg_job_id = Some(started.job_id.clone());
+        // Where this run came from. The gate reads it on every Bash call of
+        // the session, so a person who starts the card clears it.
+        c.started_by_autopilot = auto;
         c.last_job_state = Some("working".into());
         c.last_job_at = Some(Utc::now());
         c.manual_column = None;
@@ -2611,7 +2730,11 @@ impl Engine {
             if auto && started >= cap {
                 break;
             }
-            match self.start_card(&item.card_id, None) {
+            match if auto {
+                self.start_card_auto(&item.card_id)
+            } else {
+                self.start_card(&item.card_id, None)
+            } {
                 Ok(job) => {
                     item.job_id = Some(job);
                     item.error = None;
@@ -2985,6 +3108,63 @@ fn run_log_still_owns(card: &Card, jid: &str) -> bool {
     }
 }
 
+/// The session and the command of a payload the gate judges, or None when
+/// the payload is not a Bash call before a tool runs.
+fn gate_target(payload: &serde_json::Value) -> Option<(&str, &str)> {
+    let s = |k: &str| payload.get(k).and_then(|v| v.as_str());
+    if s("hook_event_name")? != hooks::GATE_EVENT || s("tool_name")? != "Bash" {
+        return None;
+    }
+    let session_id = s("session_id")?;
+    if !hooks::valid_session_id(session_id) {
+        return None;
+    }
+    let command = payload
+        .get("tool_input")
+        .and_then(|i| i.get("command"))
+        .and_then(|c| c.as_str())?;
+    Some((session_id, command))
+}
+
+/// What the gate answers for one payload. Pure, so the rule can be tested
+/// without an engine: `autopilot` says who started the run, and a run that a
+/// person started is never refused.
+fn gate_decision(
+    payload: &serde_json::Value,
+    autopilot: bool,
+    protected: &[String],
+    branch: Option<&str>,
+) -> Option<gate::Refusal> {
+    if !autopilot {
+        return None;
+    }
+    let (_, command) = gate_target(payload)?;
+    let run = gate::Run {
+        cwd: payload.get("cwd").and_then(|v| v.as_str()),
+        branch,
+        protected,
+    };
+    gate::refusal(command, &run)
+}
+
+/// The branch that is checked out in `dir`, when git can say. A push with no
+/// refspec moves this branch, so the gate reads it to judge such a push.
+fn current_branch(dir: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
 /// The herdr tab kari closes when the user retires a card. `None` when the
 /// option is off, when the card has no herdr pane, or when herdr did not name
 /// the tab of that pane.
@@ -3012,6 +3192,7 @@ mod tests {
             project_cwd: None,
             priority: 0,
             auto_run: false,
+            started_by_autopilot: false,
             run_prompt: None,
             permission_mode: None,
             model: None,
@@ -3244,6 +3425,97 @@ mod tests {
         // A host asleep for four hours still runs what it missed.
         let missed = now - Duration::hours(4);
         assert_eq!(booking_action(missed, now, false, 1), Booking::Start);
+    }
+
+    fn bash_payload(command: &str, cwd: &str) -> serde_json::Value {
+        serde_json::json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "session_id": "abcdef12-3456-7890-abcd-ef1234567890",
+            "cwd": cwd,
+            "tool_input": { "command": command },
+        })
+    }
+
+    /// A session a person started keeps every power it had. This is the test
+    /// that says the gate changed nothing for the user.
+    #[test]
+    fn a_person_is_never_refused() {
+        let none: Vec<String> = vec![];
+        for c in [
+            "gh pr merge 34",
+            "gh release create v1.0.0",
+            "git tag -s v1.0.0 -m x",
+            "skopeo copy docker-archive:/tmp/i docker://reg/x:1",
+        ] {
+            let p = bash_payload(c, "/home/you/dev/kari");
+            assert_eq!(gate_decision(&p, false, &none, None), None, "{c}");
+        }
+    }
+
+    /// The same commands, in a run autopilot started.
+    #[test]
+    fn autopilot_is_refused_a_release() {
+        let none: Vec<String> = vec![];
+        for (c, want) in [
+            ("gh pr merge 34", gate::Refusal::Merge),
+            ("gh release create v1.0.0", gate::Refusal::Release),
+            ("git tag -s v1.0.0 -m x", gate::Refusal::Release),
+            (
+                "skopeo copy docker-archive:/tmp/i docker://reg/x:1",
+                gate::Refusal::ImagePush,
+            ),
+        ] {
+            let p = bash_payload(c, "/home/you/dev/kari");
+            assert_eq!(gate_decision(&p, true, &none, None), Some(want), "{c}");
+        }
+    }
+
+    /// Autopilot keeps every power it needs to do the work and to open the
+    /// pull request. A gate that stops this is worse than no gate.
+    #[test]
+    fn autopilot_may_still_open_a_pull_request() {
+        let none: Vec<String> = vec![];
+        for c in [
+            "cargo test",
+            "git add -A",
+            "git commit -m 'fix the send path'",
+            "git push -u origin my-branch",
+            "gh pr create --fill",
+        ] {
+            let p = bash_payload(c, "/home/you/dev/kari");
+            assert_eq!(gate_decision(&p, true, &none, None), None, "{c}");
+        }
+    }
+
+    /// Only a Bash call before a tool runs is judged.
+    #[test]
+    fn the_gate_reads_only_a_bash_pretooluse() {
+        let none: Vec<String> = vec![];
+        let mut after = bash_payload("gh pr merge 1", "/x");
+        after["hook_event_name"] = serde_json::json!("PostToolUse");
+        assert_eq!(gate_decision(&after, true, &none, None), None);
+
+        let mut other = bash_payload("gh pr merge 1", "/x");
+        other["tool_name"] = serde_json::json!("Read");
+        assert_eq!(gate_decision(&other, true, &none, None), None);
+
+        let mut bad = bash_payload("gh pr merge 1", "/x");
+        bad["session_id"] = serde_json::json!("short");
+        assert_eq!(gate_decision(&bad, true, &none, None), None);
+    }
+
+    /// A directory where a commit deploys is named by the user, never by this
+    /// repository, so an empty list changes nothing.
+    #[test]
+    fn a_deploy_directory_is_a_setting() {
+        let p = bash_payload("git commit -m x", "/x/infra/clusters");
+        assert_eq!(gate_decision(&p, true, &[], None), None);
+        let roots = vec!["/x/infra".to_string()];
+        assert_eq!(
+            gate_decision(&p, true, &roots, None),
+            Some(gate::Refusal::ProtectedPath)
+        );
     }
 
     /// The one test that opens an engine: `open_at` fixes the kari directory

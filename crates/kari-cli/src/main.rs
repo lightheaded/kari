@@ -385,6 +385,10 @@ fn serve(opt: Serve) -> anyhow::Result<()> {
         tracing::warn!(
             "hooks installed without the PermissionRequest entry; run `kari-node hooks install` again for Away mode"
         );
+    } else if hooks::installed() && !hooks::gate_installed() {
+        tracing::warn!(
+            "hooks installed without the Bash entry; run `kari-node hooks install` again, or autopilot can release"
+        );
     } else if hooks::installed() {
         tracing::info!("hooks installed");
     } else {

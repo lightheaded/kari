@@ -7,6 +7,7 @@ pub mod attach;
 pub mod client;
 pub mod engine;
 pub mod estimate;
+pub mod gate;
 pub mod herdr;
 pub mod hooks;
 pub mod hub;

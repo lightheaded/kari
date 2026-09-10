@@ -87,7 +87,9 @@ const EVENTS: &[(&str, Option<&str>)] = &[
     ("UserPromptSubmit", None),
     ("Stop", None),
     ("Notification", None),
-    ("PreToolUse", Some("AskUserQuestion|ExitPlanMode")),
+    // Bash joins the two below for the autopilot gate: kari refuses a
+    // release-shaped command in a run that autopilot started.
+    ("PreToolUse", Some("AskUserQuestion|ExitPlanMode|Bash")),
     ("PostToolUse", Some("*")),
     ("PermissionRequest", None),
 ];
@@ -99,6 +101,18 @@ pub const HELD_EVENT: &str = "PermissionRequest";
 /// Seconds the relay waits on a held event. Above the longest hold a node offers.
 pub const HELD_TIMEOUT_SECS: u64 = 660;
 
+/// The event that carries the autopilot gate. kari answers it with a refusal
+/// when an autopilot run asks for a release-shaped command, so the relay must
+/// print the answer of this event as well.
+pub const GATE_EVENT: &str = "PreToolUse";
+/// Seconds the relay waits on a gate event. Every Bash call of every session
+/// waits this long at worst, so it stays short. A stopped kari refuses the
+/// connection at once and the call goes ahead.
+pub const GATE_TIMEOUT_SECS: u64 = 3;
+/// Marks the relay script that knows about the gate. An installed script from
+/// an older kari lacks it, and `refresh_script` writes the script again.
+const RELAY_MARK: &str = "kari relay 2";
+
 /// The stdout of the relay that settles a permission prompt.
 pub fn decision_json(behavior: &str) -> serde_json::Value {
     json!({
@@ -107,6 +121,36 @@ pub fn decision_json(behavior: &str) -> serde_json::Value {
             "decision": { "behavior": behavior }
         }
     })
+}
+
+/// The stdout of the relay that refuses a tool call. Claude Code reads the
+/// reason and tells the session, so the run learns what to do instead.
+pub fn deny_json(reason: &str) -> serde_json::Value {
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": GATE_EVENT,
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason
+        }
+    })
+}
+
+/// True when settings.json registers kari for the gate. An install from an
+/// older kari names only the two question tools, so the gate never fires and
+/// the user must install the hooks again.
+pub fn gate_installed() -> bool {
+    let Ok(v) = read_settings() else { return false };
+    v.get("hooks")
+        .and_then(|h| h.get(GATE_EVENT))
+        .and_then(|a| a.as_array())
+        .is_some_and(|a| {
+            a.iter().any(|g| {
+                is_kari_group(g)
+                    && g.get("matcher")
+                        .and_then(|m| m.as_str())
+                        .is_some_and(|m| m.split('|').any(|t| t == "Bash"))
+            })
+        })
 }
 
 pub fn parse(v: &Value) -> Option<HookEvent> {
@@ -228,13 +272,17 @@ pub fn script(port: u16) -> String {
     let hdr = format!("-H 'content-type: application/json' -H \"{TOKEN_HEADER}: $tok\"");
     format!(
         "#!/bin/sh\n\
-         # kari hook relay. Posts the Claude Code hook payload to kari and never fails.\n\
+         # {RELAY_MARK}. Posts the Claude Code hook payload to kari and never fails.\n\
          # A {HELD_EVENT} may be held by kari for a remote answer; its decision is printed.\n\
+         # A {GATE_EVENT} answer can refuse the call, so it is printed as well.\n\
          tok=$(cat '{token_file}' 2>/dev/null)\n\
          payload=$(cat)\n\
          case \"$payload\" in\n\
            *'\"hook_event_name\":\"{HELD_EVENT}\"'*|*'\"hook_event_name\": \"{HELD_EVENT}\"'*)\n\
              printf '%s' \"$payload\" | curl -s -m {HELD_TIMEOUT_SECS} -X POST {hdr} --data-binary @- '{url}' 2>/dev/null\n\
+             ;;\n\
+           *'\"hook_event_name\":\"{GATE_EVENT}\"'*|*'\"hook_event_name\": \"{GATE_EVENT}\"'*)\n\
+             printf '%s' \"$payload\" | curl -s -m {GATE_TIMEOUT_SECS} -X POST {hdr} --data-binary @- '{url}' 2>/dev/null\n\
              ;;\n\
            *)\n\
              printf '%s' \"$payload\" | curl -s -m 3 -X POST {hdr} --data-binary @- '{url}' >/dev/null 2>&1\n\
@@ -286,7 +334,10 @@ pub fn refresh_script(port: u16) -> anyhow::Result<()> {
     let Ok(current) = std::fs::read_to_string(&sp) else {
         return Ok(());
     };
-    if current.contains(TOKEN_HEADER) && current.contains(HELD_EVENT) {
+    if current.contains(TOKEN_HEADER)
+        && current.contains(HELD_EVENT)
+        && current.contains(RELAY_MARK)
+    {
         return Ok(());
     }
     std::fs::write(&sp, script(port))?;

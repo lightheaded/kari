@@ -753,6 +753,18 @@ export function Drawer({
                 </dd>
               </>
             )}
+            {view.hooks?.blocked_command && (
+              <>
+                <dt>Stopped</dt>
+                <dd>
+                  kari refused a {view.hooks.blocked_kind ?? "release"} command {relTime(view.hooks.blocked_at)} ago.
+                  Autopilot started this run, so it can open a pull request but cannot release.
+                  <div className="hint">
+                    <code>{view.hooks.blocked_command}</code>
+                  </div>
+                </dd>
+              </>
+            )}
             {view.estimate && (
               <>
                 <dt>Estimate</dt>
