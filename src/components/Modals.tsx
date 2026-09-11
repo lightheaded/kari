@@ -20,7 +20,7 @@ import { nodeDot, noAutoFill, proseField, relTime } from "../util";
 import { useAutoGrow, useSticky } from "../hooks";
 import { useBackClose } from "../back";
 import type { CloseGuard } from "../dirty";
-import { useCloseGuard } from "../dirty";
+import { useCloseGuard, useDraft } from "../dirty";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
 import {
   AttachButton,
@@ -198,10 +198,35 @@ export function AddTaskModal({
     ...projects.map((p) => ({ value: p.cwd, label: p.name, hint: p.cwd })),
     { value: "__custom", label: "Other path…" },
   ];
-  // A typed draft is worth more than a stray Escape. The first close asks.
-  const dirty =
-    [title, prompt, notes, custom].some((v) => v.trim() !== "") || files.length > 0;
-  const guard = useCloseGuard(dirty, onClose);
+  // Only text can go into a draft. A picked file lives in the page alone, so a
+  // file makes the form dirty but writes no draft.
+  const typed = [title, prompt, notes, custom].some((v) => v.trim() !== "");
+  const dirty = typed || files.length > 0;
+  // A rebuild, or a crash, must not take the typed task away. The draft comes
+  // back the next time the dialog opens. The column stays where the user clicked.
+  const draft = useDraft(
+    "add",
+    typed,
+    { node, title, cwd, custom, prompt, notes, priority, model, autoRun },
+    (d) => {
+      setNode(d.node);
+      setTitle(d.title);
+      setCwd(d.cwd);
+      setCustom(d.custom);
+      setPrompt(d.prompt);
+      setNotes(d.notes);
+      setPriority(d.priority);
+      setModel(d.model);
+      setAutoRun(d.autoRun);
+    },
+  );
+  // A typed draft is worth more than a stray Escape. The first close asks. The
+  // user who answers that question chose to lose the input, so the draft goes
+  // too, or it comes back at the next opening.
+  const guard = useCloseGuard(dirty, () => {
+    draft.clear();
+    onClose();
+  });
 
   useEffect(() => {
     let live = true;
@@ -230,7 +255,8 @@ export function AddTaskModal({
           <button
             className="btn primary"
             disabled={!title.trim()}
-            onClick={() =>
+            onClick={() => {
+              draft.clear();
               onSubmit(
                 node,
                 {
@@ -244,14 +270,15 @@ export function AddTaskModal({
                 column_id: columnId,
                 },
                 files,
-              )
-            }
+              );
+            }}
           >
             Add
           </button>
         </>
       }
     >
+      {draft.restored && <div className="hint">This is a draft that kari kept from an earlier run.</div>}
       {target && (
         <div className="hint">
           The card lands in <b>{target.name}</b>.

@@ -5,7 +5,7 @@ import { RUN_MODELS, STATE_LABEL } from "../types";
 import { clearsBox, clock, fmtM, fmtPct, noAutoFill, proseField, relTime, schedulePreview, shortId, untilTime, weighted } from "../util";
 import { useAutoGrow } from "../hooks";
 import { useBackClose } from "../back";
-import { useCloseGuard } from "../dirty";
+import { useCloseGuard, useDraft } from "../dirty";
 import { UnsavedBar } from "./Modals";
 import type { Act } from "../toasts";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
@@ -273,8 +273,28 @@ export function Drawer({
     notes.flush();
   }, [prompt, notes]);
 
-  // A typed prompt is worth more than a stray Escape. The first one asks.
-  const guard = useCloseGuard(draft.trim() !== "", onClose);
+  // A rebuild, or a crash, cannot flush a field on blur. The store keeps the
+  // text that still waits, and the message that is not sent yet. The draft
+  // holds the time of the card it was written against. A newer card drops it,
+  // because a stale draft must not go over what the node changed since.
+  const kept = useDraft(
+    `card.${node}.${c.id}`,
+    draft.trim() !== "" || prompt.dirty || notes.dirty,
+    { at: c.updated_at, msg: draft, prompt: prompt.draft, notes: notes.draft },
+    (d) => {
+      if (d.at !== c.updated_at) return;
+      setDraft(d.msg);
+      prompt.setDraft(d.prompt);
+      notes.setDraft(d.notes);
+    },
+  );
+
+  // A typed prompt is worth more than a stray Escape. The first one asks. The
+  // second one loses the text, so the stored draft goes with it.
+  const guard = useCloseGuard(draft.trim() !== "", () => {
+    kept.clear();
+    onClose();
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -461,6 +481,7 @@ export function Drawer({
         </button>
       )}
       <UnsavedBar guard={guard} text="The prompt you typed is not sent." />
+      {kept.restored && <div className="hint">This text is a draft that kari kept from an earlier run.</div>}
       <header>
         <TitleEdit title={view.title} saved={c.title ?? ""} onSave={(t) => patch({ title: t })} />
         {showNode && (

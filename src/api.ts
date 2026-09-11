@@ -188,6 +188,8 @@ export const api = {
   setDirty: (dirty: boolean) =>
     inTauri ? invoke<void>("set_dirty", { dirty }) : Promise.resolve(),
   quitNow: () => invoke<void>("quit_now"),
+  /** The user chose to keep working. Stops the countdown of a quit ask. */
+  cancelQuit: () => (inTauri ? invoke<void>("cancel_quit") : Promise.resolve()),
   /** Store a manual order for one column. `ranked` is top first; `unranked` goes back to automatic. */
   reorderCards: (nodeId: string, ranked: string[], unranked: string[]) =>
     invoke<void>("reorder_cards", { nodeId, ranked, unranked }),
@@ -331,10 +333,12 @@ export function onNotice(cb: (n: Notice) => void) {
   };
 }
 
-/** The tray or Cmd+Q asked to quit while a form holds unsaved input. */
-export function onConfirmQuit(cb: () => void) {
+/** The tray, Cmd+Q, or a signal asked to quit while a form holds unsaved
+ *  input. `grace` is the seconds before kari quits anyway, or null when the
+ *  ask waits for an answer for as long as it takes. */
+export function onConfirmQuit(cb: (grace: number | null) => void) {
   if (!inTauri) return () => {};
-  const p = listen("confirm_quit", () => cb());
+  const p = listen<{ grace: number | null }>("confirm_quit", (e) => cb(e.payload?.grace ?? null));
   return () => {
     p.then((un) => un());
   };
