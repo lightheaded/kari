@@ -129,6 +129,80 @@ fn dig<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
     None
 }
 
+/// The array under `key`, or an empty one.
+fn arr<'a>(v: &'a Value, key: &str) -> &'a [Value] {
+    v.get(key)
+        .and_then(|x| x.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[])
+}
+
+/// Two paths that name one directory. A trailing slash and a symlink both hide
+/// a match that the user can see on the screen.
+fn same_dir(a: &str, b: &str) -> bool {
+    if a.trim_end_matches('/') == b.trim_end_matches('/') {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Choose the workspace that already works in `cwd`.
+///
+/// A herdr workspace holds no directory of its own, so its panes stand for it:
+/// a workspace matches when one of its panes sits in `cwd`. When more than one
+/// matches, the workspace with the most recent agent state change wins, and
+/// the position on the workspace bar breaks a tie. This function takes the
+/// three lists as they arrive, so the choice can be tested with no herdr.
+fn pick_workspace(cwd: &str, panes: &Value, agents: &Value, workspaces: &Value) -> Option<String> {
+    let mut matched: Vec<&str> = vec![];
+    for p in arr(panes, "panes") {
+        let Some(ws) = p.get("workspace_id").and_then(|w| w.as_str()) else {
+            continue;
+        };
+        let dir = p
+            .get("cwd")
+            .or_else(|| p.get("foreground_cwd"))
+            .and_then(|c| c.as_str());
+        if dir.is_some_and(|d| same_dir(d, cwd)) && !matched.contains(&ws) {
+            matched.push(ws);
+        }
+    }
+    // A workspace with no agent in it scores zero, and its place on the bar
+    // then decides. herdr appends a new workspace, so the last one is the
+    // newest until somebody moves it.
+    let seq = |ws: &str| {
+        arr(agents, "agents")
+            .iter()
+            .filter(|a| a.get("workspace_id").and_then(|w| w.as_str()) == Some(ws))
+            .filter_map(|a| a.get("state_change_seq").and_then(|s| s.as_u64()))
+            .max()
+            .unwrap_or(0)
+    };
+    let number = |ws: &str| {
+        arr(workspaces, "workspaces")
+            .iter()
+            .find(|w| w.get("workspace_id").and_then(|x| x.as_str()) == Some(ws))
+            .and_then(|w| w.get("number"))
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0)
+    };
+    matched
+        .into_iter()
+        .max_by_key(|ws| (seq(ws), number(ws)))
+        .map(|ws| ws.to_string())
+}
+
+/// The workspace to open a tab in, or None when no workspace works in `cwd`.
+fn workspace_for_cwd(cwd: &str) -> Option<String> {
+    let panes = call("pane.list", json!({})).ok()?;
+    let agents = call("agent.list", json!({})).unwrap_or(Value::Null);
+    let workspaces = call("workspace.list", json!({})).unwrap_or(Value::Null);
+    pick_workspace(cwd, &panes, &agents, &workspaces)
+}
+
 /// Open a herdr tab in `cwd` and start an agent in its pane.
 /// `args` go to the agent command, for example `["--resume", "<id>"]`.
 pub fn open_agent(
@@ -141,12 +215,34 @@ pub fn open_agent(
     if !available() {
         anyhow::bail!("herdr is not running");
     }
-    let created = call(
-        "tab.create",
-        json!({ "cwd": cwd, "label": label, "focus": focus }),
-    )?;
+    // A tab.create with no workspace lands in the focused workspace, which is
+    // rarely the one that works in `cwd`. So reuse the workspace that already
+    // sits there, and give a directory that has none a workspace of its own,
+    // named after the directory.
+    let created = match workspace_for_cwd(cwd) {
+        Some(ws) => call(
+            "tab.create",
+            json!({ "cwd": cwd, "label": label, "focus": focus, "workspace_id": ws }),
+        )?,
+        None => {
+            let made = call(
+                "workspace.create",
+                json!({
+                    "cwd": cwd,
+                    "label": crate::paths::project_display_name(cwd),
+                    "focus": focus,
+                }),
+            )?;
+            // herdr names the first tab of a new workspace after its number.
+            // The card title belongs there, as on every other tab kari opens.
+            if let Some(tab) = dig(&made, "tab_id") {
+                let _ = call("tab.rename", json!({ "tab_id": tab, "label": label }));
+            }
+            made
+        }
+    };
     let tab_id = dig(&created, "tab_id")
-        .ok_or_else(|| anyhow::anyhow!("herdr tab.create returned no tab_id"))?
+        .ok_or_else(|| anyhow::anyhow!("herdr opened a tab and returned no tab_id"))?
         .to_string();
     // The pane of a fresh tab is the one that carries its tab id.
     let panes = call("pane.list", json!({}))?;
@@ -191,4 +287,72 @@ pub fn open_agent(
 pub fn close_tab(tab_id: &str) -> anyhow::Result<()> {
     call("tab.close", json!({ "tab_id": tab_id }))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn panes(rows: &[(&str, &str)]) -> Value {
+        json!({"panes": rows.iter().map(|(ws, cwd)| json!({
+            "workspace_id": ws, "cwd": cwd, "tab_id": format!("{ws}:t1"),
+        })).collect::<Vec<_>>()})
+    }
+
+    fn agents(rows: &[(&str, u64)]) -> Value {
+        json!({"agents": rows.iter().map(|(ws, seq)| json!({
+            "workspace_id": ws, "state_change_seq": seq,
+        })).collect::<Vec<_>>()})
+    }
+
+    fn workspaces(ids: &[&str]) -> Value {
+        json!({"workspaces": ids.iter().enumerate().map(|(i, ws)| json!({
+            "workspace_id": ws, "number": i + 1,
+        })).collect::<Vec<_>>()})
+    }
+
+    /// The bug this guards: a jump in opened its tab in whichever workspace
+    /// was focused, so the card landed next to unrelated work.
+    #[test]
+    fn takes_the_workspace_that_works_in_the_directory() {
+        let p = panes(&[("w1", "/p/one"), ("w2", "/p/two")]);
+        let a = agents(&[("w1", 10), ("w2", 20)]);
+        let w = workspaces(&["w1", "w2"]);
+        assert_eq!(pick_workspace("/p/two", &p, &a, &w).as_deref(), Some("w2"));
+        assert_eq!(pick_workspace("/p/one/", &p, &a, &w).as_deref(), Some("w1"));
+    }
+
+    #[test]
+    fn a_new_directory_has_no_workspace() {
+        let p = panes(&[("w1", "/p/one")]);
+        let a = agents(&[("w1", 10)]);
+        let w = workspaces(&["w1"]);
+        assert_eq!(pick_workspace("/p/three", &p, &a, &w), None);
+    }
+
+    #[test]
+    fn the_most_recent_agent_wins_over_the_older_one() {
+        let p = panes(&[("w1", "/p/one"), ("w2", "/p/one"), ("w3", "/p/one")]);
+        let a = agents(&[("w1", 90), ("w2", 300), ("w3", 120)]);
+        let w = workspaces(&["w1", "w2", "w3"]);
+        assert_eq!(pick_workspace("/p/one", &p, &a, &w).as_deref(), Some("w2"));
+    }
+
+    /// With no agent to date a workspace, the newest workspace is the last one
+    /// on the bar.
+    #[test]
+    fn the_workspace_bar_breaks_a_tie() {
+        let p = panes(&[("w1", "/p/one"), ("w2", "/p/one")]);
+        let w = workspaces(&["w1", "w2"]);
+        let picked = pick_workspace("/p/one", &p, &Value::Null, &w);
+        assert_eq!(picked.as_deref(), Some("w2"));
+    }
+
+    #[test]
+    fn an_empty_herdr_picks_nothing() {
+        assert_eq!(
+            pick_workspace("/p/one", &Value::Null, &Value::Null, &Value::Null),
+            None
+        );
+    }
 }

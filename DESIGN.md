@@ -470,11 +470,20 @@ belong to the user and not to this repository.
 | Where the session lives | Action |
 |---|---|
 | herdr pane | `agent.focus` and `workspace.focus` over the herdr socket, then bring herdr's terminal to front |
-| no pane, herdr running | `tab.create` with the project cwd, then `agent.start` with kind `claude` in the new pane (`--resume <id>` for a session card). A fresh pane answers `agent_pane_busy` for a moment, so kari retries for 6 seconds. The agent name must be a slug. |
+| no pane, herdr running | `tab.create` in the workspace of the project cwd, then `agent.start` with kind `claude` in the new pane (`--resume <id>` for a session card). A fresh pane answers `agent_pane_busy` for a moment, so kari retries for 6 seconds. The agent name must be a slug. |
 | background job | terminal window: `claude attach <job-id>` |
 | exited, transcript only | terminal window in the project cwd: `claude --resume <session-id>` |
 
 The terminal (iTerm2, Terminal or Ghostty, set in Settings) is driven with `osascript`. herdr panes are matched to sessions by the session id when the herdr Claude integration is installed, else by cwd and title.
+
+A `tab.create` with no workspace lands in the focused workspace, so kari names
+one. A herdr workspace carries no directory of its own, so kari reads the
+directory of each pane and takes the workspace that already sits in the project
+cwd. When more than one workspace sits there, the workspace with the most recent
+agent state change wins, and the place on the workspace bar breaks a tie. When
+no workspace sits there, kari creates one with `workspace.create`, names it
+after the directory, and renames its first tab to the card title. That workspace
+holds one tab, so `close_herdr_tab_on_done` removes the workspace with it.
 
 The reverse step is `close_herdr_tab_on_done`, off by default. A move to a
 Done column closes the tab of the pane that the board matched to the card. An
