@@ -7,6 +7,7 @@ import { AddTaskModal } from "../components/Modals";
 import { uploadPending } from "../components/Attachments";
 import { Toasts } from "../components/Toasts";
 import { useToasts, type Undo } from "../toasts";
+import { useBackClose } from "../back";
 import { Inbox } from "./Inbox";
 import { BoardTab } from "./BoardTab";
 import { NodesTab } from "./NodesTab";
@@ -138,6 +139,10 @@ export default function MobileApp() {
 
   /** The user pressed Undo. The reversal is an action like any other. */
   const undo = useCallback((u: Undo) => void run(u.run, u.done), [run]);
+
+  // The board is the first screen, so the system back button goes there from
+  // any other tab, and leaves the app from the board itself.
+  useBackClose(tab !== "board", () => setTab("board"));
 
   useEffect(() => {
     if (board) return;

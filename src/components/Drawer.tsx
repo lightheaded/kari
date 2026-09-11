@@ -169,23 +169,54 @@ export function Drawer({
   const [added, setAdded] = useState<{ card: string; items: Attachment[] } | null>(null);
   const attachments = added?.card === c.id ? added.items : (view.attachments ?? []);
   const [attachBusy, setAttachBusy] = useState(false);
+  /** The part of the sheet that scrolls. The two pages share it. */
+  const body = useRef<HTMLDivElement | null>(null);
 
-  /** Whether the whole conversation is on show, or only the last exchange. */
+  /** Whether the whole conversation is on show, or only the last exchange.
+   *  A desktop drawer holds both. A phone shows one page at a time. */
   const [convOpen, setConvOpen] = useState(false);
-  const { conv, busy: convBusy, err: convErr, load: loadConv } = useConversation(node, c.id, convOpen && !!c.session_id, view.last_activity_at);
+  /** The page of the sheet on screen. A phone has room for one at a time, so
+   *  the conversation and the fields of the card take turns. The composer
+   *  belongs to neither: it stays at the foot of both.
+   *
+   *  A card that ran opens on its conversation, because that is what a person
+   *  opens it to read. A task that never ran opens on its fields, because a
+   *  conversation it does not have yet is an empty page. */
+  const [page, setPage] = useState<"chat" | "details">(c.session_id ? "chat" : "details");
+  const chatting = mobile ? page === "chat" : convOpen;
+  const details = !mobile || page === "details";
+  const {
+    conv,
+    busy: convBusy,
+    err: convErr,
+    load: loadConv,
+    more: moreConv,
+    all: allConv,
+  } = useConversation(node, c.id, chatting && !!c.session_id, view.last_activity_at);
 
   useEffect(() => {
     setCwd(c.project_cwd ?? "");
     setCustomCwd("");
   }, [c.id, c.project_cwd]);
 
-  // A new card closes the conversation and empties the composer: the draft
-  // was for the card before.
-  useEffect(() => {
+  /** The unsent text of every card this drawer showed, and the card on screen.
+   *
+   *  The drawer stays mounted while the selected card changes, so a card
+   *  swapped under it used to empty the box. On a phone the sheet is how a
+   *  person answers, and one tap on another card threw the answer away. Each
+   *  card now keeps its own text for as long as the drawer is open. */
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [shown, setShown] = useState(c.id);
+  if (shown !== c.id) {
+    // Another card. Put this one's text away, take out that one's, and open
+    // the card where a reader of it starts.
+    setDrafts({ ...drafts, [shown]: draft });
+    setShown(c.id);
+    setDraft(drafts[c.id] ?? "");
+    setPage(c.session_id ? "chat" : "details");
     setConvOpen(false);
-    setDraft("");
     setAdded(null);
-  }, [c.id]);
+  }
 
   // Ask the node for every project it knows. The board only names the projects
   // that already have a card, so without this a first move has nothing to pick.
@@ -257,8 +288,16 @@ export function Drawer({
     guard.requestClose();
   }, [flush, guard]);
 
-  // The system Back button on a phone closes the card, the way Escape does.
-  useBackClose(close);
+  // The two pages of a phone sheet share one scroll box, so the fields would
+  // open where the conversation was left. The chat page needs no reset: the
+  // list of turns opens on the newest turn by itself.
+  useEffect(() => {
+    if (mobile && page === "details") body.current?.scrollTo(0, 0);
+  }, [mobile, page]);
+
+  // The system back button of a phone, and the back button of a browser, close
+  // the sheet. A sheet with an unsent prompt asks first, exactly as Escape does.
+  useBackClose(true, close);
 
   // Only a task card that never ran can move. A session card follows a
   // transcript that stays on its own machine.
@@ -314,15 +353,17 @@ export function Drawer({
   };
 
   /** Where the composer sends, in one line, and the button that says so. */
-  const target = running
-    ? { label: "Send", hint: `Goes into the running session (pid ${view.live!.pid}). An idle session answers at once; a busy one takes it after the current turn.` }
-    : jobBusy
-      ? { label: "Send", hint: "A background job works on this card. The prompt waits until it is reachable." }
-      : c.session_id && s
-        ? { label: "Continue in bg", hint: "The session is not running. A background job resumes it with this prompt." }
-        : hasDir
-          ? { label: "Start in bg", hint: "Starts the task as a background job with this prompt. Empty uses the title and the body." }
-          : { label: "Start in bg", hint: "This card needs a project directory before it can run." };
+  const target = offline
+    ? { label: "Send", hint: "This node is offline. What you type stays in the box until the node answers." }
+    : running
+      ? { label: "Send", hint: `Goes into the running session (pid ${view.live!.pid}). An idle session answers at once; a busy one takes it after the current turn.` }
+      : jobBusy
+        ? { label: "Send", hint: "A background job holds this card. What you type stays in the box until the job stops or its session answers." }
+        : c.session_id && s
+          ? { label: "Continue in bg", hint: "The session is not running. A background job resumes it with this prompt." }
+          : hasDir
+            ? { label: "Start in bg", hint: "Starts the task as a background job with this prompt. Empty uses the title and the body." }
+            : { label: "Start in bg", hint: "This card needs a project directory before it can run." };
   const canSend = !offline && !jobBusy && (running || hasDir) && (draft.trim() !== "" || (!running && !!(c.kind === "task" || c.run_prompt)));
 
   const send = () => {
@@ -392,10 +433,29 @@ export function Drawer({
   };
 
   return (
-    <aside className="drawer" onInput={guard.asking ? guard.keep : undefined}>
-      <button className="btn ghost sm close" onClick={close} aria-label="Close">
-        ✕
-      </button>
+    <aside className={`drawer ${mobile ? `sheet ${page}` : ""}`} onInput={guard.asking ? guard.keep : undefined}>
+      {mobile ? (
+        // A phone has no Escape key and no room for a title bar of its own, so
+        // the sheet carries the way out itself, clear of the status bar.
+        <div className="sheetbar">
+          <button className="btn ghost sm" onClick={close} aria-label="Close the card">
+            ‹ Back
+          </button>
+          <span className="spacer" />
+          <div className="pages" role="tablist" aria-label="Card pages">
+            <button role="tab" aria-selected={page === "chat"} className={`pagetab ${page === "chat" ? "on" : ""}`} onClick={() => setPage("chat")}>
+              Chat
+            </button>
+            <button role="tab" aria-selected={page === "details"} className={`pagetab ${page === "details" ? "on" : ""}`} onClick={() => setPage("details")}>
+              Details
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn ghost sm close" onClick={close} aria-label="Close">
+          ✕
+        </button>
+      )}
       <UnsavedBar guard={guard} text="The prompt you typed is not sent." />
       <header>
         <TitleEdit title={view.title} saved={c.title ?? ""} onSave={(t) => patch({ title: t })} />
@@ -419,7 +479,7 @@ export function Drawer({
               Jump in
             </button>
           )}
-          {canBook && (
+          {canBook && details && (
             <button
               className={`btn sm ${booked ? "primary" : ""}`}
               disabled={offline}
@@ -454,7 +514,7 @@ export function Drawer({
               ✓ Done
             </button>
           )}
-          {c.session_id && s && s.turns > 0 && (
+          {c.session_id && s && s.turns > 0 && details && (
             <button
               className="btn ghost sm"
               disabled={offline}
@@ -464,6 +524,7 @@ export function Drawer({
               ✦ Summarize
             </button>
           )}
+          {details && (
           <button
             className="btn ghost sm"
             onClick={() =>
@@ -480,7 +541,8 @@ export function Drawer({
           >
             Archive
           </button>
-          {c.kind === "task" && (
+          )}
+          {c.kind === "task" && details && (
             <button
               className="btn ghost sm"
               onClick={() =>
@@ -499,7 +561,7 @@ export function Drawer({
             </button>
           )}
         </div>
-        {canBook && (bookingOpen || booked) && (
+        {canBook && details && (bookingOpen || booked) && (
           <div className="sched">
             {booked && (
               <div className="sched-now">
@@ -559,7 +621,7 @@ export function Drawer({
           </div>
         )}
       </header>
-      <div className="body">
+      <div className="body" ref={body}>
         {view.permission && (
           <div className="section">
             <h5>Held permission prompt</h5>
@@ -603,7 +665,7 @@ export function Drawer({
           </div>
         )}
 
-        {(view.summary || bg) && (
+        {details && (view.summary || bg) && (
           <div className="section">
             <h5>
               Where it stands
@@ -647,6 +709,7 @@ export function Drawer({
           </div>
         )}
 
+        {details && (
         <div className="section">
           <h5>Card</h5>
           <dl className="kv edit">
@@ -893,8 +956,9 @@ export function Drawer({
             </dd>
           </dl>
         </div>
+        )}
 
-        {log.length > 0 && (
+        {details && log.length > 0 && (
           <div className="section">
             <h5>
               Run log <span className="soft">· {log.length} entries</span>
@@ -914,7 +978,7 @@ export function Drawer({
           </div>
         )}
 
-        {mobile && c.session_id && (
+        {mobile && details && c.session_id && (
           <div className="section">
             <h5>In a terminal</h5>
             <div className="hint">On {view.node_name}, in {c.project_cwd ?? s?.cwd ?? "the project"}:</div>
@@ -922,7 +986,32 @@ export function Drawer({
           </div>
         )}
 
-        {c.session_id && s && (s.turns > 0 || s.last_assistant_text) && (
+        {mobile && chatting && (
+          <div className="section conversation chatpage">
+            {c.session_id && s && (s.turns > 0 || s.last_assistant_text) ? (
+              // A held permission prompt sits above the turns and needs an
+              // answer now, so the page opens on it. With nothing held, the
+              // page opens on the newest turn and follows it.
+              <ConversationList
+                key={`${node}/${c.id}`}
+                conv={conv}
+                busy={convBusy}
+                err={convErr}
+                onMore={moreConv}
+                onLoadAll={allConv}
+                tail={!view.permission}
+              />
+            ) : (
+              <div className="hint">
+                {c.session_id
+                  ? "This session has said nothing yet."
+                  : "This card has not run yet. What you send at the foot starts it, and the reply lands here."}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!mobile && c.session_id && s && (s.turns > 0 || s.last_assistant_text) && (
           <div className="section conversation">
             <h5>
               Conversation
@@ -938,16 +1027,14 @@ export function Drawer({
               >
                 {convOpen ? "Latest only" : "Show all"}
               </button>
-              {!mobile && (
-                <button
-                  className="btn ghost sm"
-                  onClick={() => void popOutConversation(node, c.id, view.title)}
-                  title="Open the conversation in its own window"
-                  aria-label="Open the conversation in its own window"
-                >
-                  ⧉
-                </button>
-              )}
+              <button
+                className="btn ghost sm"
+                onClick={() => void popOutConversation(node, c.id, view.title)}
+                title="Open the conversation in its own window"
+                aria-label="Open the conversation in its own window"
+              >
+                ⧉
+              </button>
             </h5>
             {!convOpen && (
               <>
@@ -971,7 +1058,7 @@ export function Drawer({
                 )}
               </>
             )}
-            {convOpen && <ConversationList conv={conv} busy={convBusy} err={convErr} onLoadAll={() => loadConv(true)} />}
+            {convOpen && <ConversationList conv={conv} busy={convBusy} err={convErr} onMore={moreConv} onLoadAll={allConv} />}
           </div>
         )}
       </div>
@@ -987,7 +1074,6 @@ export function Drawer({
           {...proseField}
           {...draftGrow}
           value={draft}
-          disabled={offline || jobBusy}
           onChange={(e) => setDraft(e.target.value)}
           onPaste={(e) => {
             // A screenshot on the clipboard arrives as a file here. Take it

@@ -1983,6 +1983,9 @@
       }
     }
   ],
+  "hub_id": "0d1e2f3a4b5c6d7e",
+  "hub_name": "studio",
+  "primary": true,
   "generated_at": "2026-09-03T10:00:00.000Z",
   "scanning": false,
   "herdr_connected": true,

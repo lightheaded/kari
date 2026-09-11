@@ -275,6 +275,9 @@ a { color: var(--accent); }
 .turn.peer .who span:first-child { color: var(--amber); }
 .turn .who .when { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .turn .quote { max-height: none; }
+/* Older turns, and the whole transcript, on demand. The list holds the newest
+   turns, because a long transcript is read from its end. */
+.convmore { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .turn.user .quote { border-left: 2px solid var(--line); }
 .turn.hit .quote { border-color: var(--accent); }
 /* The composer: what to say next. Sits at the foot so it is always in reach. */
