@@ -270,7 +270,7 @@ In the app, open Settings, Nodes, and add the host. Give the SSH host, which is 
 
 What this needs on the other host: an SSH login and a Claude Code that is logged in. It needs no open port, no certificate and no new secret. The node refuses to bind an address that is not loopback unless you pass `--allow-remote`.
 
-What you see: every card carries a node badge, and a chip row filters the board to one node. Each node keeps its own backlog and plans. Quota is grouped by Claude Code account rather than by node, so two machines signed in to the same login share one row of meters — see "Quota belongs to the account". Jump in on a remote card opens your terminal and runs `ssh -t <host> ... claude --resume <session>`. The tray kill switch stops jobs on every node.
+What you see: every card carries a node tag that names the machine and the account, in a colour that machine keeps everywhere, and a chip row filters the board to one node. Each node keeps its own backlog and plans. Quota is grouped by Claude Code account rather than by node, so two machines signed in to the same login share one row of meters — see "Quota belongs to the account". Jump in on a remote card opens your terminal and runs `ssh -t <host> ... claude --resume <session>`. The tray kill switch stops jobs on every node.
 
 Deployment of the node is managed outside this repository. `flake.nix` builds it for a NixOS host, and each release carries a Linux tarball and a Windows zip.
 

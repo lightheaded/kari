@@ -12,7 +12,7 @@ The window has four bands.
 
 1. The top bar: the automation switch, the herdr indicator, a counter of sessions that work and sessions that need you, and the buttons for Columns, Settings and a new task.
 2. The stats strip: one row per Claude Code account with both quota windows, both reset times, the machines that spend it, and "Fill". The windows belong to the login, so two machines on one account share a row. A click on the name gives the account one of your own, such as `tom` or `work`; the name stays on this device. Filtering the board is the job of the node chips below, which name one machine where a row here can cover several. The strip grows with the account count; the top bar never does.
-3. The filter bar: a search field, a project filter that searches as you type, a chip per node, and the card count with the time of the last scan. Under it sits the queue strip.
+3. The filter bar: a search field, a project filter that searches as you type, a chip per node in the colour of that machine, and the card count with the time of the last scan. Under it sits the queue strip.
 4. The columns. Each column accepts a set of derived states. The number in the header is the card count, or the count against the WIP limit.
 
 Six columns fit a 1440-pixel window with nothing to scroll. Two of them merge states: "Needs me" holds Approval, Decision and My turn, and "Review" holds Validate and Waiting on others. A merged column groups its cards by state inside itself, most urgent first, and a click on a group header collapses it.
@@ -27,13 +27,14 @@ A card carries what you need to decide whether to open it.
 
 - The title. kari takes the custom title, else the AI title, else the first prompt.
 - A summary from Haiku when one exists, in two sentences.
+- The node tag, on a board with more than one machine: the machine that runs the card, and behind a hairline the account that pays for it. Each machine holds one colour, and the same colour marks its chip in the filter bar and its name in the stats strip. The account half appears only when the board spends more than one account.
 - Chips: the derived state, `task` for a card without a session, `exited` for a session without a process, `auto-run` for a task that may run unattended, a clock with the time of a booked run, the model, an estimate in percent of the 5-hour window, a paperclip with the number of attached files, `bg working` or `bg done` for a background job, and the herdr pane.
 - An open question with its options, when the session waits for an answer.
 - The project name, the time since the last activity, and the weighted token count.
 
-Colors follow the state. Green means that work happens or is ready. Slate means that the session waits for you or for others. Amber means that a decision is due. Rust means that a permission prompt blocks the session.
+Colors follow the state. Green means that work happens or is ready. Slate means that the session waits for you or for others. Amber means that a decision is due. Rust means that a permission prompt blocks the session. The node tag keeps its own colour, which names the machine and never a state.
 
-Click a card to open the drawer. Double-click a card to jump into the session. Click the node chip to filter the board to that node.
+Click a card to open the drawer. Double-click a card to jump into the session. Click the node tag to filter the board to that node.
 
 Drag a card to another column to place it by hand. A manual placement holds until a stronger signal arrives, and the card shows a small lock mark.
 
@@ -131,7 +132,7 @@ Settings holds every threshold and switch.
 
 A remote node is another host that runs `kari-node serve`. Add it in Settings with its SSH host. kari holds an SSH port forward to it and shows its cards on the same board.
 
-- Every card carries a node badge, and a chip row above the board filters to one node.
+- Every card carries a node tag: the machine, in the colour that machine keeps everywhere, and the account that pays for it. A chip row above the board filters to one node.
 - Quota meters are grouped by Claude Code account, not by node: two machines on one login draw down one window and share a row. A node whose account kari cannot read keeps a row of its own, so two budgets are never merged by guessing.
 - An offline node keeps its cards on the board, dimmed, with the time it was last seen.
 - You can still write to an offline node. A new task, an edit and a delete are kept and sent when the node answers. The card shows "waiting for node", and the node row counts what is waiting. Running, stopping and opening a session need the machine, so they come back with the forward.

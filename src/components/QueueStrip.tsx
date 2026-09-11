@@ -1,10 +1,13 @@
 import type { NodeQueue, QueueStep } from "../types";
 import { clock, fmtPct, untilTime } from "../util";
+import { NodeTag } from "./NodeTag";
 
 interface Props {
   queues: NodeQueue[];
   /** Show the node name on every step. Set when the board has more than one node. */
   showNode: boolean;
+  /** The account of each node. Empty while one account pays for everything. */
+  accountOf: Map<string, string>;
   open: boolean;
   onToggle: () => void;
   onSelectCard: (nodeId: string, cardId: string) => void;
@@ -29,7 +32,7 @@ function stepLabel(steps: QueueStep[], i: number): string {
 /** A collapsible strip under the filter bar: what the planner would run next,
  *  in order, with what each step costs and when it would start. It starts
  *  nothing; the plan panel still holds the buttons. */
-export function QueueStrip({ queues, showNode, open, onToggle, onSelectCard }: Props) {
+export function QueueStrip({ queues, showNode, accountOf, open, onToggle, onSelectCard }: Props) {
   const live = queues.filter((q) => q.queue.steps.length > 0 || q.queue.blocked);
   if (live.length === 0) return null;
 
@@ -58,7 +61,9 @@ export function QueueStrip({ queues, showNode, open, onToggle, onSelectCard }: P
           {live.map((q) => (
             <div className="qnode" key={q.node_id}>
               <div className="qnodehead">
-                {showNode && <span className="who">{q.node_name}</span>}
+                {showNode && (
+                  <NodeTag nodeId={q.node_id} nodeName={q.node_name} account={accountOf.get(q.node_id) ?? null} />
+                )}
                 <span className="hint">
                   mode {q.queue.mode} · budget {fmtPct(q.queue.budget_pct)} · window at {fmtPct(q.queue.used_pct)}
                   {q.queue.next_trigger_at ? ` · trigger ${when(q.queue.next_trigger_at, "now")}` : ""}

@@ -1,4 +1,13 @@
-import type { CardView, DerivedState, NodeStatus, QuotaSample, QuotaWindow, ScheduleWhen, TokenTotals } from "./types";
+import type {
+  AccountQuota,
+  CardView,
+  DerivedState,
+  NodeStatus,
+  QuotaSample,
+  QuotaWindow,
+  ScheduleWhen,
+  TokenTotals,
+} from "./types";
 
 export function relTime(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return "—";
@@ -186,10 +195,48 @@ export function clearsBox(box: string | null, sent: string, ok: boolean): boolea
   return ok && box !== null && box.trim() === sent;
 }
 
-/** Class for the status dot of a node: accent when online, muted when offline, hollow when off. */
+/** How many colours the board gives out to nodes. */
+const HUES = 8;
+
+/** The colour class of one node.
+ *
+ *  A machine keeps one colour on every screen: the chip on its cards, the dot
+ *  in the filter bar, and the row in the quota strip. The colour comes from
+ *  the node id, so it survives a restart, and two hubs that see the same node
+ *  paint it the same. Nothing stores it, and nobody picks it. */
+export function nodeHue(nodeId: string): string {
+  let h = 0;
+  for (let i = 0; i < nodeId.length; i++) h = (Math.imul(h, 31) + nodeId.charCodeAt(i)) >>> 0;
+  return `hue-${h % HUES}`;
+}
+
+/** Class for the status dot of a node: accent when online, muted when
+ *  offline, hollow when off. The node colour rides along, for the places
+ *  whose question is which machine and not whether it answers. */
 export function nodeDot(n: NodeStatus): string {
   if (!n.enabled) return "dot disabled";
-  return n.online ? "dot online" : "dot offline";
+  return `dot ${n.online ? "online" : "offline"} ${nodeHue(n.id)}`;
+}
+
+/** The account label of each node, for the screens that name the account.
+ *
+ *  The map is empty while the board spends one account, because a name that
+ *  never changes tells the reader nothing and takes room on every card. Two
+ *  accounts or more, and each node carries the name of the one that pays.
+ *
+ *  A quota row of a node whose account kari could not read is keyed on the
+ *  node and labelled with the node name. Such a row names no account, so it
+ *  is left out: a tag that reads `studio · studio` says the same thing twice. */
+export function accountByNode(accounts: AccountQuota[]): Map<string, string> {
+  const m = new Map<string, string>();
+  if (new Set(accounts.map((a) => a.label)).size < 2) return m;
+  for (const a of accounts) {
+    if (a.key.startsWith("node:") && !a.account) continue;
+    for (let i = 0; i < a.node_ids.length; i++) {
+      if (a.label && a.label !== a.node_names[i]) m.set(a.node_ids[i], a.label);
+    }
+  }
+  return m;
 }
 
 /** macOS text fields in kari must behave like a native app: no autofill list,

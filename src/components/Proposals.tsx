@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { api } from "../api";
 import type { Proposal, ProposalItem } from "../types";
 import { fmtM, fmtPct, relTime, untilTime } from "../util";
+import { NodeTag } from "./NodeTag";
 
 const TRIGGER_LABEL: Record<string, string> = {
   weekly_reset: "Weekly window resets soon",
@@ -85,12 +86,14 @@ interface Props {
   nodeId: string;
   /** Shown in the header when the board has more than one node. */
   nodeName?: string;
+  /** The account that pays for the run. Set when the board spends more than one. */
+  account?: string | null;
   onClose: () => void;
   onAction: (fn: () => Promise<unknown>, ok?: string) => Promise<boolean>;
   onSelectCard: (cardId: string) => void;
 }
 
-export function ProposalPanel({ proposal: p, nodeId, nodeName, onClose, onAction, onSelectCard }: Props) {
+export function ProposalPanel({ proposal: p, nodeId, nodeName, account, onClose, onAction, onSelectCard }: Props) {
   const accepted = p.state === "accepted";
   const runnable = p.items.filter((i) => !i.job_id);
   // Only what fits is picked to begin with. The rest is listed and can be
@@ -136,7 +139,11 @@ export function ProposalPanel({ proposal: p, nodeId, nodeName, onClose, onAction
       <header>
         <h3>
           {accepted ? (p.auto ? "Autopilot started these" : "Started these") : TRIGGER_LABEL[p.trigger] ?? "Plan"}
-          {nodeName ? <span className="on-node"> on {nodeName}</span> : null}
+          {nodeName ? (
+            <span className="on-node">
+              on <NodeTag nodeId={nodeId} nodeName={nodeName} account={account} />
+            </span>
+          ) : null}
         </h3>
         <div className="spacer" />
         <span className="when">

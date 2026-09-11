@@ -17,6 +17,16 @@
   --slate: #48617e;
   --slate-soft: #dce3ec;
   --shadow: 0 1px 2px rgba(20, 30, 25, 0.08), 0 6px 20px rgba(20, 30, 25, 0.08);
+  /* One colour per machine. `nodeHue` in util.ts hashes a node id onto one of
+     these eight, so a machine keeps its colour everywhere and after a restart. */
+  --hue-0: #2e6b47; --hue-0-soft: #d9e8dd;
+  --hue-1: #48617e; --hue-1-soft: #dce3ec;
+  --hue-2: #b3731a; --hue-2-soft: #f3e6cf;
+  --hue-3: #a6402c; --hue-3-soft: #f1d9d2;
+  --hue-4: #6a4a9c; --hue-4-soft: #e3dcf1;
+  --hue-5: #17706b; --hue-5-soft: #d3e8e5;
+  --hue-6: #9c3f6d; --hue-6-soft: #f2d9e6;
+  --hue-7: #5c6b1f; --hue-7-soft: #e5e9cd;
   --body: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --display: "Bricolage Grotesque Variable", var(--body);
@@ -42,6 +52,14 @@
     --slate: #8fa9c8;
     --slate-soft: #22303f;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --hue-0: #6fb98b; --hue-0-soft: #213a2c;
+    --hue-1: #8fa9c8; --hue-1-soft: #22303f;
+    --hue-2: #e0a44a; --hue-2-soft: #3c2e17;
+    --hue-3: #e07a62; --hue-3-soft: #3f221c;
+    --hue-4: #b096e0; --hue-4-soft: #2b2340;
+    --hue-5: #5fb8ae; --hue-5-soft: #123331;
+    --hue-6: #dd8ab4; --hue-6-soft: #3a2130;
+    --hue-7: #b3bf6a; --hue-7-soft: #2c3018;
   }
 }
 * { box-sizing: border-box; }
@@ -220,6 +238,10 @@ a { color: var(--accent); }
 .chip.booked { background: var(--accent-soft); color: var(--accent); }
 .qsteps li.booked .n { color: var(--accent); }
 
+/* Which machine and account the card belongs to, on a line of its own. It
+   used to sit in front of the state, where a long reason pushed it away. */
+.runson { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.runson .rk { font: 500 10px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); flex: 0 0 auto; }
 .drawer .body { flex: 1 1 auto; min-height: 0; padding: 14px 18px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
 .drawer .close { position: absolute; top: 10px; right: 10px; }
 /* The title is the field: a click turns it into an input in the same place. */
@@ -529,6 +551,39 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
 .runlog .st.failed, .runlog .st.blocked { color: var(--rust); }
 .runlog .det { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* node colours. `--nc` is the colour of one machine. Anything that carries a
+   `hue-N` class, and anything inside it, paints itself in that colour. The
+   class comes from `nodeHue` in util.ts, which hashes the node id. */
+.hue-0 { --nc: var(--hue-0); --nc-soft: var(--hue-0-soft); }
+.hue-1 { --nc: var(--hue-1); --nc-soft: var(--hue-1-soft); }
+.hue-2 { --nc: var(--hue-2); --nc-soft: var(--hue-2-soft); }
+.hue-3 { --nc: var(--hue-3); --nc-soft: var(--hue-3-soft); }
+.hue-4 { --nc: var(--hue-4); --nc-soft: var(--hue-4-soft); }
+.hue-5 { --nc: var(--hue-5); --nc-soft: var(--hue-5-soft); }
+.hue-6 { --nc: var(--hue-6); --nc-soft: var(--hue-6-soft); }
+.hue-7 { --nc: var(--hue-7); --nc-soft: var(--hue-7-soft); }
+
+/* The machine a card runs on, and the account that pays for it. */
+.nodetag {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-width: 0;
+  padding: 3px 7px; border: none; border-radius: 3px;
+  background: var(--nc-soft, var(--surface-2)); color: var(--nc, var(--ink-2));
+  font: 600 10px/1 var(--mono); letter-spacing: 0.03em;
+}
+.nodetag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.nodetag.offline .dot { opacity: 0.35; }
+.nodetag .nn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The account rides behind a hairline, in the same colour but quieter: the
+   machine is what the eye needs first. */
+.nodetag .an {
+  padding-left: 6px; border-left: 1px solid currentColor; opacity: 0.72; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nodetag.lg { font-size: 11.5px; padding: 5px 9px; gap: 6px; border-radius: 4px; }
+button.nodetag.act { cursor: pointer; }
+button.nodetag.act:hover { box-shadow: inset 0 0 0 1px var(--nc, var(--line)); }
+button.nodetag:focus-visible { outline: 2px solid var(--nc, var(--accent)); outline-offset: 1px; }
+
 /* nodes */
 .quotas { display: flex; align-items: center; gap: 18px; min-width: 0; overflow: hidden; }
 .quotas.multi .meter { min-width: 120px; }
@@ -539,13 +594,19 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
   border: 1px solid var(--line); background: var(--ground); color: var(--ink-2); font: 500 11px/1 var(--mono);
 }
 .nodechip:hover { background: var(--surface-2); color: var(--ink); }
-.nodechip.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+/* The chosen filter takes the colour of the machine it names, which is the
+   colour of every card that stays on the board. */
+.nodechip.sel { background: var(--nc-soft, var(--accent-soft)); border-color: var(--nc, var(--accent)); color: var(--nc, var(--accent)); }
 .nodechip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .nodechip .dot { width: 7px; height: 7px; border-radius: 50%; }
 .dot.online { background: var(--accent); }
 .dot.offline { background: var(--ink-3); }
 .dot.disabled { background: transparent; border: 1px solid var(--ink-3); }
-.chip.node { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line-soft); }
+/* Where the dot names a machine and not its health, it takes the colour of
+   the machine. In Settings and in the Nodes tab the question is health, so
+   the dot there stays green and grey. */
+.nodechip .dot.online, .anode .dot.online { background: var(--nc, var(--accent)); }
+.nodechip .dot.offline, .anode .dot.offline { background: var(--nc, var(--ink-3)); opacity: 0.35; }
 .card.offline { opacity: 0.55; cursor: default; }
 .card.offline .chip .live.pulse { animation: none; }
 /* A card the hub still holds for a node that is away. It reads as a card, not
@@ -572,7 +633,7 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
 .nodeadd { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 90px auto; gap: 8px; align-items: start; }
 .nodeadd .btn { margin-top: 18px; }
 .drawer .offline-note { color: var(--amber); }
-.proposal header h3 .on-node { font-weight: 400; color: var(--ink-3); }
+.proposal header h3 .on-node { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; color: var(--ink-3); vertical-align: middle; }
 
 /* ---------------------------------------------------------------- stats strip
 
@@ -637,7 +698,7 @@ the names are. The top bar itself never grows with the node count. */
 .anodes { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 108px; margin-right: 10px; }
 .anode {
   display: inline-flex; align-items: center; gap: 4px;
-  font: 11px/1.4 var(--mono); color: var(--ink-3); white-space: nowrap;
+  font: 11px/1.4 var(--mono); color: var(--nc, var(--ink-3)); white-space: nowrap;
 }
 /* `.dot` carries only a colour; every place that shows one gives it a size. */
 .anode .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
@@ -697,7 +758,6 @@ What the planner would run next, in order. It starts nothing. */
 .qnode { max-width: 780px; }
 .qnode + .qnode { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line-soft); }
 .qnodehead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font: 11.5px/1.5 var(--mono); color: var(--ink-2); }
-.qnodehead .who { font-weight: 500; color: var(--ink); }
 .qopen { font: 11px/1.5 var(--mono); color: var(--accent); }
 .qnodehead .hint { font: 11px/1.5 var(--mono); }
 .qblocked { font: 11.5px/1.5 var(--mono); color: var(--amber); }
@@ -767,8 +827,6 @@ What the planner would run next, in order. It starts nothing. */
 
 /* a card the user placed by hand */
 .card .rank { position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--ink-3); }
-.chip.node.act { border: 1px solid var(--line-soft); cursor: pointer; }
-.chip.node.act:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .field textarea { min-height: 34px; resize: vertical; overflow-y: auto; }
 
 /* A window that holds one conversation. Same parts as the drawer, full width. */

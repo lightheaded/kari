@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  accountByNode,
   addTarget,
   clearsBox,
   FIVE_HOUR_MS,
   fuzzyScore,
   nextReset,
+  nodeHue,
   planReorder,
   resetIn,
   RESET_MARGIN_MS,
@@ -14,7 +16,7 @@ import {
   type FilterProject,
   type Rankable,
 } from "./util";
-import type { CardView, DerivedState, QuotaSample } from "./types";
+import type { AccountQuota, CardView, DerivedState, QuotaSample } from "./types";
 
 describe("schedulePreview", () => {
   const now = Date.parse("2026-09-09T12:00:00Z");
@@ -434,3 +436,64 @@ describe("resetIn", () => {
   });
 });
 
+describe("nodeHue", () => {
+  test("one node keeps one colour", () => {
+    // The colour must survive a restart and read the same on two hubs, so it
+    // can depend on the node id and on nothing else.
+    expect(nodeHue("studio")).toBe(nodeHue("studio"));
+    expect(nodeHue("")).toBe(nodeHue(""));
+  });
+
+  test("every colour is one of the eight the stylesheet holds", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) seen.add(nodeHue(`node-${i}`));
+    for (const c of seen) expect(c).toMatch(/^hue-[0-7]$/);
+    // 200 ids over 8 colours: every colour must come up.
+    expect(seen.size).toBe(8);
+  });
+
+  test("two nodes rarely share a colour", () => {
+    expect(nodeHue("studio")).not.toBe(nodeHue("lab"));
+  });
+});
+
+/** One quota row, with only the fields the account map reads. */
+const acct = (key: string, label: string, ids: string[], names: string[], known = true): AccountQuota => ({
+  key,
+  label,
+  alias: null,
+  account: known ? { id: key, email: null, display_name: label, organization_id: null } : null,
+  node_ids: ids,
+  node_names: names,
+  quota: null,
+  calibration: null,
+});
+
+describe("accountByNode", () => {
+  test("one account names nobody", () => {
+    // Every card would carry the same name, which tells the reader nothing.
+    const m = accountByNode([acct("a1", "work", ["n1", "n2"], ["studio", "lab"])]);
+    expect(m.size).toBe(0);
+  });
+
+  test("two accounts name each node", () => {
+    const m = accountByNode([
+      acct("a1", "work", ["n1"], ["studio"]),
+      acct("a2", "home", ["n2", "n3"], ["lab", "desk"]),
+    ]);
+    expect(m.get("n1")).toBe("work");
+    expect(m.get("n2")).toBe("home");
+    expect(m.get("n3")).toBe("home");
+  });
+
+  test("a node whose account kari could not read names none", () => {
+    // The row falls back to the node name. `studio · studio` says nothing twice.
+    const m = accountByNode([acct("node:n1", "studio", ["n1"], ["studio"], false), acct("a2", "home", ["n2"], ["lab"])]);
+    expect(m.has("n1")).toBe(false);
+    expect(m.get("n2")).toBe("home");
+  });
+
+  test("no accounts at all name nobody", () => {
+    expect(accountByNode([]).size).toBe(0);
+  });
+});

@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { DerivedState, HubBoard } from "../types";
 import { QuotaBar } from "../components/QuotaBar";
 import { ProposalPanel } from "../components/Proposals";
-import { sortCards } from "../util";
+import { accountByNode, sortCards } from "../util";
 import { MobileCard } from "./MobileCard";
 
 /** The states that wait for a person, in the order they matter. */
@@ -21,6 +21,7 @@ export function Inbox({ board, onOpen, onAction }: Props) {
   const [planHidden, setPlanHidden] = useState<Set<string>>(() => new Set());
   const nodeById = useMemo(() => new Map(board.nodes.map((n) => [n.id, n])), [board.nodes]);
   const many = board.nodes.length > 1;
+  const accountOf = useMemo(() => accountByNode(board.accounts ?? []), [board.accounts]);
   const cards = useMemo(
     () => board.cards.filter((c) => NEEDS_YOU.includes(c.state) && !c.card.archived).sort(sortCards),
     [board.cards],
@@ -64,6 +65,7 @@ export function Inbox({ board, onOpen, onAction }: Props) {
             proposal={p.proposal}
             nodeId={p.node_id}
             nodeName={many ? p.node_name : undefined}
+            account={accountOf.get(p.node_id) ?? null}
             onClose={() => setPlanHidden((h) => new Set(h).add(`${p.node_id}:${p.proposal.id}`))}
             onAction={onAction}
             onSelectCard={(id) => onOpen(p.node_id, id)}
@@ -80,6 +82,7 @@ export function Inbox({ board, onOpen, onAction }: Props) {
               view={c}
               columns={board.columns}
               showNode={many}
+              account={accountOf.get(c.node_id) ?? null}
               offline={nodeById.get(c.node_id)?.online === false}
               actions
               onOpen={() => onOpen(c.node_id, c.card.id)}

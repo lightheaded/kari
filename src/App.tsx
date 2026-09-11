@@ -16,7 +16,7 @@ import { useToasts, type Undo } from "./toasts";
 import { restartApp, updatesSupported, useUpdater } from "./update";
 import { useSticky } from "./hooks";
 import { anyDirty } from "./dirty";
-import { addTarget, noAutoFill, taggedTask } from "./util";
+import { accountByNode, addTarget, nodeDot, nodeHue, noAutoFill, taggedTask } from "./util";
 import { uploadPending } from "./components/Attachments";
 
 /** Joins a node id and a project directory into one filter value. */
@@ -133,6 +133,8 @@ export default function App() {
 
   const nodes = useMemo(() => board?.nodes ?? [], [board]);
   const manyNodes = nodes.length > 1;
+  /** The account of each node. Empty while one account pays for everything. */
+  const accountOf = useMemo(() => accountByNode(board?.accounts ?? []), [board]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const localNodeId = nodes.find((n) => n.kind === "local")?.id ?? nodes[0]?.id ?? "local";
   /** A filter that names a node the board lost shows every node again. */
@@ -360,14 +362,19 @@ export default function App() {
             {nodes.map((n) => (
               <button
                 key={n.id}
-                className={`nodechip ${node === n.id ? "sel" : ""}`}
-                title={
+                // The chip carries the colour of the machine, so the filter
+                // reads in the same colour as the cards it keeps.
+                className={`nodechip ${nodeHue(n.id)} ${node === n.id ? "sel" : ""}`}
+                title={[
                   (n.error ?? (n.enabled ? (n.online ? "online" : "offline") : "disabled")) +
-                  (n.pending_writes ? `, ${n.pending_writes} change(s) waiting` : "")
-                }
+                    (n.pending_writes ? `, ${n.pending_writes} change(s) waiting` : ""),
+                  accountOf.get(n.id) ? `Account: ${accountOf.get(n.id)}` : "",
+                ]
+                  .filter(Boolean)
+                  .join("\n")}
                 onClick={() => setNodeFilter(node === n.id ? "" : n.id)}
               >
-                <span className={n.enabled ? (n.online ? "dot online" : "dot offline") : "dot disabled"} />
+                <span className={nodeDot(n)} />
                 {n.name}
               </button>
             ))}
@@ -383,6 +390,7 @@ export default function App() {
       <QueueStrip
         queues={queues}
         showNode={manyNodes}
+        accountOf={accountOf}
         open={queueOpen}
         onToggle={() => setQueueOpen(!queueOpen)}
         onSelectCard={(n, id) => setSelected({ node: n, id })}
@@ -394,6 +402,7 @@ export default function App() {
             columns={visibleColumns}
             cards={filtered}
             nodes={nodes}
+            accountOf={accountOf}
             selected={selected}
             onSelect={(nodeId, id) => setSelected({ node: nodeId, id })}
             onMove={(nodeId, id, columnId) => moveCard(nodeId, id, columnId)}
@@ -422,6 +431,7 @@ export default function App() {
                 proposal={p.proposal}
                 nodeId={p.node_id}
                 nodeName={manyNodes ? p.node_name : undefined}
+                account={accountOf.get(p.node_id) ?? null}
                 onClose={() => setPlanHidden((h) => new Set(h).add(`${p.node_id}:${p.proposal.id}`))}
                 onAction={run}
                 onSelectCard={(id) => setSelected({ node: p.node_id, id })}
@@ -440,6 +450,7 @@ export default function App() {
           projects={projectsByNode[selectedCard.node_id] ?? []}
           quota={board?.quotas.find((q) => q.node_id === selectedCard.node_id)?.quota ?? null}
           showNode={manyNodes}
+          account={accountOf.get(selectedCard.node_id) ?? null}
           offline={selectedOffline}
           onClose={() => setSelected(null)}
           onAction={run}

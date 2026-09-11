@@ -2,6 +2,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import type { HubCard } from "../types";
 import { STATE_LABEL } from "../types";
 import { STATE_TONE, clock, fmtM, fmtPct, relTime, weighted } from "../util";
+import { NodeTag } from "./NodeTag";
 
 interface Props {
   view: HubCard;
@@ -9,6 +10,8 @@ interface Props {
   overlay?: boolean;
   /** Show which node the card comes from. Set when the board has more than one node. */
   showNode?: boolean;
+  /** The account that pays for the node. Set when the board spends more than one. */
+  account?: string | null;
   /** The node does not answer. The card is dimmed and cannot be dragged. */
   offline?: boolean;
   lastSeen?: string | null;
@@ -18,7 +21,7 @@ interface Props {
   onFilterNode?: () => void;
 }
 
-export function CardItem({ view, selected, overlay, showNode, offline, lastSeen, onSelect, onJump, onFilterNode }: Props) {
+export function CardItem({ view, selected, overlay, showNode, account, offline, lastSeen, onSelect, onJump, onFilterNode }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `${view.node_id}/${view.card.id}`,
     data: { type: "card", columnId: view.column_id },
@@ -66,24 +69,19 @@ export function CardItem({ view, selected, overlay, showNode, offline, lastSeen,
       )}
       {view.summary?.narrative && !q && <div className="narrative">{view.summary.narrative}</div>}
       <div className="chips">
+        {showNode && (
+          <NodeTag
+            nodeId={view.node_id}
+            nodeName={view.node_name}
+            account={account}
+            online={!offline}
+            onClick={onFilterNode}
+          />
+        )}
         <span className="chip">
           {(live?.alive || bg?.state === "working") && <span className={`live ${view.state === "working" ? "pulse" : ""}`} />}
           {STATE_LABEL[view.state]}
         </span>
-        {showNode && (
-          <button
-            className="chip node act"
-            title={`Show only the cards of ${view.node_name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onFilterNode?.();
-            }}
-            // A drag must start on the card, not on this button.
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            {view.node_name}
-          </button>
-        )}
         {view.pending && (
           <span className="chip plain waiting" title="Written here. The node takes it when it answers.">
             waiting for node
