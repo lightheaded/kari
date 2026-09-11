@@ -41,12 +41,12 @@ export type Act = (fn: () => Promise<unknown>, ok?: string, undo?: Undo, card?: 
  *  because a stack that fills the window is worse than a lost line. */
 const MAX = 5;
 
-/** How long a toast stays, when the caller names no time. */
+/** How long a toast stays, when the caller names no time. A toast that offers
+ *  two buttons takes the longer of the two lives, because the user must read
+ *  both before either one goes away. */
 function lifeOf(o: ToastOpts): number {
   if (o.err) return 9000;
-  if (o.undo) return 8000;
-  if (o.card) return 10000;
-  return 4000;
+  return Math.max(o.undo ? 8000 : 0, o.card ? 10000 : 0, 4000);
 }
 
 /** The toast stack of one screen. */
