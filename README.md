@@ -89,6 +89,7 @@ Build the Android app. It needs JDK 17, the Android SDK with `platforms;android-
 ```
 bun tauri android init                                   # once; the project it writes is not tracked
 scripts/android-icons.sh                                 # after every init; init writes the Tauri logo
+scripts/android-back.sh                                  # after every init; the Back button must reach the app
 bun tauri android build --debug --apk --target aarch64   # a debug APK for adb install
 bun tauri android build --apk --target aarch64           # an unsigned release APK; the release workflow signs it
 ```
@@ -97,6 +98,10 @@ The launcher icon comes from `src-tauri/icons-src`. `icon.json` names the three
 adaptive layers: the green plate, the horned glyph, and the monochrome glyph for
 themed icons. Edit the SVG files, then run `scripts/android-icons.sh` again. The
 script leaves the tracked desktop icons in `src-tauri/icons` as they are.
+
+`scripts/android-back.sh` rewrites the generated `MainActivity.kt` so that the
+Back button reaches the web view. Tauri turns that off, and without the script
+Back closes the app instead of the card that is open.
 
 ## Quota tracking
 
@@ -394,6 +399,8 @@ The same app builds for Android and runs as a second hub. It joins the private n
 
 - Install `kari-latest.apk` from the release page, or add `https://github.com/lightheaded/kari` to Obtainium: the asset name never carries the version and the signing key never changes, so an update installs over the previous build. Then open Nodes and paste the pairing code from the desktop (Settings, Nodes, "Show pairing code"), and press "Add". The code carries each node's name, token and addresses, so there is nothing to type. The code holds the node tokens: show it at home and hide it when done. Set "Let a phone reach this machine on" to the VPN interface on the desktop first, else its own address is missing from the code. On the phone, the VPN app must also carry kari itself: a per-application tunnel that does not list kari sends its traffic around the tunnel, and every node then times out.
 - "Needs you" lists every card in approval, decision, my turn, validate and waiting, with the actions on the card: an option of an open question, a reply, stop, done. A reply to a session that is alive in a terminal gets a warning first, because a second process writes into the same transcript.
+- The board shows one column at a time. A swipe, the arrows or the dots move between columns. Under them, the same Off, Ask and Auto switch as the desktop says what the nodes do without being asked. The node chips set its scope: with one node picked the switch acts on that node, and with none it acts on every node that answers.
+- The Back button closes the card or the dialog on screen, and leaves the app only when nothing is open. A card that holds a prompt you did not send asks first, the way Escape does on the desktop.
 - Notifications arrive while the app is open. Android stops the app in the background after a while; a foreground service is a later step.
 
 ### Who owns the columns

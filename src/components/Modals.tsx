@@ -18,6 +18,7 @@ import {
 } from "../types";
 import { nodeDot, noAutoFill, proseField, relTime } from "../util";
 import { useAutoGrow, useSticky } from "../hooks";
+import { useBackClose } from "../back";
 import type { CloseGuard } from "../dirty";
 import { useCloseGuard } from "../dirty";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
@@ -75,6 +76,8 @@ function Modal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  // The system Back button on a phone closes the dialog, the way Escape does.
+  useBackClose(onClose);
   return (
     <div
       className="backdrop"

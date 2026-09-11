@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from "react";
 import type { Act } from "../toasts";
 import type { HubBoard } from "../types";
 import { nodeDot, sortCards } from "../util";
+import { setAutomation } from "../automation";
+import { AutomationSwitch } from "../components/AutomationSwitch";
 import { MobileCard } from "./MobileCard";
 
 /** How far a finger must travel sideways before it counts as a swipe, and how
@@ -107,6 +109,12 @@ export function BoardTab({ board, onOpen, onAction }: Props) {
           ))}
         </div>
       )}
+      {/* What the nodes do without being asked. The node chips above set the
+          scope: with one node picked the switch acts on that node, and with
+          none it acts on every node that answers. */}
+      <div className="mauto">
+        <AutomationSwitch nodes={board.nodes} filter={node} onChange={(id, mode) => setAutomation(board.nodes, id, mode, onAction)} />
+      </div>
       {cards.length === 0 ? (
         <div className="empty">No cards in {col.name}.</div>
       ) : (
