@@ -2,7 +2,7 @@
 
 use crate::model::{
     BoardView, Card, CardKind, Column, HookEvent, JobLogEntry, NodeRecord, Proposal, QuotaSample,
-    QuotaWindow, SessionFacts, Settings, Summary, TokenDelta,
+    QuotaWindow, RunMcp, SessionFacts, Settings, Summary, TokenDelta,
 };
 use crate::outbox::{PendingWrite, Queued};
 use chrono::{DateTime, TimeZone, Utc};
@@ -136,6 +136,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("model", "TEXT"),
         ("scheduled", "TEXT"),
         ("started_by_autopilot", "INTEGER NOT NULL DEFAULT 0"),
+        ("mcp_servers", "TEXT"),
     ] {
         if !have.iter().any(|h| h == name) {
             conn.execute(&format!("ALTER TABLE cards ADD COLUMN {name} {decl}"), [])?;
@@ -310,10 +311,16 @@ impl Store {
                 .get::<_, Option<String>>(22)?
                 .and_then(|j| serde_json::from_str(&j).ok()),
             started_by_autopilot: r.get::<_, i64>(23)? != 0,
+            // An older row holds nothing here, and a value kari does not know
+            // is not a reason to lose the card. Both mean "follow the setting".
+            mcp_servers: r
+                .get::<_, Option<String>>(24)?
+                .and_then(|v| RunMcp::parse(&v))
+                .unwrap_or_default(),
         })
     }
 
-    const CARD_COLS: &'static str = "id, kind, title, session_id, project_cwd, priority, auto_run, run_prompt, permission_mode, estimate, manual_column, manual_lock_priority, tags, notes, archived, bg_job_id, created_at, updated_at, done_at, last_job_state, last_job_at, model, scheduled, started_by_autopilot";
+    const CARD_COLS: &'static str = "id, kind, title, session_id, project_cwd, priority, auto_run, run_prompt, permission_mode, estimate, manual_column, manual_lock_priority, tags, notes, archived, bg_job_id, created_at, updated_at, done_at, last_job_state, last_job_at, model, scheduled, started_by_autopilot, mcp_servers";
 
     pub fn list_cards(&self) -> anyhow::Result<Vec<Card>> {
         let sql = format!("SELECT {} FROM cards", Self::CARD_COLS);
@@ -344,7 +351,7 @@ impl Store {
     pub fn upsert_card(&self, c: &Card) -> anyhow::Result<()> {
         self.conn.execute(
             &format!(
-                "INSERT INTO cards ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+                "INSERT INTO cards ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
                  ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, session_id=excluded.session_id,
                  project_cwd=excluded.project_cwd, priority=excluded.priority, auto_run=excluded.auto_run,
                  run_prompt=excluded.run_prompt, permission_mode=excluded.permission_mode, estimate=excluded.estimate,
@@ -352,7 +359,7 @@ impl Store {
                  notes=excluded.notes, archived=excluded.archived, bg_job_id=excluded.bg_job_id, updated_at=excluded.updated_at,
                  done_at=excluded.done_at, last_job_state=excluded.last_job_state, last_job_at=excluded.last_job_at,
                  model=excluded.model, scheduled=excluded.scheduled,
-                 started_by_autopilot=excluded.started_by_autopilot",
+                 started_by_autopilot=excluded.started_by_autopilot, mcp_servers=excluded.mcp_servers",
                 Self::CARD_COLS
             ),
             params![
@@ -383,6 +390,7 @@ impl Store {
                     .map(serde_json::to_string)
                     .transpose()?,
                 c.started_by_autopilot as i64,
+                c.mcp_servers.key(),
             ],
         )?;
         Ok(())

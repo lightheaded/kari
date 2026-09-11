@@ -1246,6 +1246,21 @@ export function SettingsModal({
             ))}
           </select>
         </div>
+        <label className="field inline">
+          <input
+            type="checkbox"
+            checked={s.mcp_servers_in_runs}
+            onChange={(e) =>
+              setS({ ...s, mcp_servers_in_runs: e.target.checked })
+            }
+          />
+          <span>Start the MCP servers of your Claude Code setup in a run</span>
+        </label>
+        <div className="hint" style={{ marginTop: 8 }}>
+          Off by default. A run is unattended, so a server that needs you is no
+          use to it, and one that reads the data of another app makes macOS ask
+          for permission again on every run. A card can say something else.
+        </div>
         <div className="field">
           <label>Default permission mode for unattended runs</label>
           <select

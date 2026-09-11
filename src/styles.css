@@ -239,7 +239,9 @@ a { color: var(--accent); }
 .kv.edit input:focus, .kv.edit textarea:focus, .kv.edit select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .kv.edit .field.inline input[type="checkbox"] { width: auto; }
 .runopts { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 8px; }
-.runopts label:last-child { grid-column: 1 / -1; }
+/* Priority and the model share the first row. Every control after them is
+   a select whose value is a word, so it takes a row of its own. */
+.runopts label:nth-child(n + 3) { grid-column: 1 / -1; }
 .runopts label { display: flex; flex-direction: column; gap: 3px; }
 .runopts label span { font: 500 10px/1.2 var(--mono); color: var(--ink-3); letter-spacing: 0.04em; text-transform: uppercase; }
 /* Where the work stands, in the summary's words. */

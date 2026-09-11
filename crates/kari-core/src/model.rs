@@ -217,6 +217,10 @@ pub struct Card {
     /// The last state kari saw for `bg_job_id`. The job list forgets old jobs.
     pub last_job_state: Option<String>,
     pub last_job_at: Option<DateTime<Utc>>,
+    /// Whether a run of this card starts the MCP servers of the Claude Code
+    /// configuration. `Default` follows the setting.
+    #[serde(default)]
+    pub mcp_servers: RunMcp,
     /// A run the user asked for at a set time. The node that owns the card
     /// starts it. None means that no run waits.
     #[serde(default)]
@@ -224,6 +228,55 @@ pub struct Card {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub done_at: Option<DateTime<Utc>>,
+}
+
+/// Whether a background run starts the MCP servers of the Claude Code
+/// configuration.
+///
+/// A run of a card is unattended, and an MCP server can need the user: the
+/// server of a password manager reads the data of its desktop app, which
+/// macOS guards, so the machine asks the person at the desk for permission.
+/// Nobody answers a dialog that a background job raised. The setting holds
+/// the choice for every card, and a card can say something else.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunMcp {
+    /// Follow the setting.
+    #[default]
+    Default,
+    /// Start the servers for this card, whatever the setting says.
+    On,
+    /// Start no server for this card, whatever the setting says.
+    Off,
+}
+
+impl RunMcp {
+    pub fn key(self) -> &'static str {
+        match self {
+            RunMcp::Default => "default",
+            RunMcp::On => "on",
+            RunMcp::Off => "off",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<RunMcp> {
+        match s {
+            "default" => Some(RunMcp::Default),
+            "on" => Some(RunMcp::On),
+            "off" => Some(RunMcp::Off),
+            _ => None,
+        }
+    }
+
+    /// The answer for one run: what the card says, or the setting when the
+    /// card follows it.
+    pub fn resolve(self, setting: bool) -> bool {
+        match self {
+            RunMcp::Default => setting,
+            RunMcp::On => true,
+            RunMcp::Off => false,
+        }
+    }
 }
 
 /// A run that waits for a time, not for a trigger.
@@ -356,6 +409,7 @@ impl Card {
             run_prompt: t.run_prompt,
             permission_mode: None,
             model: t.model.filter(|m| !m.trim().is_empty()),
+            mcp_servers: RunMcp::default(),
             estimate_weighted_tokens: None,
             manual_column: lock.map(|c| c.id.clone()),
             manual_lock_priority: lock.map(|_| 0),
@@ -407,6 +461,9 @@ impl Card {
         }
         if let Some(v) = &p.model {
             self.model = text(v);
+        }
+        if let Some(v) = p.mcp_servers {
+            self.mcp_servers = v;
         }
         if let Some(v) = &p.notes {
             self.notes = text(v);
@@ -998,6 +1055,16 @@ pub struct Settings {
     /// archives it. Off by default: the tab can hold an agent that still runs,
     /// and kari cannot open it again.
     pub close_herdr_tab_on_done: bool,
+    /// Start the MCP servers of the Claude Code configuration in a background
+    /// run of a card. Off by default, for two reasons.
+    ///
+    /// A run is unattended. A server that needs the user is no use to it, and
+    /// one that reads the data of another app makes the machine ask the person
+    /// at the desk for permission, again for every run. A run that starts no
+    /// server also starts faster and holds fewer tools in its context.
+    ///
+    /// A card can say something else. See `Card::mcp_servers`.
+    pub mcp_servers_in_runs: bool,
     /// Warn when the weekly window resets within a day with this much unused.
     pub weekly_warn_unused_pct: f64,
     /// Name of this node as other kari instances see it. Empty means the host name.
@@ -1102,6 +1169,7 @@ impl Default for Settings {
             autopilot_protected_paths: vec![],
             prefer_herdr: true,
             close_herdr_tab_on_done: false,
+            mcp_servers_in_runs: false,
             weekly_warn_unused_pct: 25.0,
             node_name: String::new(),
             away_mode: false,
@@ -1145,6 +1213,9 @@ pub struct CardPatch {
     pub auto_run: Option<bool>,
     pub run_prompt: Option<String>,
     pub permission_mode: Option<String>,
+    /// The MCP choice of the card. `Default` puts the card back on the setting.
+    #[serde(default)]
+    pub mcp_servers: Option<RunMcp>,
     pub notes: Option<String>,
     pub tags: Option<Vec<String>>,
     pub archived: Option<bool>,
@@ -1170,6 +1241,7 @@ impl CardPatch {
             auto_run,
             run_prompt,
             permission_mode,
+            mcp_servers,
             notes,
             tags,
             archived,
@@ -1598,6 +1670,34 @@ pub struct JumpPlan {
 mod tests {
     use super::*;
 
+    /// A settings record written before this field existed holds no key for
+    /// it. Such a record must read as "start no server": the whole struct
+    /// carries `#[serde(default)]`, so a missing key takes the value from
+    /// `Settings::default`, and an upgrade must not start servers that the
+    /// user never asked for.
+    #[test]
+    fn an_older_settings_record_starts_no_mcp_server() {
+        let old: Settings = serde_json::from_str(r#"{"terminal_app":"iTerm"}"#).unwrap();
+        assert!(!old.mcp_servers_in_runs);
+        assert_eq!(old.terminal_app, "iTerm");
+        // And a card in such a record follows the setting.
+        assert_eq!(RunMcp::default(), RunMcp::Default);
+        assert!(!RunMcp::default().resolve(old.mcp_servers_in_runs));
+    }
+
+    /// The choice crosses the node API and sits in a database column, so its
+    /// three words must survive both directions.
+    #[test]
+    fn the_mcp_choice_reads_back_as_it_was_written() {
+        for m in [RunMcp::Default, RunMcp::On, RunMcp::Off] {
+            assert_eq!(RunMcp::parse(m.key()), Some(m));
+            let j = serde_json::to_string(&m).unwrap();
+            assert_eq!(j, format!("\"{}\"", m.key()));
+            assert_eq!(serde_json::from_str::<RunMcp>(&j).unwrap(), m);
+        }
+        assert_eq!(RunMcp::parse("whatever kari does not know"), None);
+    }
+
     /// The project list crosses the node API. Named fields keep the path and
     /// the display name apart; a tuple once let them swap places.
     #[test]
@@ -1619,6 +1719,7 @@ mod tests {
     fn a_card_survives_a_round_trip() {
         let now = Utc::now();
         let c = Card {
+            mcp_servers: RunMcp::default(),
             id: "card-1".into(),
             kind: CardKind::Task,
             title: Some("Fix the flaky auth test".into()),

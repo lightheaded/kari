@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import type { Attachment, CardPatch, Column, HubCard, JobLogEntry, NodeStatus, Project, QuotaSample, ScheduleWhen, Settings } from "../types";
+import type { Attachment, CardPatch, Column, HubCard, JobLogEntry, NodeStatus, Project, QuotaSample, RunMcp, ScheduleWhen, Settings } from "../types";
 import { RUN_MODELS, STATE_LABEL } from "../types";
 import { clearsBox, clock, fmtM, fmtPct, noAutoFill, proseField, relTime, schedulePreview, shortId, untilTime, weighted } from "../util";
 import { useAutoGrow } from "../hooks";
@@ -845,6 +845,20 @@ export function Drawer({
                         {m || `default (${settings?.default_permission_mode ?? "auto"})`}
                       </option>
                     ))}
+                  </select>
+                </label>
+                <label>
+                  <span>MCP servers</span>
+                  <select
+                    value={c.mcp_servers ?? "default"}
+                    onChange={(e) => patch({ mcp_servers: e.target.value as RunMcp })}
+                    title="Whether a run of this card starts the MCP servers of your Claude Code setup."
+                  >
+                    <option value="default">
+                      {settings?.mcp_servers_in_runs ? "default (start them)" : "default (start none)"}
+                    </option>
+                    <option value="on">start them</option>
+                    <option value="off">start none</option>
                   </select>
                 </label>
               </div>

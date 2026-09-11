@@ -117,6 +117,9 @@ export interface JobLogEntry {
   detail: string | null;
 }
 
+/** What a card says about the MCP servers of its runs. */
+export type RunMcp = "default" | "on" | "off";
+
 export interface Card {
   id: string;
   kind: "session" | "task";
@@ -128,6 +131,8 @@ export interface Card {
   run_prompt: string | null;
   permission_mode: string | null;
   model: string | null;
+  /** Whether runs of this card start MCP servers. "default" follows the setting. */
+  mcp_servers: RunMcp;
   estimate_weighted_tokens: number | null;
   manual_column: string | null;
   manual_lock_priority: number | null;
@@ -440,6 +445,8 @@ export interface Settings {
   autopilot_max_jobs: number;
   prefer_herdr: boolean;
   close_herdr_tab_on_done: boolean;
+  /** Start the MCP servers of the Claude Code configuration in a card run. */
+  mcp_servers_in_runs: boolean;
   weekly_warn_unused_pct: number;
   away_mode: boolean;
   away_hold_secs: number;
@@ -476,6 +483,8 @@ export interface CardPatch {
   auto_run?: boolean | null;
   run_prompt?: string | null;
   permission_mode?: string | null;
+  /** "default" puts the card back on the setting. */
+  mcp_servers?: RunMcp | null;
   notes?: string | null;
   tags?: string[] | null;
   archived?: boolean | null;
