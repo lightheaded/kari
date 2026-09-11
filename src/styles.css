@@ -104,6 +104,9 @@ a { color: var(--accent); }
 .meter { min-width: 240px; }
 .meter .l { display: flex; justify-content: space-between; font: 11px/1.2 var(--mono); color: var(--ink-2); margin-bottom: 4px; }
 .meter .l b { color: var(--ink); font-weight: 500; }
+/* The reset time of the window, beside the percentage. */
+.meter .l b .mr { color: var(--ink-2); font-weight: 400; margin-left: 6px; white-space: nowrap; }
+.meter .l b .mr.soft { opacity: 0.7; }
 .bar { height: 7px; background: var(--surface-2); border-radius: 2px; overflow: hidden; position: relative; }
 .bar i { display: block; height: 100%; background: var(--accent); transition: width 0.4s ease; }
 .bar i.warn { background: var(--amber); }
@@ -576,28 +579,50 @@ the names are. The top bar itself never grows with the node count. */
 .stats {
   display: flex; gap: 24px; padding: 6px 14px;
   background: var(--surface); border-bottom: 1px solid var(--line-soft);
-  max-height: 132px; overflow-y: auto;
+  max-height: 132px; overflow: auto;
 }
-/* One grid per line of rows. Every row of the line shares the tracks, so the
-   widest name sets the column and each bar starts where the bar above it
-   starts. Every slot has a place, whether or not the row fills it. */
+/* One grid per line of rows. Every part of every row is an item of this grid,
+   down to each bar and each reset time, so the widest text sets its column and
+   each bar starts where the bar above it starts. Nothing keeps its place with
+   a pixel width, because text that outgrows a fixed box wraps, or the box
+   beside it gets squeezed and the two texts overlap. The tracks are: name,
+   machines, then four for each window (name, bar, percentage, reset), then
+   stale, Fill, and the rest of the line.
+
+   The bar is the one part that gives way. A narrow window shrinks both bars
+   to 28px before it touches a word, and the two bars shrink by the same
+   amount, because a track holds them both. */
 .scol {
   flex: 1 1 0; min-width: 0;
-  display: grid; align-items: center; align-content: start; gap: 2px 10px;
-  grid-template-columns: max-content max-content max-content max-content max-content 1fr;
+  display: grid; align-items: center; align-content: start; gap: 2px 0;
+  grid-template-columns:
+    max-content max-content
+    max-content minmax(28px, 78px) max-content max-content
+    max-content minmax(28px, 78px) max-content max-content
+    max-content max-content 1fr;
 }
-.srow { display: contents; }
+/* The row and the meters carry no box. Their parts are items of the grid. */
+.srow, .smeters, .m { display: contents; }
 .srow > .aname { grid-column: 1; }
 .srow > .anodes { grid-column: 2; }
-.srow > .smeters, .srow > .snone { grid-column: 3; }
-.srow > .stale { grid-column: 4; }
-.srow > .sfill { grid-column: 5; }
+.m.w5 > .mk { grid-column: 3; }
+.m.w5 > .bar { grid-column: 4; }
+.m.w5 > b { grid-column: 5; }
+.m.w5 > .mr { grid-column: 6; }
+.m.w7 > .mk { grid-column: 7; }
+.m.w7 > .bar { grid-column: 8; }
+.m.w7 > b { grid-column: 9; }
+.m.w7 > .mr { grid-column: 10; }
+/* A row with no sample says so across the space of both meters. */
+.srow > .snone { grid-column: 3 / 11; }
+.srow > .stale { grid-column: 11; }
+.srow > .sfill { grid-column: 12; }
 /* The account's name, and the field that renames it. Same box either way, so
    the row does not jump when the field opens. */
 .aname {
   /* One fixed width for the label and the field, so opening the field does not
      shift the row. */
-  display: inline-flex; align-items: center; flex: 0 0 104px; width: 104px;
+  display: inline-flex; align-items: center; flex: 0 0 104px; width: 104px; margin-right: 10px;
   border: 1px solid transparent; background: none; padding: 1px 4px; border-radius: 3px;
   font: 500 11.5px/1.4 var(--mono); color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -606,23 +631,29 @@ the names are. The top bar itself never grows with the node count. */
 .aname.edit { border-color: var(--accent); background: var(--surface-2); outline: none; }
 /* The machines that spend this account's quota. The grid track holds the
    longest list, so the meters line up however many machines a row names. */
-.anodes { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 108px; }
+.anodes { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 108px; margin-right: 10px; }
 .anode {
   display: inline-flex; align-items: center; gap: 4px;
   font: 11px/1.4 var(--mono); color: var(--ink-3); white-space: nowrap;
 }
 /* `.dot` carries only a colour; every place that shows one gives it a size. */
 .anode .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
-.smeters { display: flex; align-items: center; gap: 16px; min-width: 0; }
-.m { display: inline-flex; align-items: center; gap: 6px; font: 11px/1.4 var(--mono); color: var(--ink-3); }
-.m .mk { color: var(--ink-3); flex: 0 0 20px; }
-.m .bar { width: 78px; height: 6px; flex: 0 0 auto; }
-.m b { color: var(--ink); font-weight: 500; flex: 0 0 30px; text-align: right; }
-/* The reset time keeps its box while the window has none, so the meter beside
-   it does not move. */
-.m .mr { color: var(--ink-3); flex: 0 0 46px; }
-.snone { border: none; background: none; padding: 0; font: 11px/1.4 var(--mono); color: var(--ink-3); text-align: left; }
+/* The parts of a meter. The gap between them is a margin, not a grid gap, so
+   the four parts read as one meter while each keeps its own column. The
+   min-width holds a column steady while the number in it changes. */
+.m > * { font: 11px/1.4 var(--mono); color: var(--ink-3); }
+.m .mk { min-width: 20px; margin-right: 6px; }
+/* No width of its own: the track gives the bar its width, so both bars of a
+   line are the same size and every bar of a column starts at one place. */
+.m .bar { height: 6px; min-width: 0; }
+.m b { color: var(--ink); font-weight: 500; min-width: 30px; text-align: right; margin: 0 6px; }
+/* Every window names its reset. A window with no reset time says "not
+   started", so the reader never sees an empty box beside a bar. */
+.m .mr { min-width: 46px; margin-right: 16px; white-space: nowrap; }
+.m .mr.soft { opacity: 0.7; }
+.snone { border: none; background: none; padding: 0; font: 11px/1.4 var(--mono); color: var(--ink-3); text-align: left; margin-right: 16px; }
 .snone:hover { color: var(--amber); }
+.srow .stale { margin-right: 10px; }
 .srow .sfill { justify-self: start; }
 
 /* --------------------------------------------------------- automation switch */

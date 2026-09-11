@@ -1,4 +1,4 @@
-import type { CardView, DerivedState, NodeStatus, QuotaSample, ScheduleWhen, TokenTotals } from "./types";
+import type { CardView, DerivedState, NodeStatus, QuotaSample, QuotaWindow, ScheduleWhen, TokenTotals } from "./types";
 
 export function relTime(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return "—";
@@ -74,6 +74,28 @@ export function schedulePreview(
   }
   if (week !== null) out.weekly_reset = new Date(week + RESET_MARGIN_MS).toISOString();
   return out;
+}
+
+/** When a window resets, short enough for the strip. Every window says
+ *  something, because a blank box beside a bar reads as a missing number.
+ *
+ *  A window kari has no reading for says "no data". A window with a reading
+ *  but no reset time has not started: Claude Code opens it at the first
+ *  message after the last reset, and only then names the time it ends. */
+export function resetIn(w: QuotaWindow | null | undefined, now = Date.now()): string {
+  if (!w) return "no data";
+  if (!w.resets_at) return "not started";
+  return untilTime(w.resets_at, now);
+}
+
+/** The same fact in a sentence, for the tooltip of a meter. */
+export function resetTitle(label: string, w: QuotaWindow | null | undefined, now = Date.now()): string {
+  if (!w) return `${label}: kari has no reading for this window.`;
+  const used = `${label}: ${Math.max(0, Math.min(100, w.used_percentage)).toFixed(0)}% used.`;
+  if (!w.resets_at) {
+    return `${used} The window is not started. It opens at the next message, and the reset time follows.`;
+  }
+  return `${used} Resets ${clock(w.resets_at)}, in ${untilTime(w.resets_at, now)}.`;
 }
 
 export function weighted(t: TokenTotals | undefined | null): number {

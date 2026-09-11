@@ -6,6 +6,7 @@ import {
   fuzzyScore,
   nextReset,
   planReorder,
+  resetIn,
   RESET_MARGIN_MS,
   schedulePreview,
   sortCards,
@@ -288,6 +289,7 @@ describe("clearsBox", () => {
   });
 });
 
+
 describe("taggedTask", () => {
   const SEP = "";
   const proj = (node: string, cwd: string, name: string): [string, FilterProject] => [
@@ -411,3 +413,24 @@ describe("taggedTask", () => {
     expect(t.title).toBe("move #wharf to");
   });
 });
+
+
+describe("resetIn", () => {
+  const now = Date.parse("2026-09-10T08:00:00Z");
+
+  test("a window with a reset time counts down to it", () => {
+    expect(resetIn({ used_percentage: 12, resets_at: "2026-09-10T11:34:00Z" }, now)).toBe("3h 34m");
+  });
+
+  test("a window with no reset time has not started", () => {
+    // The account has not used the window, so Claude Code names no end for it.
+    // The strip must still say something, or the empty box beside the bar
+    // reads as a lost number.
+    expect(resetIn({ used_percentage: 0, resets_at: null }, now)).toBe("not started");
+  });
+
+  test("a window kari has no reading for says so", () => {
+    expect(resetIn(null, now)).toBe("no data");
+  });
+});
+
