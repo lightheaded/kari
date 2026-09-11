@@ -12,3 +12,6 @@ fixtures/
 # nix build symlink
 result
 result-*
+
+# scratch notes, not part of the project
+tmp/
