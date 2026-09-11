@@ -306,3 +306,90 @@ export function addTarget(
   const p = pick(project) ?? pick(last);
   return { node: p?.node ?? node, cwd: p?.cwd ?? null, name: p?.name ?? null };
 }
+
+/** A one-line task, with the project tag read out of it. */
+export interface TaggedTask {
+  /** The title without the tag. This is what the card gets. */
+  title: string;
+  /** What the user typed after the `#`, or an empty string for no tag. */
+  tag: string;
+  /** Where the task goes. The tag wins over the filters when it matches. */
+  target: AddTarget;
+  /** True when a tag is there and no project answers to it. */
+  unknown: boolean;
+}
+
+/** A project tag: a `#` at the start of a word, then the name. */
+const TAG = /(^|\s)#([A-Za-z0-9][\w.\-/]*)/g;
+
+/** The last part of a directory path. A project goes by that name too. */
+function baseName(cwd: string): string {
+  return cwd.split("/").filter(Boolean).pop() ?? cwd;
+}
+
+/**
+ * Find the project that a tag names.
+ *
+ * The tag is matched against the project name and against the last part of the
+ * directory. An exact match wins, then a match on the start of the name, then
+ * the best fuzzy match. Two projects with the same score keep the first of the
+ * list, which is sorted by name, so the answer holds between keystrokes.
+ *
+ * A node filter limits the search to that node. Without a filter, the match
+ * names the node as well, because a path lives on one machine.
+ */
+export function matchProject(tag: string, projects: [string, FilterProject][], node: string): FilterProject | null {
+  if (!tag) return null;
+  const open = projects.map(([, p]) => p).filter((p) => !node || p.node === node);
+  const t = tag.toLowerCase();
+  const names = (p: FilterProject) => [p.name.toLowerCase(), baseName(p.cwd).toLowerCase()];
+  const exact = open.find((p) => names(p).includes(t));
+  if (exact) return exact;
+  const starts = open.find((p) => names(p).some((n) => n.startsWith(t)));
+  if (starts) return starts;
+  let best: FilterProject | null = null;
+  let score = 0;
+  for (const p of open) {
+    const s = Math.max(...names(p).map((n) => fuzzyScore(n, tag)));
+    if (s > score) {
+      best = p;
+      score = s;
+    }
+  }
+  return best;
+}
+
+/**
+ * Read a `#project` tag out of a one-line task, and say where the task goes.
+ *
+ * The quick add box holds one line and no picker. A tag lets that line name the
+ * project, as a click on the project filter does. The tag is then cut out of
+ * the title, so the card reads as the user meant it.
+ *
+ * A line can hold more than one `#word`. The first word that names a project
+ * wins, and the others stay in the title. A word of digits alone, such as
+ * `#1234`, is an issue number and is never read as a tag. A tag that names no
+ * project also stays in the title: a task must not lose text because the board
+ * knows no such name. The caller reads `unknown` and says that nothing matched.
+ *
+ * `filters` says where the task goes when no tag names a project: the project
+ * filter, the node filter and the last project used, as `addTarget` reads them.
+ */
+export function taggedTask(
+  raw: string,
+  projects: [string, FilterProject][],
+  filters: { project: string; node: string; last: string },
+): TaggedTask {
+  const fallback = addTarget(projects, filters.project, filters.node, filters.last);
+  const plain = { title: raw.trim(), tag: "", target: fallback, unknown: false };
+  const tags = [...raw.matchAll(TAG)].filter((m) => !/^\d+$/.test(m[2]));
+  if (tags.length === 0) return plain;
+  const hit = tags.map((m) => ({ m, p: matchProject(m[2], projects, filters.node) })).find((x) => x.p);
+  if (!hit) return { ...plain, tag: tags[0][2], unknown: true };
+  const { m, p } = hit;
+  // Cut the tag out, and close the gap that it leaves inside a sentence.
+  const cut = (raw.slice(0, m.index) + m[1] + raw.slice(m.index + m[0].length)).replace(/\s+/g, " ").trim();
+  // A line that holds the tag and nothing else keeps it. An empty title is
+  // worse than a title that repeats the project.
+  return { title: cut || raw.trim(), tag: m[2], target: { node: p!.node, cwd: p!.cwd, name: p!.name }, unknown: false };
+}

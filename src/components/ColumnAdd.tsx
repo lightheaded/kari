@@ -1,11 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { noAutoFill } from "../util";
 
+/** Where the line that is typed now will land, as the draft bar shows it. */
+export interface AddPreview {
+  /** The node name, or an empty string when the board has one node. */
+  node: string;
+  /** The project name, or null when nothing names one. */
+  project: string | null;
+  /** A tag that names no project, without the `#`. Empty when there is none. */
+  unknown: string;
+}
+
 interface Props {
   columnName: string;
-  /** Where a one-line task lands: the node, and the project when one is known.
-   *  Shown in the draft bar, so the card never goes somewhere unseen. */
-  target: { node: string; project: string | null };
+  /** Read the draft. The answer holds the node, the project and a tag that
+   *  missed. It is read on every keystroke, so the card never goes unseen. */
+  preview: (title: string) => AddPreview;
   /** Save a one-line task. Rejects when the node refuses it. */
   onAdd: (title: string) => Promise<void>;
   /** Open the full dialog with what is typed so far. */
@@ -13,8 +23,9 @@ interface Props {
 }
 
 /** The foot of every column: add a task here without leaving the board. Enter
- *  saves and keeps the field open for the next one. Escape closes it. */
-export function ColumnAdd({ columnName, target, onAdd, onFull }: Props) {
+ *  saves and keeps the field open for the next one. Escape closes it. A
+ *  `#project` word in the line picks the project and leaves the title. */
+export function ColumnAdd({ columnName, preview, onAdd, onFull }: Props) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,6 +56,8 @@ export function ColumnAdd({ columnName, target, onAdd, onFull }: Props) {
     );
   }
 
+  const at = preview(title);
+
   return (
     <div className="coldraft">
       <textarea
@@ -53,7 +66,7 @@ export function ColumnAdd({ columnName, target, onAdd, onFull }: Props) {
         rows={2}
         value={title}
         disabled={busy}
-        placeholder="What needs to happen"
+        placeholder="What needs to happen · #project"
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
@@ -69,10 +82,23 @@ export function ColumnAdd({ columnName, target, onAdd, onFull }: Props) {
           if (!title.trim()) setOpen(false);
         }}
       />
-      <div className="coltarget hint" title="Change either of these in the full dialog, or later on the card">
-        {target.project ? `→ ${target.project}` : "→ no project yet"}
-        {target.node ? ` · ${target.node}` : ""}
+      <div
+        className="coltarget hint"
+        title="Type #name to pick a project. Change either of these in the full dialog, or later on the card"
+      >
+        {at.project ? `→ ${at.project}` : "→ no project yet"}
+        {at.node ? ` · ${at.node}` : ""}
       </div>
+      {/* One line under the target, which wraps because a column is narrow and
+          the line above cuts a long path with an ellipsis. It says how to pick
+          a project while the box is empty, and what missed once it is not. */}
+      {at.unknown ? (
+        <div className="colmiss hint warn" title={`The word stays in the title, because no project is called ${at.unknown}.`}>
+          #{at.unknown} names no project
+        </div>
+      ) : (
+        !title.trim() && <div className="colmiss hint">#name picks a project</div>
+      )}
       <div className="draftbar">
         <span className="hint">Enter saves</span>
         <div className="spacer" />

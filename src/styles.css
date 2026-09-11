@@ -704,6 +704,7 @@ What the planner would run next, in order. It starts nothing. */
 .draftbar .hint { font-size: 11px; }
 /* Where a one-line task lands. Long paths and node names get an ellipsis. */
 .coltarget { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.colmiss { font-size: 11px; }
 
 /* ------------------------------------------------------- fuzzy project picker */
 .picker { position: relative; min-width: 180px; }

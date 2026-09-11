@@ -9,6 +9,7 @@ import {
   RESET_MARGIN_MS,
   schedulePreview,
   sortCards,
+  taggedTask,
   type FilterProject,
   type Rankable,
 } from "./util";
@@ -284,5 +285,129 @@ describe("clearsBox", () => {
     // The phone card sends an option with no box open.
     expect(clearsBox(null, "Yes", true)).toBe(false);
     expect(clearsBox(null, "Yes", false)).toBe(false);
+  });
+});
+
+describe("taggedTask", () => {
+  const SEP = "";
+  const proj = (node: string, cwd: string, name: string): [string, FilterProject] => [
+    `${node}${SEP}${cwd}`,
+    { node, cwd, name },
+  ];
+  // Sorted by name, as the board's filter list is.
+  const api = proj("studio", "/src/atlas-api", "atlas-api");
+  const apiThere = proj("lab", "/home/dev/src/atlas-api", "atlas-api");
+  const docs = proj("studio", "/src/docs-site", "docs-site");
+  const all = [api, apiThere, docs];
+  const none = { project: "", node: "", last: "" };
+
+  test("a tag picks the project and leaves the title", () => {
+    const t = taggedTask("write the readme #docs-site", all, none);
+    expect(t.title).toBe("write the readme");
+    expect(t.tag).toBe("docs-site");
+    expect(t.target.cwd).toBe("/src/docs-site");
+    expect(t.target.name).toBe("docs-site");
+    expect(t.unknown).toBe(false);
+  });
+
+  test("a tag names the node as well", () => {
+    // A path lives on one machine. The card must go to that machine.
+    const t = taggedTask("#atlas-api ship it", all, none);
+    expect(t.target.node).toBe("studio");
+    expect(t.title).toBe("ship it");
+  });
+
+  test("a tag in the middle closes the gap it leaves", () => {
+    const t = taggedTask("write #docs-site the readme", all, none);
+    expect(t.title).toBe("write the readme");
+  });
+
+  test("the start of a name is enough", () => {
+    const t = taggedTask("fix the build #docs", all, none);
+    expect(t.target.cwd).toBe("/src/docs-site");
+  });
+
+  test("a fuzzy tag still finds the project", () => {
+    const t = taggedTask("read the log #dcsite", all, none);
+    expect(t.target.cwd).toBe("/src/docs-site");
+  });
+
+  test("the last part of the path answers to a tag", () => {
+    const only = [proj("studio", "/src/kari", "the herd")];
+    const t = taggedTask("tidy the board #kari", only, none);
+    expect(t.target.cwd).toBe("/src/kari");
+  });
+
+  test("a tag that names no project stays in the title", () => {
+    // A task must not lose text because the board knows no such name.
+    const t = taggedTask("fix the crash #wharf", all, none);
+    expect(t.title).toBe("fix the crash #wharf");
+    expect(t.tag).toBe("wharf");
+    expect(t.unknown).toBe(true);
+    expect(t.target.cwd).toBeNull();
+  });
+
+  test("an issue number is not a tag", () => {
+    const t = taggedTask("fix the crash #1234", all, none);
+    expect(t.title).toBe("fix the crash #1234");
+    expect(t.tag).toBe("");
+    expect(t.unknown).toBe(false);
+  });
+
+  test("the issue number stays and a later tag still picks the project", () => {
+    const t = taggedTask("fix #1234 #docs-site", all, none);
+    expect(t.title).toBe("fix #1234");
+    expect(t.target.cwd).toBe("/src/docs-site");
+  });
+
+  test("a node filter keeps the tag on that node", () => {
+    const t = taggedTask("ship it #atlas-api", all, { project: "", node: "lab", last: "" });
+    expect(t.target.node).toBe("lab");
+    expect(t.target.cwd).toBe("/home/dev/src/atlas-api");
+  });
+
+  test("a node filter hides a project of another node", () => {
+    const t = taggedTask("write it #docs-site", all, { project: "", node: "lab", last: "" });
+    expect(t.unknown).toBe(true);
+    expect(t.title).toBe("write it #docs-site");
+    expect(t.target.node).toBe("lab");
+  });
+
+  test("a tag beats the project filter", () => {
+    const t = taggedTask("ship it #docs-site", all, { project: api[0], node: "", last: "" });
+    expect(t.target.cwd).toBe("/src/docs-site");
+  });
+
+  test("no tag leaves the filters to answer", () => {
+    const t = taggedTask("ship it", all, { project: docs[0], node: "", last: "" });
+    expect(t.tag).toBe("");
+    expect(t.unknown).toBe(false);
+    expect(t.target.cwd).toBe("/src/docs-site");
+    expect(t.title).toBe("ship it");
+  });
+
+  test("a hash inside a word is not a tag", () => {
+    const t = taggedTask("run pr#docs-site again", all, none);
+    expect(t.tag).toBe("");
+    expect(t.title).toBe("run pr#docs-site again");
+  });
+
+  test("a line that holds the tag alone keeps it as the title", () => {
+    // An empty title is worse than a title that repeats the project.
+    const t = taggedTask("#docs-site", all, none);
+    expect(t.title).toBe("#docs-site");
+    expect(t.target.cwd).toBe("/src/docs-site");
+  });
+
+  test("the first tag that names a project wins", () => {
+    const t = taggedTask("#docs-site and #atlas-api", all, none);
+    expect(t.target.cwd).toBe("/src/docs-site");
+    expect(t.title).toBe("and #atlas-api");
+  });
+
+  test("a tag that misses lets the next one answer", () => {
+    const t = taggedTask("move #wharf to #docs-site", all, none);
+    expect(t.target.cwd).toBe("/src/docs-site");
+    expect(t.title).toBe("move #wharf to");
   });
 });

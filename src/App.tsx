@@ -3,6 +3,7 @@ import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
 import type { AutomationMode, Column, HubBoard, HubCard, Project, Settings } from "./types";
 import { AUTOMATION_MODES } from "./types";
 import { Board, type Picked, type Reorder } from "./components/Board";
+import type { AddPreview } from "./components/ColumnAdd";
 import { Drawer } from "./components/Drawer";
 import { StatsStrip } from "./components/StatsStrip";
 import { AutomationSwitch } from "./components/AutomationSwitch";
@@ -15,7 +16,7 @@ import { useToasts, type Undo } from "./toasts";
 import { restartApp, updatesSupported, useUpdater } from "./update";
 import { useSticky } from "./hooks";
 import { anyDirty } from "./dirty";
-import { addTarget, noAutoFill } from "./util";
+import { addTarget, noAutoFill, taggedTask } from "./util";
 import { uploadPending } from "./components/Attachments";
 
 /** Joins a node id and a project directory into one filter value. */
@@ -35,6 +36,9 @@ export default function App() {
   const [addColumn, setAddColumn] = useState<string | null>(null);
   /** The line already typed at the foot of a column, carried into the dialog. */
   const [addTitle, setAddTitle] = useState("");
+  /** The project a `#tag` in that line named. It beats the filters in the
+   *  dialog, so the tag is not lost when the user asks for more fields. */
+  const [addTagged, setAddTagged] = useState<{ node: string; cwd: string | null } | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [planHidden, setPlanHidden] = useState<Set<string>>(() => new Set());
@@ -172,6 +176,27 @@ export default function App() {
   const addNode = addTo.node || localNodeId;
   const addProject = addTo.cwd;
 
+  /** Read a one-line draft: the `#tag` it carries, the title without the tag,
+   *  and where the task goes. The filters answer when no tag names a project. */
+  const readDraft = useCallback(
+    (raw: string) => taggedTask(raw, projects, { project, node, last: lastProject }),
+    [projects, project, node, lastProject],
+  );
+
+  /** What the foot of a column shows while the user types. */
+  const addPreview = useCallback(
+    (raw: string): AddPreview => {
+      const d = readDraft(raw);
+      const id = d.target.node || localNodeId;
+      return {
+        node: manyNodes ? nodeById.get(id)?.name ?? id : "",
+        project: d.target.name,
+        unknown: d.unknown ? d.tag : "",
+      };
+    },
+    [readDraft, manyNodes, nodeById, localNodeId],
+  );
+
   const filtered: HubCard[] = useMemo(() => {
     if (!board) return [];
     const q = query.trim().toLowerCase();
@@ -241,14 +266,17 @@ export default function App() {
     );
   };
 
-  /** A one-line task from the foot of a column. The toast carries the new
-   *  card, so the line the user just typed can be opened at once. */
-  const addInline = async (columnId: string, title: string) => {
+  /** A one-line task from the foot of a column. A `#tag` in the line picks the
+   *  project, and the tag itself does not reach the title. The toast carries
+   *  the new card, so the line the user just typed can be opened at once. */
+  const addInline = async (columnId: string, raw: string) => {
+    const d = readDraft(raw);
+    const nodeId = d.target.node || localNodeId;
     await run(
       () =>
-        api.addTask(addNode, {
-          title,
-          project_cwd: addProject,
+        api.addTask(nodeId, {
+          title: d.title,
+          project_cwd: d.target.cwd,
           run_prompt: null,
           auto_run: false,
           priority: 0,
@@ -260,7 +288,7 @@ export default function App() {
       undefined,
       (c) => ({ node: addNode, id: c.id }),
     );
-    rememberProject(addNode, addProject);
+    rememberProject(nodeId, d.target.cwd);
   };
 
   return (
@@ -302,6 +330,7 @@ export default function App() {
           onClick={() => {
             setAddColumn(null);
             setAddTitle("");
+            setAddTagged(null);
             setModal("add");
           }}
         >
@@ -384,12 +413,14 @@ export default function App() {
             onJump={(nodeId, id) => run(() => api.jumpIn(nodeId, id), "Opened")}
             onFilterNode={(nodeId) => setNodeFilter(node === nodeId ? "" : nodeId)}
             onAdd={addInline}
-            onAddFull={(columnId, title) => {
+            onAddFull={(columnId, raw) => {
+              const d = readDraft(raw);
               setAddColumn(columnId);
-              setAddTitle(title);
+              setAddTitle(d.title);
+              setAddTagged(d.tag && !d.unknown ? { node: d.target.node || localNodeId, cwd: d.target.cwd } : null);
               setModal("add");
             }}
-            addTarget={{ node: manyNodes ? nodeById.get(addNode)?.name ?? addNode : "", project: addTo.name }}
+            addPreview={addPreview}
           />
         ) : (
           <div className="empty">Loading the herd…</div>
@@ -431,14 +462,15 @@ export default function App() {
       {modal === "add" && (
         <AddTaskModal
           nodes={nodes}
-          defaultNode={addNode}
-          defaultProject={addProject}
+          defaultNode={addTagged?.node ?? addNode}
+          defaultProject={addTagged ? addTagged.cwd : addProject}
           columnId={addColumn}
           defaultTitle={addTitle}
           columns={board?.columns ?? []}
           projectsByNode={projectsByNode}
           onClose={() => {
             setAddTitle("");
+            setAddTagged(null);
             setModal(null);
           }}
           onSubmit={(nodeId, t, files) =>
@@ -461,6 +493,7 @@ export default function App() {
             ).then(() => {
               rememberProject(nodeId, t.project_cwd);
               setAddTitle("");
+              setAddTagged(null);
               setModal(null);
             })
           }
