@@ -525,6 +525,33 @@ after a monitor goes away.
 
 Flow: watchers and pollers in `kari-core` emit domain events on a channel. A reducer updates the store and computes derived state. The hub turns an event of the local engine, or of a remote node, into a `board_changed` event for the UI, which re-fetches the merged board through one command. The UI never reads files and never opens a socket.
 
+### Hook entries stay current
+
+kari registers a fixed set of events in `~/.claude/settings.json`. Every
+release can change that set: 0.11 added `PermissionRequest` for Away mode, and
+the autopilot gate added `Bash` to the `PreToolUse` matcher. The user installed
+the hooks once, so an upgrade left an old set in place. The feature was then
+silently off, and only a line in the node log said so.
+
+kari owns its own entries. At every start, the server compares what
+settings.json holds with what this version installs: the event, the matcher,
+the timeout and the command line. If one of them differs, kari writes the
+entries again, the way the button does, with a backup first and with every
+other hook untouched. The check is `hooks::entries_current`, the write is
+`hooks::repair`, and both run from `api::serve_all` and `api::serve_dynamic`,
+so the node and the desktop app repair the same way.
+
+Two rules keep this safe:
+
+- A user who never installed the hooks gets nothing. `repair` does nothing
+  while `installed()` is false.
+- The write is idempotent. After one repair the entries match, so the next
+  start writes nothing and keeps no second backup.
+
+A hand-edited kari entry, such as a changed timeout, goes back to the standard
+shape at the next start. A moved relay is a difference as well, so a node that
+runs from a new path repairs the command line by itself.
+
 ### The back button closes the top layer
 
 A phone has no Escape key. The system back button is how a person closes a
@@ -790,8 +817,9 @@ carries no decision and the terminal shows the dialog. Nothing is lost.
 While kari waits, the terminal shows a spinner and no dialog. So Away mode is
 per node, off by default, and one tap on the phone or the desktop flips it.
 Background jobs kari starts run with `bypassPermissions` and never ask. The
-hook entry for this event has a 660 s timeout; an older install lacks it, so
-"Install hooks" must run once more.
+hook entry for this event has a 660 s timeout. An older install lacks the
+entry, and the node writes the entries again at start (see Hook entries stay
+current).
 
 ### Jump in
 

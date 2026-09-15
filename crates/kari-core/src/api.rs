@@ -608,6 +608,14 @@ pub async fn serve_all(
     if let Err(e) = hooks::refresh_script(first.port()) {
         warn!("hook relay script not refreshed: {e}");
     }
+    // An install from an older kari lacks the events this version added. kari
+    // owns its own entries, so it writes them again here rather than wait for
+    // a second click on "Install hooks".
+    match hooks::repair(first.port()) {
+        Ok(true) => info!("hook entries in settings.json updated for this version of kari"),
+        Ok(false) => {}
+        Err(e) => warn!("hook entries not updated: {e}"),
+    }
     let app = router(engine, token);
     let mut servers = Vec::new();
     for addr in addrs {
@@ -647,6 +655,14 @@ pub async fn serve_dynamic(
     let token = hooks::token()?;
     if let Err(e) = hooks::refresh_script(first.port()) {
         warn!("hook relay script not refreshed: {e}");
+    }
+    // An install from an older kari lacks the events this version added. kari
+    // owns its own entries, so it writes them again here rather than wait for
+    // a second click on "Install hooks".
+    match hooks::repair(first.port()) {
+        Ok(true) => info!("hook entries in settings.json updated for this version of kari"),
+        Ok(false) => {}
+        Err(e) => warn!("hook entries not updated: {e}"),
     }
     let app = router(engine.clone(), token);
     let mut pinned = Vec::new();

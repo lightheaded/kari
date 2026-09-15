@@ -115,7 +115,9 @@ The script backs up `~/.claude/settings.json`, stores the original command in `~
 
 ## Live hooks
 
-Open Settings and click "Install hooks". kari writes a relay script to `~/.config/kari/hook.sh` (on Windows it registers `kari-node.exe hooks relay` instead, which needs no shell) and registers it in `~/.claude/settings.json` for these events: SessionStart, SessionEnd, UserPromptSubmit, Stop, Notification, PreToolUse (AskUserQuestion and ExitPlanMode), PostToolUse. kari keeps a backup of the settings file in `~/.config/kari/`. The relay posts the payload with `curl` and always exits 0, so a closed kari never blocks a session. Every post carries a token from `~/.config/kari/hook-token` in the `x-kari-token` header. kari creates the token on first start with mode 0600 and refuses a post without it. A process that runs as your user can read the file, so the token keeps out other users, sandboxed apps and web pages, not your own processes. New sessions pick up the hooks. Running sessions keep the old settings until they restart. "Remove hooks" takes the entries out again and leaves other hooks in place.
+Open Settings and click "Install hooks". kari writes a relay script to `~/.config/kari/hook.sh` (on Windows it registers `kari-node.exe hooks relay` instead, which needs no shell) and registers it in `~/.claude/settings.json` for these events: SessionStart, SessionEnd, UserPromptSubmit, Stop, Notification, PreToolUse (AskUserQuestion, ExitPlanMode and Bash), PostToolUse, PermissionRequest. kari keeps a backup of the settings file in `~/.config/kari/`. The relay posts the payload with `curl` and always exits 0, so a closed kari never blocks a session. Every post carries a token from `~/.config/kari/hook-token` in the `x-kari-token` header. kari creates the token on first start with mode 0600 and refuses a post without it. A process that runs as your user can read the file, so the token keeps out other users, sandboxed apps and web pages, not your own processes. New sessions pick up the hooks. Running sessions keep the old settings until they restart. "Remove hooks" takes the entries out again and leaves other hooks in place.
+
+You click "Install hooks" once. kari owns the entries from then on: at every start it compares them with the events this version registers, and it writes them again when a release adds an event, changes a matcher or moves the relay. The log says `hook entries in settings.json updated for this version of kari`. A backup goes to `~/.config/kari/` first, and every other hook stays where it is. kari never writes the entries for a user who did not install them, and a hand-edited kari entry goes back to the standard shape at the next start.
 
 The receiver also serves `GET /kari/board` (the board as JSON) and `GET /kari/health` for scripts. The board needs the same token:
 
@@ -374,7 +376,7 @@ Click the name on a row to give the account one of your own, such as `tom` or `w
 
 The node runs on Windows as well. Unpack `kari-node-<tag>-x86_64-pc-windows-msvc.zip` and run the same three commands. Two things differ, and both are handled for you:
 
-- There is no `sh` and no `jq`, so `hooks install` and `statusline install` register `kari-node.exe` itself rather than a script. Keep the binary where it is: the path goes into `settings.json`, and moving it breaks the hooks until you install them again. Run the installers again after you move or upgrade it.
+- There is no `sh` and no `jq`, so `hooks install` and `statusline install` register `kari-node.exe` itself rather than a script. The path of the binary goes into `settings.json`. kari writes the hook entries again at every start, so a moved binary repairs itself when the node runs from the new path. Run `statusline install` again after you move or upgrade it.
 - herdr is a Unix program, so pane mapping and "Jump in" are not available. Cards, state, quota meters and background jobs all work; "Jump in" is offered from the desktop app over SSH.
 
 To keep the node running without a console window, wrap it in a Windows service (`WinSW` and `NSSM` both do this) or start it from Task Scheduler at logon. Run it as the user whose Claude Code login it should read: the node reads `%USERPROFILE%\.claude`, and a service running as `LocalSystem` sees a different one.
@@ -410,7 +412,7 @@ Two hubs can watch the same nodes. Only one pushes columns, and each node decide
 
 ### Away mode
 
-Claude Code asks for permission in the terminal, and only the terminal can answer. With Away mode on for a node, kari holds the prompt for up to 10 minutes and the phone shows Allow and Deny on the card. While kari waits, the terminal shows a spinner and no dialog, so Away mode is off at the desk and one tap flips it, per node, from the phone or the desktop. If nobody answers in time, the dialog appears as before. Background jobs kari starts never ask. Away mode needs the `PermissionRequest` hook entry: click "Install hooks" once more after an upgrade, or run `kari-node hooks install` on a node.
+Claude Code asks for permission in the terminal, and only the terminal can answer. With Away mode on for a node, kari holds the prompt for up to 10 minutes and the phone shows Allow and Deny on the card. While kari waits, the terminal shows a spinner and no dialog, so Away mode is off at the desk and one tap flips it, per node, from the phone or the desktop. If nobody answers in time, the dialog appears as before. Background jobs kari starts never ask. Away mode needs the `PermissionRequest` hook entry. An install from a kari before 0.11 lacks it, and kari adds it at the first start of this version.
 
 ## Updates
 

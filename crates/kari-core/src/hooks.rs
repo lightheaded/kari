@@ -135,24 +135,6 @@ pub fn deny_json(reason: &str) -> serde_json::Value {
     })
 }
 
-/// True when settings.json registers kari for the gate. An install from an
-/// older kari names only the two question tools, so the gate never fires and
-/// the user must install the hooks again.
-pub fn gate_installed() -> bool {
-    let Ok(v) = read_settings() else { return false };
-    v.get("hooks")
-        .and_then(|h| h.get(GATE_EVENT))
-        .and_then(|a| a.as_array())
-        .is_some_and(|a| {
-            a.iter().any(|g| {
-                is_kari_group(g)
-                    && g.get("matcher")
-                        .and_then(|m| m.as_str())
-                        .is_some_and(|m| m.split('|').any(|t| t == "Bash"))
-            })
-        })
-}
-
 pub fn parse(v: &Value) -> Option<HookEvent> {
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|x| x.to_string());
     let session_id = s("session_id")?;
@@ -344,14 +326,91 @@ pub fn refresh_script(port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// True when settings.json registers kari for the held event. An older install
-/// lacks it, and Away mode then cannot hold anything.
-pub fn held_event_installed() -> bool {
+/// The timeout `install` writes for one event. The held event waits for a
+/// remote answer, so it is the only long one.
+fn timeout_for(event: &str) -> u64 {
+    if event == HELD_EVENT {
+        HELD_TIMEOUT_SECS
+    } else {
+        5
+    }
+}
+
+/// The command `install` writes, without the side effect of writing the relay
+/// script. `None` when the command cannot be told, and the comparison in
+/// `entries_current` then skips it.
+fn expected_command(port: u16) -> Option<String> {
+    if cfg!(windows) {
+        let exe = std::env::current_exe().ok()?;
+        return Some(format!(
+            "\"{}\" {RELAY_SUBCOMMAND} --port {port}",
+            exe.display()
+        ));
+    }
+    Some(script_path().to_string_lossy().into_owned())
+}
+
+/// True when settings.json carries the entries this version of kari installs:
+/// every event, with the matcher, the timeout and the command of `install`,
+/// and no kari entry for an event this version dropped.
+///
+/// A kari that adds an event, such as the held permission, leaves an older
+/// install behind. `repair` writes the entries again, so the user clicks
+/// "Install hooks" once and an upgrade needs no second click.
+pub fn entries_current(port: u16) -> bool {
     let Ok(v) = read_settings() else { return false };
-    v.get("hooks")
-        .and_then(|h| h.get(HELD_EVENT))
-        .and_then(|a| a.as_array())
-        .is_some_and(|a| a.iter().any(is_kari_group))
+    let Some(hooks) = v.get("hooks").and_then(|h| h.as_object()) else {
+        return false;
+    };
+    current_in(hooks, expected_command(port).as_deref())
+}
+
+/// The comparison of `entries_current`, on a hooks object that is already
+/// read. `want` is the command line `install` writes, or `None` to accept any
+/// command kari owns.
+fn current_in(hooks: &serde_json::Map<String, Value>, want: Option<&str>) -> bool {
+    // A kari entry under an event this version does not register is stale.
+    for (event, groups) in hooks {
+        let has_kari = groups
+            .as_array()
+            .is_some_and(|a| a.iter().any(is_kari_group));
+        if has_kari && !EVENTS.iter().any(|(e, _)| e == event) {
+            return false;
+        }
+    }
+    EVENTS.iter().all(|(event, matcher)| {
+        hooks
+            .get(*event)
+            .and_then(|a| a.as_array())
+            .is_some_and(|arr| {
+                arr.iter().filter(|g| is_kari_group(g)).any(|g| {
+                    g.get("matcher").and_then(|m| m.as_str()) == *matcher
+                        && g.get("hooks").and_then(|h| h.as_array()).is_some_and(|hs| {
+                            hs.iter().all(|h| {
+                                h.get("timeout").and_then(|t| t.as_u64())
+                                    == Some(timeout_for(event))
+                                    && want.is_none_or(|w| {
+                                        h.get("command").and_then(|c| c.as_str()) == Some(w)
+                                    })
+                            })
+                        })
+                })
+            })
+    })
+}
+
+/// Write kari's entries again when an install from an older kari lacks what
+/// this version registers. Returns true when settings.json changed.
+///
+/// Does nothing when the hooks are not installed: kari edits settings.json
+/// only for a user who asked for the hooks. The write keeps a backup and
+/// leaves every other hook in place, the way the button does.
+pub fn repair(port: u16) -> anyhow::Result<bool> {
+    if !installed() || entries_current(port) {
+        return Ok(false);
+    }
+    install(port)?;
+    Ok(true)
 }
 
 fn settings_path() -> PathBuf {
@@ -452,11 +511,7 @@ pub fn install(port: u16) -> anyhow::Result<String> {
     }
     strip_kari(hooks);
     for (event, matcher) in EVENTS {
-        let timeout = if *event == HELD_EVENT {
-            HELD_TIMEOUT_SECS
-        } else {
-            5
-        };
+        let timeout = timeout_for(event);
         let mut group = json!({ "hooks": [ { "type": "command", "command": cmd.clone(), "timeout": timeout } ] });
         if let Some(m) = matcher {
             group["matcher"] = json!(m);
@@ -510,6 +565,78 @@ mod tests {
         assert!(!is_kari_command("/usr/local/bin/my-own-hook.sh"));
         assert!(!is_kari_command("notify-send 'hooks relay finished'"));
         assert!(!is_kari_command(""));
+    }
+
+    /// What `install` writes today, as settings.json holds it.
+    fn current_shape(cmd: &str) -> serde_json::Map<String, Value> {
+        let mut m = serde_json::Map::new();
+        for (event, matcher) in EVENTS {
+            let mut group = json!({ "hooks": [ { "type": "command", "command": cmd, "timeout": timeout_for(event) } ] });
+            if let Some(mt) = matcher {
+                group["matcher"] = json!(mt);
+            }
+            m.insert((*event).to_string(), json!([group]));
+        }
+        m
+    }
+
+    const CMD: &str = "/home/you/.config/kari/hook.sh";
+
+    #[test]
+    fn the_shape_this_version_writes_is_current() {
+        assert!(current_in(&current_shape(CMD), Some(CMD)));
+    }
+
+    #[test]
+    fn a_foreign_hook_beside_kari_changes_nothing() {
+        let mut m = current_shape(CMD);
+        let foreign = json!({ "matcher": "Bash", "hooks": [ { "type": "command", "command": "/usr/local/bin/guard.sh" } ] });
+        m.get_mut("PreToolUse")
+            .unwrap()
+            .as_array_mut()
+            .unwrap()
+            .insert(0, foreign);
+        m.insert(
+            "PreCompact".into(),
+            json!([{ "hooks": [ { "type": "command", "command": "/usr/local/bin/notes.sh" } ] }]),
+        );
+        assert!(current_in(&m, Some(CMD)));
+    }
+
+    #[test]
+    fn an_install_from_an_older_kari_is_not_current() {
+        // No entry for the held event: Away mode cannot hold anything.
+        let mut m = current_shape(CMD);
+        m.remove(HELD_EVENT);
+        assert!(!current_in(&m, Some(CMD)));
+
+        // The gate matcher without Bash: autopilot can release.
+        let mut m = current_shape(CMD);
+        m.get_mut(GATE_EVENT).unwrap()[0]["matcher"] = json!("AskUserQuestion|ExitPlanMode");
+        assert!(!current_in(&m, Some(CMD)));
+
+        // The held event with the short timeout of an older install.
+        let mut m = current_shape(CMD);
+        m.get_mut(HELD_EVENT).unwrap()[0]["hooks"][0]["timeout"] = json!(5);
+        assert!(!current_in(&m, Some(CMD)));
+
+        // The relay moved, so the registered command points nowhere.
+        assert!(!current_in(&current_shape("/old/path/hook.sh"), Some(CMD)));
+    }
+
+    #[test]
+    fn a_kari_entry_for_a_dropped_event_is_not_current() {
+        let mut m = current_shape(CMD);
+        m.insert(
+            "PreCompact".into(),
+            json!([{ "hooks": [ { "type": "command", "command": CMD, "timeout": 5 } ] }]),
+        );
+        assert!(!current_in(&m, Some(CMD)));
+    }
+
+    #[test]
+    fn no_hooks_at_all_is_not_current() {
+        assert!(!current_in(&serde_json::Map::new(), Some(CMD)));
     }
 
     #[test]
