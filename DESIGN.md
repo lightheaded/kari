@@ -225,6 +225,20 @@ The mode is per node, because each node runs its own planner. The control in the
 top bar sets every node that answers at once, or the one node the filter names.
 Settings holds the mode of the local node on its own.
 
+A third scope sits on each quota row: the nodes signed in to that account. It is
+the scope the other two cannot express, and the one the user in fact thinks in —
+quota belongs to a login, so "leave that subscription alone and spend this one"
+is a write to the machines of one account, which is neither every machine nor
+one machine.
+
+The account is the scope of the write, not a second place the mode is kept. The
+hub resolves the account key to nodes and writes each node's own settings, for
+the same reason the mode is per node: the planner that reads it runs there, and
+a node must still say what it does with no hub and no network. So a node that is
+asleep is out of scope rather than a failure — there is no queue for a setting,
+and it keeps the mode it was last given. A node that joins the account later
+starts at its own mode, which the row then reports as `mixed`.
+
 ### The queue
 
 The queue is a dry run of the planner, with the booked runs in front of it. It
@@ -959,6 +973,9 @@ POST DELETE /kari/v1/hub/nodes/{node}/cards/{card}/schedule
 POST /kari/v1/hub/nodes/{node}/cards/{card}/attachments
 GET  DELETE .../attachments/{name}   the bytes, and the removal
 POST /kari/v1/hub/nodes/{node}/permissions/{id}
+POST /kari/v1/hub/automation              every node
+POST /kari/v1/hub/accounts/automation     the nodes on one account, keyed in the body
+POST /kari/v1/hub/nodes/{node}/automation one node
 POST /kari/v1/hub/stop-all
 ```
 
@@ -1014,6 +1031,12 @@ consequences:
 
 A node the server has never seen an account for keeps a row of its own, as every
 node did before kari knew about accounts.
+
+The same key scopes a write. `POST /kari/v1/hub/accounts/automation` carries the
+key in the body rather than the path, because a node with no account is keyed
+`node:<id>` and a path segment with a colon is one more thing to encode
+correctly at both ends. A hub that does not know the key writes nothing, which
+is the right answer for an account another hub holds.
 
 ### Deployment
 

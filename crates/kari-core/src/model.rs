@@ -1470,6 +1470,11 @@ pub struct NodeStatus {
     /// How much automatic behaviour the node allows: `off`, `ask` or `auto`.
     #[serde(default)]
     pub automation_mode: String,
+    /// The quota row this node spends against: its Claude Code account id, or
+    /// `node:<id>` when kari cannot read one. The same key as `AccountQuota`,
+    /// so a write aimed at one account finds the nodes that spend it.
+    #[serde(default)]
+    pub account_key: String,
     /// Card writes the hub holds for this node until it answers again.
     #[serde(default)]
     pub pending_writes: u32,

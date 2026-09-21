@@ -477,6 +477,16 @@ impl HubApi for SplitHub {
         refused
     }
 
+    /// Both halves, because one account can be signed in on both: this machine
+    /// is only on the local half, and every other host is only on the server's.
+    /// The key is the one `merge_accounts` groups on, so each half matches the
+    /// nodes it holds and ignores a key it does not know.
+    fn set_automation_mode_account(&self, key: &str, mode: AutomationMode) -> Vec<String> {
+        let mut refused = self.machine.set_automation_mode_account(key, mode);
+        refused.extend(self.server.set_automation_mode_account(key, mode));
+        refused
+    }
+
     fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()> {
         if self.is_local(node) {
             return self.on_local(|h| h.set_away_mode(LOCAL, on));

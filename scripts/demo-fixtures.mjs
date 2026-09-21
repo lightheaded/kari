@@ -54,6 +54,7 @@ const NODES = [
     away_mode: false,
     addresses: [],
     automation_mode: "ask",
+    account_key: "acct_you",
   },
   {
     id: "lab",
@@ -74,6 +75,7 @@ const NODES = [
     away_mode: false,
     addresses: ["lab:47311"],
     automation_mode: "ask",
+    account_key: "acct_lab",
   },
   // Signed in to the same account as `studio`, so the two share one row of
   // quota meters. Idle here, which is why it carries no cards.
@@ -96,6 +98,7 @@ const NODES = [
     away_mode: false,
     addresses: ["desk:47311"],
     automation_mode: "ask",
+    account_key: "acct_you",
   },
 ];
 

@@ -112,6 +112,9 @@ pub trait HubApi: Send + Sync + 'static {
     fn set_automation_mode(&self, node: &str, mode: AutomationMode) -> anyhow::Result<()>;
     /// Best effort across every node. Returns the ids that refused.
     fn set_automation_mode_all(&self, mode: AutomationMode) -> Vec<String>;
+    /// Best effort across the nodes signed in to one account, keyed as
+    /// `AccountQuota` keys them. Returns the ids that refused.
+    fn set_automation_mode_account(&self, key: &str, mode: AutomationMode) -> Vec<String>;
     fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()>;
 
     // --- the planner -----------------------------------------------------
@@ -280,6 +283,9 @@ impl HubApi for crate::hub::Hub {
     }
     fn set_automation_mode_all(&self, mode: AutomationMode) -> Vec<String> {
         crate::hub::Hub::set_automation_mode_all(self, mode)
+    }
+    fn set_automation_mode_account(&self, key: &str, mode: AutomationMode) -> Vec<String> {
+        crate::hub::Hub::set_automation_mode_account(self, key, mode)
     }
     fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()> {
         crate::hub::Hub::set_away_mode(self, node, on)

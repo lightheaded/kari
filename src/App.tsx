@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
 import type { AutomationMode, Column, HubBoard, HubCard, Project, Settings } from "./types";
-import { setAutomation } from "./automation";
+import { setAccountAutomation, setAutomation } from "./automation";
 import { Board, type Picked, type Reorder } from "./components/Board";
 import type { AddPreview } from "./components/ColumnAdd";
 import { Drawer } from "./components/Drawer";
@@ -373,6 +373,7 @@ export default function App() {
           run(() => api.proposeNow(nodeId), "Plan ready");
         }}
         onRename={(key, alias) => run(() => api.setAccountAlias(key, alias), alias ? `Account named ${alias}` : "Account name cleared")}
+        onMode={(row, mode) => setAccountAutomation(nodes, row, mode, run)}
         onHelp={() => setModal("settings")}
         refreshing={refreshingQuota}
         onRefresh={async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   accountByNode,
+  accountScope,
   addTarget,
   clearsBox,
   FIVE_HOUR_MS,
@@ -11,12 +12,13 @@ import {
   resetIn,
   RESET_MARGIN_MS,
   schedulePreview,
+  sharedMode,
   sortCards,
   taggedTask,
   type FilterProject,
   type Rankable,
 } from "./util";
-import type { AccountQuota, CardView, DerivedState, QuotaSample } from "./types";
+import type { AccountQuota, CardView, DerivedState, NodeStatus, QuotaSample } from "./types";
 
 describe("schedulePreview", () => {
   const now = Date.parse("2026-09-09T12:00:00Z");
@@ -495,5 +497,62 @@ describe("accountByNode", () => {
 
   test("no accounts at all name nobody", () => {
     expect(accountByNode([]).size).toBe(0);
+  });
+});
+
+/** One machine, with only the fields the automation switch reads. */
+const mach = (id: string, mode: string, key: string, up = true): NodeStatus =>
+  ({
+    id,
+    name: id,
+    kind: id === "local" ? "local" : "remote",
+    online: up,
+    enabled: true,
+    automation_mode: mode,
+    account_key: key,
+  }) as NodeStatus;
+
+describe("sharedMode", () => {
+  test("machines that agree give their mode", () => {
+    expect(sharedMode([mach("a", "auto", "a1"), mach("b", "auto", "a1")])).toBe("auto");
+  });
+
+  test("machines that differ give none, so the switch says mixed", () => {
+    expect(sharedMode([mach("a", "auto", "a1"), mach("b", "off", "a1")])).toBe(null);
+  });
+
+  test("a machine on an older kari reads as ask, which is what it does", () => {
+    expect(sharedMode([mach("a", "", "a1"), mach("b", "ask", "a1")])).toBe("ask");
+  });
+
+  test("nothing in scope agrees on nothing", () => {
+    expect(sharedMode([])).toBe(null);
+  });
+});
+
+describe("accountScope", () => {
+  const work = acct("a1", "work", ["n1", "n2"], ["studio", "lab"]);
+
+  test("only the machines on that account", () => {
+    // The point of the row: a switch here must not touch the other login.
+    const scope = accountScope([mach("n1", "auto", "a1"), mach("n2", "auto", "a1"), mach("n3", "auto", "a2")], work);
+    expect(scope.map((n) => n.id)).toEqual(["n1", "n2"]);
+  });
+
+  test("an offline machine is out of scope", () => {
+    // There is no queue for a setting, so a write to it would go nowhere.
+    const scope = accountScope([mach("n1", "auto", "a1"), mach("n2", "auto", "a1", false)], work);
+    expect(scope.map((n) => n.id)).toEqual(["n1"]);
+  });
+
+  test("a hub that sends no key falls back to the row's own machines", () => {
+    const scope = accountScope([mach("n1", "auto", ""), mach("n3", "auto", "")], work);
+    expect(scope.map((n) => n.id)).toEqual(["n1"]);
+  });
+
+  test("a row whose machines are all away has nothing in scope", () => {
+    // Neither path may reach for a machine of another account to fill the gap.
+    const scope = accountScope([mach("n1", "auto", "a1", false), mach("n3", "auto", "a2")], work);
+    expect(scope).toEqual([]);
   });
 });

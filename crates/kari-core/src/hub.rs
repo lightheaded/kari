@@ -913,6 +913,7 @@ impl Hub {
             away_mode: self.engine.settings().away_mode,
             addresses: crate::net::bound_reachable(),
             automation_mode: self.engine.settings().automation().key().into(),
+            account_key: crate::account::group_key(LOCAL, crate::account::read().as_ref()),
             // This machine writes to its own store. Nothing waits for it.
             pending_writes: 0,
             pending_error: None,
@@ -955,6 +956,13 @@ impl Hub {
                 .as_ref()
                 .map(|b| b.automation_mode.clone())
                 .unwrap_or_default(),
+            // The same key `board()` groups this node's quota under, read from
+            // the health it answered with. A node that reports no account keeps
+            // a row, and a key, of its own.
+            account_key: crate::account::group_key(
+                &r.rec.id,
+                st.identity.as_ref().and_then(|i| i.account.as_ref()),
+            ),
             pending_writes: queued.len() as u32,
             pending_error: queued.first().and_then(|q| q.last_error.clone()),
         }
@@ -1668,13 +1676,46 @@ impl Hub {
 
     /// Set the mode on every node that answers. Returns the nodes that failed.
     pub fn set_automation_mode_all(&self, mode: AutomationMode) -> Vec<String> {
+        self.set_mode_on(self.nodes().iter().filter(|n| n.enabled && n.online), mode)
+    }
+
+    /// Set the mode on every node signed in to one account.
+    ///
+    /// Quota belongs to the account, not to the machine, so this is the switch
+    /// that answers "leave that subscription alone and spend this one". The
+    /// mode still lives in each node's own settings, because the planner on
+    /// that node is what reads it; the account is the scope of the write, not
+    /// a second place the setting is kept.
+    ///
+    /// Returns the nodes that refused. An offline node is out of scope rather
+    /// than a failure: it holds the mode it was last given, and there is no
+    /// queue for a setting.
+    pub fn set_automation_mode_account(&self, key: &str, mode: AutomationMode) -> Vec<String> {
+        self.set_mode_on(Self::on_account(&self.nodes(), key).into_iter(), mode)
+    }
+
+    /// The nodes a write aimed at one account lands on: the live ones whose
+    /// quota goes in that row. A key the hub does not know matches nothing,
+    /// which is the answer a hub gives for an account another hub holds.
+    fn on_account<'a>(nodes: &'a [NodeStatus], key: &str) -> Vec<&'a NodeStatus> {
+        nodes
+            .iter()
+            .filter(|n| n.enabled && n.online && n.account_key == key)
+            .collect()
+    }
+
+    /// Write one mode to a set of nodes, best effort, naming the ones that
+    /// refused. A caller who is told nothing cannot say which machine did not
+    /// follow, and a half-applied switch is the case that matters.
+    fn set_mode_on<'a>(
+        &self,
+        nodes: impl Iterator<Item = &'a NodeStatus>,
+        mode: AutomationMode,
+    ) -> Vec<String> {
         let mut failed = vec![];
-        for n in self.nodes() {
-            if !n.enabled || !n.online {
-                continue;
-            }
+        for n in nodes {
             if self.set_automation_mode(&n.id, mode).is_err() {
-                failed.push(n.name);
+                failed.push(n.name.clone());
             }
         }
         failed
@@ -2152,6 +2193,72 @@ mod tests {
             Hub::candidates(&rec, Some(&identity)),
             vec!["a:1".to_string(), "b:2".into(), "c:3".into()]
         );
+    }
+
+    /// One node on the board, with the fields the account filter reads.
+    fn node_row(id: &str, key: &str, online: bool, enabled: bool) -> NodeStatus {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": id,
+            "kind": "remote",
+            "online": online,
+            "enabled": enabled,
+            "paired": true,
+            "ssh_host": null,
+            "address": null,
+            "remote_port": 0,
+            "version": null,
+            "api_version": null,
+            "remote_node_id": null,
+            "last_seen": null,
+            "error": null,
+            "account_key": key,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn an_account_write_reaches_that_login_and_no_other() {
+        // The point of the per-account switch: one subscription is kept for
+        // its own work while another is spent, and both are on this board.
+        let nodes = [
+            node_row("n1", "acc-1", true, true),
+            node_row("n2", "acc-1", true, true),
+            node_row("n3", "acc-2", true, true),
+        ];
+        let picked = Hub::on_account(&nodes, "acc-1");
+        assert_eq!(
+            picked.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            ["n1", "n2"]
+        );
+    }
+
+    #[test]
+    fn a_node_that_cannot_answer_is_out_of_scope() {
+        // The mode is a setting in the node's own store and nothing queues it,
+        // so a write to a sleeping or disabled node would go nowhere.
+        let nodes = [
+            node_row("awake", "acc-1", true, true),
+            node_row("asleep", "acc-1", false, true),
+            node_row("off", "acc-1", true, false),
+        ];
+        let picked = Hub::on_account(&nodes, "acc-1");
+        assert_eq!(
+            picked.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            ["awake"]
+        );
+    }
+
+    #[test]
+    fn a_node_with_no_account_keeps_a_scope_of_its_own() {
+        // Its row is keyed on the node, as the quota rows key it. Two such
+        // nodes must not take each other's writes.
+        let nodes = [
+            node_row("n1", "node:n1", true, true),
+            node_row("n2", "node:n2", true, true),
+        ];
+        assert_eq!(Hub::on_account(&nodes, "node:n1").len(), 1);
+        assert!(Hub::on_account(&nodes, "acc-1").is_empty());
     }
 
     fn col(id: &str, accepts: &[DerivedState]) -> Column {

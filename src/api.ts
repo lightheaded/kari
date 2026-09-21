@@ -93,6 +93,7 @@ function localNode(): NodeStatus {
     away_mode: false,
     addresses: [],
     automation_mode: "ask",
+    account_key: "node:local",
     pending_writes: 0,
     pending_error: null,
   };
@@ -196,6 +197,11 @@ export const api = {
   /** An empty node id sets every node that answers. */
   setAutomationMode: (nodeId: string, mode: AutomationMode) =>
     invoke<string>("set_automation_mode", { nodeId, mode }),
+  /** Set the mode on every machine signed in to one account. The key is the
+   *  one its quota row carries, so the write covers the machines that spend
+   *  that subscription and no others. */
+  setAccountAutomationMode: (key: string, mode: AutomationMode) =>
+    invoke<string>("set_account_automation_mode", { key, mode }),
   columns: () => invoke<Column[]>("get_columns"),
   setColumns: (columns: Column[]) => invoke<void>("set_columns", { columns }),
   resetColumns: () => invoke<void>("reset_columns"),

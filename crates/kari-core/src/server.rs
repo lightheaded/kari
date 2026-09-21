@@ -488,6 +488,18 @@ async fn hub_set_automation_all(
     ))
 }
 
+/// Best effort across the nodes on one account. The names that refused come
+/// back, as they do for every node.
+async fn hub_set_automation_account(
+    State(st): State<ServerState>,
+    Json(b): Json<AccountModeBody>,
+) -> Result<Json<Vec<String>>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(
+        blocking(move || Ok(h.set_automation_mode_account(&b.key, b.mode))).await?,
+    ))
+}
+
 async fn hub_set_away(
     State(st): State<ServerState>,
     Path(node): Path<String>,
@@ -652,6 +664,16 @@ pub struct OnBody {
     pub on: bool,
 }
 
+/// One automation mode, and the account it is for. The key travels in the body
+/// rather than in the path: a node whose account kari cannot read is keyed
+/// `node:<id>`, and a path segment with a colon in it is one more thing to
+/// encode correctly at both ends.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AccountModeBody {
+    pub key: String,
+    pub mode: AutomationMode,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AcceptBody {
     #[serde(default)]
@@ -736,6 +758,7 @@ pub fn router(registry: Arc<LinkRegistry>, token: String, hub: Option<Arc<Hub>>)
         .route("/hub/events", get(hub_events))
         .route("/hub/stop-all", post(hub_stop_all))
         .route("/hub/automation", post(hub_set_automation_all))
+        .route("/hub/accounts/automation", post(hub_set_automation_account))
         .route("/hub/nodes/{node}/cards", post(hub_add_task))
         .route("/hub/nodes/{node}/cards/restore", post(hub_restore_card))
         .route("/hub/nodes/{node}/cards/reorder", post(hub_reorder_cards))
