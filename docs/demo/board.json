@@ -90,7 +90,8 @@
       "primary": true,
       "away_mode": false,
       "addresses": [],
-      "automation_mode": "ask"
+      "automation_mode": "ask",
+      "account_key": "acct_you"
     },
     {
       "id": "lab",
@@ -112,7 +113,8 @@
       "addresses": [
         "lab:47311"
       ],
-      "automation_mode": "ask"
+      "automation_mode": "ask",
+      "account_key": "acct_lab"
     },
     {
       "id": "desk",
@@ -134,7 +136,8 @@
       "addresses": [
         "desk:47311"
       ],
-      "automation_mode": "ask"
+      "automation_mode": "ask",
+      "account_key": "acct_you"
     }
   ],
   "cards": [
