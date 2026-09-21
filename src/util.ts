@@ -1,5 +1,6 @@
 import type {
   AccountQuota,
+  AutomationMode,
   CardView,
   DerivedState,
   NodeStatus,
@@ -237,6 +238,33 @@ export function accountByNode(accounts: AccountQuota[]): Map<string, string> {
     }
   }
   return m;
+}
+
+/** The automation mode a set of machines agrees on, or null when they differ.
+ *
+ *  A machine that reports no mode is running a kari older than the field, and
+ *  that build asks before it starts anything — so it reads as `ask`, which is
+ *  what it in fact does. */
+export function sharedMode(nodes: NodeStatus[]): AutomationMode | null {
+  const modes = new Set(nodes.map((n) => n.automation_mode || "ask"));
+  return modes.size === 1 ? ([...modes][0] as AutomationMode) : null;
+}
+
+/** The machines a write aimed at one account lands on: the live ones signed in
+ *  to it. Quota belongs to the account, so this is the set that spends the row.
+ *
+ *  An offline machine is left out rather than counted as a failure. The mode is
+ *  a setting in its own store, there is no queue for one, and it keeps the mode
+ *  it was last given until it answers again.
+ *
+ *  The node's own key decides. When no machine carries the row's key, the row's
+ *  own list of machines stands in: a hub that predates the field sends no key,
+ *  and the strip keys the row it invents for a board with no accounts on the
+ *  node. Both lists come from one grouping, so they name the same machines. */
+export function accountScope(nodes: NodeStatus[], row: AccountQuota): NodeStatus[] {
+  const live = nodes.filter((n) => n.enabled && n.online);
+  const keyed = live.filter((n) => n.account_key === row.key);
+  return keyed.length ? keyed : live.filter((n) => row.node_ids.includes(n.id));
 }
 
 /** macOS text fields in kari must behave like a native app: no autofill list,

@@ -450,6 +450,19 @@ impl HubApi for RemoteHub {
         self.or_empty("automation", self.post("/kari/v1/hub/automation", v(mode)))
     }
 
+    fn set_automation_mode_account(&self, key: &str, mode: AutomationMode) -> Vec<String> {
+        self.or_empty(
+            "automation",
+            self.post(
+                "/kari/v1/hub/accounts/automation",
+                v(AccountModeBody {
+                    key: key.to_string(),
+                    mode,
+                }),
+            ),
+        )
+    }
+
     fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()> {
         self.post(&format!("/kari/v1/hub/nodes/{node}/away"), v(OnBody { on }))
     }

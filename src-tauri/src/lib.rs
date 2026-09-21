@@ -268,6 +268,30 @@ async fn set_automation_mode(
     .await
 }
 
+/// Set how much automatic behaviour the machines on one account allow. The key
+/// is the one the quota rows carry, so the switch beside a meter acts on every
+/// machine that spends it and on no other.
+#[tauri::command]
+async fn set_account_automation_mode(
+    state: State<'_, AppState>,
+    key: String,
+    mode: String,
+) -> R<String> {
+    let m = match AutomationMode::parse(&mode) {
+        Some(m) => m,
+        None => return Err(format!("unknown automation mode {mode}")),
+    };
+    off_thread(&state.hub, move |h| {
+        let failed = h.set_automation_mode_account(&key, m);
+        Ok(if failed.is_empty() {
+            format!("Automation set to {mode}")
+        } else {
+            format!("Automation set to {mode}, except on {}", failed.join(", "))
+        })
+    })
+    .await
+}
+
 /// What server this device uses, if any, and whether the hub in this process is
 /// a client of one. `configured` and `active` differ until a restart, which is
 /// exactly the thing the UI has to be able to say.
@@ -1034,6 +1058,7 @@ macro_rules! handlers {
             cancel_quit,
             reorder_cards,
             set_automation_mode,
+            set_account_automation_mode,
             get_server,
             set_server,
             clear_server,

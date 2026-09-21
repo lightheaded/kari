@@ -523,6 +523,9 @@ export interface NodeStatus {
   addresses: string[];
   /** How much automatic behaviour the node allows. Empty from an older node. */
   automation_mode: AutomationMode | "";
+  /** The quota row this node spends against: the key of its `AccountQuota`.
+   *  Empty from a hub that predates the field. */
+  account_key?: string;
   /** Card writes the hub holds for this node until it answers again. */
   pending_writes?: number;
   /** Why the queue is not moving: what the node said about the write at the

@@ -663,7 +663,7 @@ the names are. The top bar itself never grows with the node count. */
     max-content max-content
     max-content minmax(28px, 78px) max-content max-content
     max-content minmax(28px, 78px) max-content max-content
-    max-content max-content 1fr;
+    max-content max-content max-content 1fr;
 }
 /* The row and the meters carry no box. Their parts are items of the grid. */
 .srow, .smeters, .m { display: contents; }
@@ -681,6 +681,9 @@ the names are. The top bar itself never grows with the node count. */
 .srow > .snone { grid-column: 3 / 11; }
 .srow > .stale { grid-column: 11; }
 .srow > .sfill { grid-column: 12; }
+/* Off / Ask / Auto for the machines on this account. Last, because it is the
+   one part of the row that writes to them. */
+.srow > .autoswitch { grid-column: 13; margin-left: 10px; }
 /* The account's name, and the field that renames it. Same box either way, so
    the row does not jump when the field opens. */
 .aname {
@@ -739,6 +742,10 @@ the names are. The top bar itself never grows with the node count. */
 .swopt.on.auto { background: var(--amber); border-color: var(--amber); }
 .swopt:disabled { opacity: 0.45; cursor: default; }
 .swmixed { font: 10px/1 var(--mono); color: var(--amber); margin-left: 7px; text-transform: uppercase; letter-spacing: 0.06em; }
+/* The narrow variant, for a quota row. The same control as the one in the top
+   bar, in the room a row has. */
+.autoswitch.sm .swopt { font-size: 10.5px; padding: 3px 7px; }
+.autoswitch.sm .swmixed { font-size: 9px; margin-left: 5px; }
 .modeset { display: flex; gap: 4px; }
 
 /* ------------------------------------------------------------- queue strip

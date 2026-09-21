@@ -11,7 +11,7 @@ The README explains how kari reads its data and how to install it. This page exp
 The window has four bands.
 
 1. The top bar: the automation switch, the herdr indicator, a counter of sessions that work and sessions that need you, and the buttons for Columns, Settings and a new task.
-2. The stats strip: one row per Claude Code account with both quota windows, both reset times, the machines that spend it, and "Fill". The windows belong to the login, so two machines on one account share a row. A click on the name gives the account one of your own, such as `tom` or `work`; the name stays on this device. Filtering the board is the job of the node chips below, which name one machine where a row here can cover several. The strip grows with the account count; the top bar never does.
+2. The stats strip: one row per Claude Code account with both quota windows, both reset times, the machines that spend it, "Fill", and an Off / Ask / Auto switch for the machines on that account — the control that reserves one subscription while another is spent. The windows belong to the login, so two machines on one account share a row. A click on the name gives the account one of your own, such as `tom` or `work`; the name stays on this device. Filtering the board is the job of the node chips below, which name one machine where a row here can cover several. The strip grows with the account count; the top bar never does.
 3. The filter bar: a search field, a project filter that searches as you type, a chip per node in the colour of that machine, and the card count with the time of the last scan. Under it sits the queue strip.
 4. The columns. Each column accepts a set of derived states. The number in the header is the card count, or the count against the WIP limit.
 

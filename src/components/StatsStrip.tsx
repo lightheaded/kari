@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { AccountQuota, NodeStatus, QuotaWindow } from "../types";
+import type { AccountQuota, AutomationMode, NodeStatus, QuotaWindow } from "../types";
 import { fmtPct, nodeDot, nodeHue, relTime, resetIn, resetTitle } from "../util";
+import { AccountAutomationSwitch } from "./AutomationSwitch";
 
 /** One window of one account: the name of the window, the bar, the percentage
  *  and the reset time.
@@ -88,17 +89,21 @@ function Name({ row, onRename }: { row: AccountQuota; onRename: (alias: string) 
 interface RowProps {
   row: AccountQuota;
   byId: Map<string, NodeStatus>;
+  /** Every machine on the board. The row's switch takes the ones it pays for. */
+  nodes: NodeStatus[];
   /** Name the machines on the row. Off on a board with a single node. */
   showNodes: boolean;
   onFill: () => void;
   onHelp: () => void;
   onRename: (alias: string) => void;
+  /** Set how much automatic behaviour the machines on this account allow. */
+  onMode: (mode: AutomationMode) => void;
   /** Ask the usage endpoint now. Only this machine holds the login token. */
   onRefresh?: () => void;
   refreshing?: boolean;
 }
 
-function Row({ row, byId, showNodes, onFill, onHelp, onRename, onRefresh, refreshing }: RowProps) {
+function Row({ row, byId, nodes, showNodes, onFill, onHelp, onRename, onMode, onRefresh, refreshing }: RowProps) {
   const quota = row.quota;
   const stale = quota ? (Date.now() - new Date(quota.at).getTime()) / 1000 > 300 : false;
   const cal = row.calibration
@@ -158,6 +163,7 @@ function Row({ row, byId, showNodes, onFill, onHelp, onRename, onRefresh, refres
           Fill
         </button>
       )}
+      <AccountAutomationSwitch row={row} nodes={nodes} onChange={onMode} />
     </div>
   );
 }
@@ -168,13 +174,16 @@ interface Props {
   onFill: (nodeId: string) => void;
   onHelp: () => void;
   onRename: (key: string, alias: string) => void;
+  /** Set how much automatic behaviour the machines on one account allow. */
+  onMode: (row: AccountQuota, mode: AutomationMode) => void;
   /** Ask the usage endpoint now. Only this machine holds the login token. */
   onRefresh: () => void;
   refreshing: boolean;
 }
 
 /** One row per Claude Code account under the top bar: both windows, both reset
- *  times, the machines that spend it, and a Fill button.
+ *  times, the machines that spend it, a Fill button, and what those machines
+ *  may do by themselves.
  *
  *  A row per account rather than per node, because that is what the quota
  *  belongs to. Two machines signed in to one login draw down a single 5-hour
@@ -182,10 +191,15 @@ interface Props {
  *  quota that is already spent. Filtering the board stays with the node chips
  *  below, which can name one machine — a row here covers several.
  *
+ *  The switch on the row follows from the same fact. The one in the top bar
+ *  sets every machine or a single one, and a subscription is usually neither:
+ *  keeping one login for its own work while another is spent is a write to the
+ *  machines of one account. It sits beside the meter it protects.
+ *
  *  Every row of a line shares one grid, so the bars stand in a column whatever
  *  the names beside them are. Above four rows they go two to a line, and the
  *  strip scrolls after that, so the top bar itself never grows. */
-export function StatsStrip({ accounts, nodes, onFill, onHelp, onRename, onRefresh, refreshing }: Props) {
+export function StatsStrip({ accounts, nodes, onFill, onHelp, onRename, onMode, onRefresh, refreshing }: Props) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const rows: AccountQuota[] =
     accounts.length > 0
@@ -216,10 +230,12 @@ export function StatsStrip({ accounts, nodes, onFill, onHelp, onRename, onRefres
               key={row.key}
               row={row}
               byId={byId}
+              nodes={nodes}
               showNodes={nodes.length > 1}
               onFill={() => onFill(row.node_ids[0])}
               onHelp={onHelp}
               onRename={(alias) => onRename(row.key, alias)}
+              onMode={(m) => onMode(row, m)}
               // The login token lives on this machine only, so the endpoint is
               // reachable only for an account this machine is itself signed in to.
               onRefresh={row.node_ids.some((id) => byId.get(id)?.kind === "local") ? onRefresh : undefined}

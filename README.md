@@ -59,7 +59,7 @@ kari keeps itself current after that on both platforms. See "Updates".
 - Attachments: paste a screenshot into a card or pick a file, and every run of that card reads it. See "Attachments".
 - Run log and kill switch: every background job kari starts writes a state history on its card. The tray stops all jobs after a confirm click.
 - Booked runs: a card can start at a time you pick, such as after the rate limit resets, or one cycle later. The booking ignores the automation mode.
-- One switch for the automatic behaviour: Off, Ask or Auto. Off keeps the quota for you. Auto starts a weekly-reset plan by itself, with a notice and a Stop button.
+- One switch for the automatic behaviour: Off, Ask or Auto. Off keeps the quota for you. Auto starts a weekly-reset plan by itself, with a notice and a Stop button. Every quota row carries the same switch for the machines on that account, so one subscription can be reserved while another is spent.
 - A queue strip that names the next runs in order, the cost of each step, and its start time. It starts nothing.
 - Remote nodes: another host runs `kari-node serve` and its cards join the same board; quota meters are grouped by Claude Code account. See "Remote nodes".
 
@@ -244,6 +244,8 @@ that you start yourself is never held back.
 
 The mode belongs to a node, because every node runs its own planner. The switch sets every node that answers at once. With a node filter on, it sets that node only. Settings holds the mode of the local machine on its own.
 
+Each quota row carries the same switch, and it sets the machines signed in to that account. Quota belongs to the login, so this is the control for "keep that subscription for its own work, and spend this one": Off on the account you reserve, Auto on the account you burn. The switch in the top bar cannot say it, because it covers either every machine or a single one, and a subscription is usually neither. A machine that is asleep keeps the mode it was last given: the mode is a setting in its own store, and nothing queues one.
+
 ## The queue
 
 The strip under the filter bar is a dry run of the planner, with the booked runs in front of it. It names each step in order: the card, the cost as a percent of the 5-hour window, the state of the window after it, and the start time. A booked run carries a clock in place of its number, and a run booked after the reset counts against an empty window. A step outside the budget says so. If nothing can run at all, the strip gives the reason: the mode is off, no quota sample arrived, every job slot is busy, the budget is too small, or no card is marked "May run unattended".
@@ -369,6 +371,8 @@ The 5-hour and 7-day windows belong to a Claude Code login, not to a machine. Tw
 kari reads the account from what Claude Code writes on login and groups on its id. A node whose account cannot be read — one running an older kari, or one not logged in — keeps a row of its own. That is the safe answer: an unknown account is never merged with another, because merging two budgets by guessing is the mistake that costs you a window.
 
 Click the name on a row to give the account one of your own, such as `tom` or `work`. The name lives on this device, next to the board; it is never sent to a node and never touches the Claude account. Clear the field to go back to the name on the account.
+
+The switch at the end of a row sets Off, Ask or Auto on every machine on that account — see "The automation switch". `mixed` in place of a selected mode means those machines do not agree, which one click puts right.
 
 "Fill" plans a run on the first machine on the row.
 
