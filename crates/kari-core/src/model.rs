@@ -759,7 +759,7 @@ pub struct Proposal {
     /// Cards that were eligible but did not fit.
     pub skipped: u32,
     pub expires_at: DateTime<Utc>,
-    /// open | accepted | started | snoozed | dismissed | expired
+    /// open | accepted | started | snoozed | dismissed | expired | withdrawn
     pub state: String,
     /// True when autopilot started it without a click.
     pub auto: bool,

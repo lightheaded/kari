@@ -19,6 +19,28 @@ use tracing::{info, warn};
 /// 15 seconds and calls `proposal_tick` on every fourth round.
 const PROPOSAL_TICK_SECS: i64 = 60;
 
+/// Every state a stored plan can have.
+const PROPOSAL_STATES: &[&str] = &[
+    "open",
+    "accepted",
+    "started",
+    "snoozed",
+    "dismissed",
+    "expired",
+    "withdrawn",
+];
+
+/// True when an automatic plan offers the same cards for the same reason as
+/// an earlier one. The numbers can differ, because the window moved.
+fn same_offer(a: &Proposal, b: &Proposal) -> bool {
+    let ids = |p: &Proposal| {
+        let mut v: Vec<String> = p.items.iter().map(|i| i.card_id.clone()).collect();
+        v.sort_unstable();
+        v
+    };
+    a.trigger == b.trigger && b.trigger != ProposalTrigger::Manual && ids(a) == ids(b)
+}
+
 /// The first eight characters of an id, for log lines. Never slices bytes.
 fn short(s: &str) -> String {
     s.chars().take(8).collect()
@@ -2596,27 +2618,58 @@ impl Engine {
             .kv_set(&format!("snooze:{trigger_key}"), &until.to_rfc3339());
     }
 
-    /// Retire an offer nobody answered.
-    fn expire_proposal(&self) {
-        let now = Utc::now();
-        let mut snap = self.snap.write().unwrap();
-        let Some(p) = snap.proposal.as_mut() else {
+    /// Retire or trim the plan on the board when the board moved past it.
+    ///
+    /// - An offer nobody answered expires.
+    /// - An open offer follows the board. See `planner::refresh_open`.
+    /// - An accepted plan leaves when every job it started ended.
+    fn refresh_proposal(&self, board: &BoardView, ctx: &planner::Context<'_>, settings: &Settings) {
+        let Some(mut p) = self.proposal() else {
             return;
         };
-        if p.is_live(now) {
-            return;
+        let was = (p.id.clone(), p.state.clone());
+        // Give a retired row a state the board never restores. An accepted
+        // plan that keeps the state "accepted" comes back on every start.
+        let retire: Option<&str> = if !p.is_live(ctx.now) {
+            match p.state.as_str() {
+                "open" => Some("expired"),
+                "accepted" => Some("started"),
+                _ => None,
+            }
+        } else if p.state == "accepted" {
+            let states = self.snap.read().unwrap().job_states.clone();
+            planner::jobs_ended(&p, &states).then_some("started")
+        } else {
+            let names: HashSet<String> = Self::candidates(board)
+                .into_iter()
+                .map(|c| c.card_id)
+                .collect();
+            let holds = planner::trigger_reason(ctx, settings, p.trigger).is_some();
+            let off = settings.automation() == AutomationMode::Off;
+            match planner::refresh_open(&mut p, holds, off, &names) {
+                planner::Refresh::Keep => return,
+                planner::Refresh::Trimmed => None,
+                planner::Refresh::Withdraw => Some("withdrawn"),
+            }
+        };
+        if let Some(state) = retire {
+            p.state = state.into();
         }
-        // Give the row a state the board never restores. An accepted plan that
-        // keeps the state "accepted" comes back on every start.
-        p.state = match p.state.as_str() {
-            "open" => "expired".into(),
-            "accepted" => "started".into(),
-            other => other.to_string(),
-        };
-        let done = p.clone();
-        snap.proposal = None;
-        drop(snap);
-        let _ = self.store.lock().unwrap().save_proposal(&done);
+        {
+            let mut snap = self.snap.write().unwrap();
+            // The user can answer the plan while this runs. Their answer wins.
+            if snap
+                .proposal
+                .as_ref()
+                .map(|c| (c.id.clone(), c.state.clone()))
+                != Some(was)
+            {
+                return;
+            }
+            snap.proposal = retire.is_none().then(|| p.clone());
+        }
+        let _ = self.store.lock().unwrap().save_proposal(&p);
+        self.emit_changed();
     }
 
     pub fn proposal(&self) -> Option<Proposal> {
@@ -2626,19 +2679,19 @@ impl Engine {
     /// Check the triggers and offer a plan. Runs on a timer.
     pub fn proposal_tick(self: &Arc<Self>) {
         let settings = self.settings();
-        self.snap.write().unwrap().proposal_checked_at = Some(Utc::now());
-        // Retire a plan that timed out even when plans are off, so the panel
-        // does not stay on the board after the user turns automation off.
-        self.expire_proposal();
+        let now = Utc::now();
+        self.snap.write().unwrap().proposal_checked_at = Some(now);
+        let board = self.board();
+        let ctx = Self::planner_context(&board, now);
+        // Retire a stale plan even when plans are off, so the panel does not
+        // stay on the board after the user turns automation off.
+        self.refresh_proposal(&board, &ctx, &settings);
         if settings.automation() == AutomationMode::Off {
             return;
         }
         if self.snap.read().unwrap().proposal.is_some() {
             return; // one offer at a time
         }
-        let now = Utc::now();
-        let board = self.board();
-        let ctx = Self::planner_context(&board, now);
         let Some((trigger, reason)) = planner::detect_trigger(&ctx, &settings) else {
             return;
         };
@@ -2679,7 +2732,17 @@ impl Engine {
 
     fn publish_proposal(self: &Arc<Self>, p: Proposal) {
         let settings = self.settings();
-        let _ = self.store.lock().unwrap().save_proposal(&p);
+        // An offer that expires unanswered comes back on the next tick while
+        // its trigger holds. The idle trigger holds all night, so the same
+        // cards arrived as a new notification every two hours, over the
+        // notifications that nobody read. A repeat goes on the board without
+        // a notification.
+        let repeat = {
+            let store = self.store.lock().unwrap();
+            let last = store.latest_proposal(PROPOSAL_STATES).ok().flatten();
+            let _ = store.save_proposal(&p);
+            last.is_some_and(|l| l.state == "expired" && same_offer(&l, &p))
+        };
         self.snap.write().unwrap().proposal = Some(p.clone());
         // Autopilot answers the weekly-reset trigger by itself.
         let auto = settings.automation() == AutomationMode::Auto
@@ -2692,6 +2755,10 @@ impl Engine {
                     warn!("autopilot: {e}");
                 }
             });
+            return;
+        }
+        if repeat {
+            self.emit_changed();
             return;
         }
         let _ = self.tx.send(Event::Notice {
@@ -3411,6 +3478,62 @@ mod tests {
     /// finished, the accepted plan stopped being live 30 minutes later, and the
     /// weekly trigger was still true with the same card at the top of the list.
     /// Every run forked the session and left a card of its own on the board.
+    /// The idle trigger re-offered the same cards every two hours all night,
+    /// each time with a new notification.
+    #[test]
+    fn a_repeat_offer_is_the_same_cards_for_the_same_reason() {
+        let item = |id: &str| ProposalItem {
+            card_id: id.into(),
+            title: id.into(),
+            project_name: None,
+            prompt: None,
+            model: None,
+            estimate: Estimate {
+                weighted_tokens: 0.0,
+                low: 0.0,
+                high: 0.0,
+                pct_five_hour: 0.0,
+                pct_low: 0.0,
+                pct_high: 0.0,
+                source: "test".into(),
+                sessions: 0,
+            },
+            job_id: None,
+            error: None,
+            fits: true,
+            skip_reason: None,
+        };
+        let offer = |t: ProposalTrigger, ids: &[&str]| Proposal {
+            id: uuid::Uuid::new_v4().to_string(),
+            created_at: Utc::now(),
+            trigger: t,
+            reason: String::new(),
+            items: ids.iter().map(|i| item(i)).collect(),
+            budget_pct: 0.0,
+            used_pct_before: 0.0,
+            total_pct: 0.0,
+            used_pct_after: 0.0,
+            skipped: 0,
+            expires_at: Utc::now(),
+            state: "open".into(),
+            auto: false,
+            accepted_at: None,
+        };
+        let idle = ProposalTrigger::IdleFiveHour;
+        assert!(same_offer(
+            &offer(idle, &["a", "b"]),
+            &offer(idle, &["b", "a"])
+        ));
+        assert!(!same_offer(&offer(idle, &["a", "b"]), &offer(idle, &["a"])));
+        assert!(!same_offer(
+            &offer(ProposalTrigger::WeeklyReset, &["a"]),
+            &offer(idle, &["a"])
+        ));
+        // A plan the user asked for always says so.
+        let manual = ProposalTrigger::Manual;
+        assert!(!same_offer(&offer(manual, &["a"]), &offer(manual, &["a"])));
+    }
+
     #[test]
     fn the_planner_leaves_a_card_whose_run_ended() {
         let ready = |state: DerivedState, last: Option<&str>| {

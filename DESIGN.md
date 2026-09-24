@@ -321,6 +321,17 @@ The proposal is a notification and a panel: a budget bar, tasks with an estimate
 
 Only one proposal is open at a time. An open proposal expires after two hours. An accepted proposal stays on the panel for 30 minutes so its jobs can be stopped from one place.
 
+A proposal follows the board until it ends. The engine looks at it on every planner tick, once a minute:
+
+- An automatic proposal is withdrawn when its trigger stops, or when automation is off. For example, somebody starts to work, and the idle trigger is no longer true.
+- A card that is no longer a candidate leaves the proposal. For example, the user started it by hand, or it moved to Done.
+- A proposal with no card left to start is withdrawn. An automatic proposal is also withdrawn when no card that is left fits the budget.
+- An accepted proposal leaves the panel when every job that it started ended. There is nothing left to stop.
+
+The board also drops the proposal of a remote node at its end. A node that stops answering keeps the board it last sent, and that board must not keep an offer on the panel with no end.
+
+A proposal that expires unanswered comes back on the next tick while its trigger holds. When the new proposal has the same trigger and the same cards, it goes on the panel without a notification.
+
 ### Runs
 
 Start uses Claude Code background agents:
