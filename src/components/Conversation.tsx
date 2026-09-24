@@ -6,6 +6,7 @@ import { clock, noAutoFill, proseField } from "../util";
 import { useAutoGrow } from "../hooks";
 import { Markdown } from "./Markdown";
 import { NodeTag } from "./NodeTag";
+import { NO_TURNS, dismissSend, isSending, trackSend, usePendingSends, type PendingSend } from "../pending";
 
 /** How many turns the conversation view asks for first. A long transcript is
  *  read from its end, so the newest turns are the ones worth waiting for. */
@@ -26,6 +27,48 @@ export function Turn({ role, text, at, hit }: { role: string; text: string; at: 
       </div>
       {role === "assistant" ? <Markdown className="quote md" text={text} /> : <div className="quote">{text}</div>}
     </li>
+  );
+}
+
+/** What a pending prompt shows beside the name, in one short phrase. */
+function pendingWord(p: PendingSend): string {
+  if (p.state === "sending") return "sending…";
+  if (p.state === "failed") return "not sent";
+  return "sent · waiting for the session";
+}
+
+/** A prompt the user sent that the transcript does not show yet. It says how
+ *  far the send got, and it goes away when the session reads the prompt. */
+export function PendingTurn({ p }: { p: PendingSend }) {
+  // The line for a plain send only repeats the phrase beside the name. A held,
+  // refused or failed send says something the user must read.
+  const note = p.note && !/^(Sent|Delivered) to the running session/.test(p.note) && !/^Started background job/.test(p.note) ? p.note : null;
+  return (
+    <li className={`turn user pending ${p.state}`} aria-live="polite">
+      <div className="who">
+        <span>you</span>
+        <span className="when">{pendingWord(p)}</span>
+        {p.state !== "sending" && (
+          <button className="linkbtn" onClick={() => dismissSend(p.id)} title="Take this off the screen" aria-label="Take this off the screen">
+            ×
+          </button>
+        )}
+      </div>
+      <div className="quote">{p.text}</div>
+      {note && <div className={`hint ${p.state === "failed" ? "err" : ""}`}>{note}</div>}
+    </li>
+  );
+}
+
+/** The pending prompts of one card, as turns. */
+export function PendingTurns({ list }: { list: PendingSend[] }) {
+  if (list.length === 0) return null;
+  return (
+    <ul className="turns">
+      {list.map((p) => (
+        <PendingTurn key={p.id} p={p} />
+      ))}
+    </ul>
   );
 }
 
@@ -106,6 +149,7 @@ export function ConversationList({
   onLoadAll,
   autoFocus,
   tail,
+  pending = [],
 }: {
   conv: Conversation | null;
   busy: boolean;
@@ -118,6 +162,8 @@ export function ConversationList({
   /** Open on the newest turn, and follow it while the reader sits there. For
    *  a view that holds the conversation and nothing else. */
   tail?: boolean;
+  /** Prompts sent from this screen that the transcript does not show yet. */
+  pending?: PendingSend[];
 }) {
   const [query, setQuery] = useState("");
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -158,7 +204,7 @@ export function ConversationList({
     if (!el) return;
     if (from) el.scrollTop += el.scrollHeight - from.height;
     else if (tail && atEnd.current) el.scrollTop = el.scrollHeight;
-  }, [conv, tail]);
+  }, [conv, tail, pending.length]);
 
   // A new turn follows the reader only while they are at the end of the list.
   // A reader who scrolled up is reading, and must not be dragged away.
@@ -210,6 +256,7 @@ export function ConversationList({
         {turns.map((m) => (
           <Turn key={m.n} role={m.role} text={m.text} at={m.at} hit={m.hit} />
         ))}
+        {!query.trim() && pending.map((p) => <PendingTurn key={p.id} p={p} />)}
       </ul>
     </>
   );
@@ -259,6 +306,11 @@ export function ConversationWindow({ node, card }: { node: string; card: string 
   const [draft, setDraft] = useState("");
   const [note, setNote] = useState<{ text: string; err?: boolean } | null>(null);
   const grow = useAutoGrow("popout.compose", draft, 34, 300);
+  /** The box as it is now, for a send that fails after the user typed again. */
+  const draftNow = useRef(draft);
+  useEffect(() => {
+    draftNow.current = draft;
+  }, [draft]);
 
   const loadBoard = useCallback(() => {
     api
@@ -289,21 +341,26 @@ export function ConversationWindow({ node, card }: { node: string; card: string 
   const running = !!view?.live?.alive;
   const canSend = !!view && draft.trim() !== "" && (running || !!(view.card.project_cwd ?? view.session?.cwd));
 
+  const pending = usePendingSends(node, card, conv?.messages ?? NO_TURNS);
+  const sending = isSending(pending);
+
   const send = () => {
     const text = draft.trim();
-    if (!canSend) return;
+    if (!canSend || sending) return;
+    // The box empties at once and the prompt shows in the list as a pending
+    // turn. A failed send puts the text back, unless the user typed again.
     setDraft("");
-    setNote({ text: "Sending…" });
-    api
-      .sendPrompt(node, card, text)
+    setNote(null);
+    trackSend(node, card, text, () => api.sendPrompt(node, card, text), () => {
+      if (draftNow.current.trim() !== "") return false;
+      setDraft(text);
+      return true;
+    })
       .then((r) => {
         setNote({ text: r });
         load();
       })
-      .catch((e) => {
-        setNote({ text: String(e), err: true });
-        setDraft(text);
-      });
+      .catch((e) => setNote({ text: String(e), err: true }));
   };
 
   return (
@@ -320,7 +377,7 @@ export function ConversationWindow({ node, card }: { node: string; card: string 
         )}
       </header>
       <div className="body">
-        <ConversationList conv={conv} busy={busy} err={err} onMore={more} onLoadAll={all} tail autoFocus />
+        <ConversationList conv={conv} busy={busy} err={err} onMore={more} onLoadAll={all} tail autoFocus pending={pending} />
       </div>
       <footer className="composer">
         <textarea
@@ -347,8 +404,8 @@ export function ConversationWindow({ node, card }: { node: string; card: string 
                   ? "The session is not running. A background job resumes it with this prompt."
                   : "")}
           </span>
-          <button className="btn primary sm" disabled={!canSend} onClick={send}>
-            {running ? "Send" : "Continue in bg"}
+          <button className="btn primary sm" disabled={!canSend || sending} onClick={send}>
+            {sending ? "Sending…" : running ? "Send" : "Continue in bg"}
           </button>
         </div>
       </footer>
