@@ -5,6 +5,7 @@
 
 use crate::model::*;
 use chrono::{DateTime, Duration, Local, TimeZone, Utc};
+use std::collections::{HashMap, HashSet};
 
 /// What the planner needs to know about the machine right now.
 pub struct Context<'a> {
@@ -153,41 +154,126 @@ pub fn budget_pct(ctx: &Context<'_>, s: &Settings) -> f64 {
 
 /// Decide whether the state of the two windows deserves an offer.
 pub fn detect_trigger(ctx: &Context<'_>, s: &Settings) -> Option<(ProposalTrigger, String)> {
+    [ProposalTrigger::WeeklyReset, ProposalTrigger::IdleFiveHour]
+        .into_iter()
+        .find_map(|t| trigger_reason(ctx, s, t).map(|why| (t, why)))
+}
+
+/// The reason one trigger fires now, or `None` when it does not. A manual
+/// plan has no condition, so it never fires by itself.
+pub fn trigger_reason(ctx: &Context<'_>, s: &Settings, t: ProposalTrigger) -> Option<String> {
     let q = ctx.quota?;
-    if let Some(seven) = q.seven_day.as_ref() {
-        let unused = 100.0 - seven.used_percentage;
-        if let Some(reset) = seven.resets_at {
-            let left = reset - ctx.now;
-            if unused > s.weekly_unused_pct
+    match t {
+        ProposalTrigger::WeeklyReset => {
+            let seven = q.seven_day.as_ref()?;
+            let unused = 100.0 - seven.used_percentage;
+            let left = seven.resets_at? - ctx.now;
+            (unused > s.weekly_unused_pct
                 && left > Duration::zero()
-                && left <= Duration::hours(s.weekly_hours_before_reset)
-            {
-                return Some((
-                    ProposalTrigger::WeeklyReset,
-                    format!(
-                        "{:.0} percent of the weekly window is unused and it resets in {} hours",
-                        unused,
-                        left.num_hours().max(1)
-                    ),
-                ));
-            }
-        }
-    }
-    if let Some(five) = q.five_hour.as_ref() {
-        let idle_long_enough = ctx
-            .last_interactive_at
-            .is_none_or(|t| ctx.now - t > Duration::minutes(s.idle_minutes));
-        if five.used_percentage < s.five_hour_idle_pct && idle_long_enough && !ctx.any_busy {
-            return Some((
-                ProposalTrigger::IdleFiveHour,
+                && left <= Duration::hours(s.weekly_hours_before_reset))
+            .then(|| {
                 format!(
-                    "the 5-hour window is at {:.0} percent and nobody worked for {} minutes",
-                    five.used_percentage, s.idle_minutes
-                ),
-            ));
+                    "{:.0} percent of the weekly window is unused and it resets in {} hours",
+                    unused,
+                    left.num_hours().max(1)
+                )
+            })
         }
+        ProposalTrigger::IdleFiveHour => {
+            let five = q.five_hour.as_ref()?;
+            let idle_long_enough = ctx
+                .last_interactive_at
+                .is_none_or(|t| ctx.now - t > Duration::minutes(s.idle_minutes));
+            (five.used_percentage < s.five_hour_idle_pct && idle_long_enough && !ctx.any_busy).then(
+                || {
+                    format!(
+                        "the 5-hour window is at {:.0} percent and nobody worked for {} minutes",
+                        five.used_percentage, s.idle_minutes
+                    )
+                },
+            )
+        }
+        ProposalTrigger::Manual => None,
     }
-    None
+}
+
+/// What a look at the board did to an open plan.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Refresh {
+    /// The plan still says what is true.
+    Keep,
+    /// Cards left the plan. The plan still holds, with fewer items.
+    Trimmed,
+    /// The plan no longer holds. It must leave the board.
+    Withdraw,
+}
+
+/// Bring an open plan in line with the board of now.
+///
+/// A plan is built once, and the board moves on under it. The user starts a
+/// card by hand, a card finishes, or somebody starts to work and the 5-hour
+/// window fills. A plan that keeps its first shape then offers a card that
+/// already runs, under a title such as "The 5-hour window is free" that is no
+/// longer true. So:
+///
+/// - An automatic plan leaves when its trigger stops, or when automation is
+///   off. A manual plan has no trigger, so only its cards can end it.
+/// - A card that is no longer a candidate leaves the plan.
+/// - A plan with nothing left to start leaves. An automatic plan also leaves
+///   when no card that is left fits the budget, because the planner offers no
+///   such plan in the first place.
+///
+/// The numbers of the plan are not built again. A new build would pick again
+/// and override what the user picked in the panel.
+pub fn refresh_open(
+    p: &mut Proposal,
+    trigger_holds: bool,
+    automation_off: bool,
+    candidates: &HashSet<String>,
+) -> Refresh {
+    if p.state != "open" {
+        return Refresh::Keep;
+    }
+    let manual = p.trigger == ProposalTrigger::Manual;
+    if !manual && (automation_off || !trigger_holds) {
+        return Refresh::Withdraw;
+    }
+    let before = p.items.len();
+    p.items.retain(|i| candidates.contains(&i.card_id));
+    if p.items.is_empty() || (!manual && !p.items.iter().any(|i| i.fits)) {
+        return Refresh::Withdraw;
+    }
+    if p.items.len() == before {
+        return Refresh::Keep;
+    }
+    p.total_pct = p
+        .items
+        .iter()
+        .filter(|i| i.fits)
+        .map(|i| i.estimate.pct_five_hour)
+        .sum();
+    p.used_pct_after = p.used_pct_before + p.total_pct;
+    Refresh::Trimmed
+}
+
+/// True when an accepted plan started a job and every job it started ended.
+///
+/// The panel of an accepted plan offers one thing: a button that stops its
+/// jobs. When no job runs, the panel only repeats what the cards already say.
+/// A job that `claude agents` does not list yet counts as running, because a
+/// job that just started takes a scan to appear.
+pub fn jobs_ended(p: &Proposal, job_states: &HashMap<String, String>) -> bool {
+    let mut jobs = p
+        .items
+        .iter()
+        .filter_map(|i| i.job_id.as_deref())
+        .peekable();
+    jobs.peek().is_some()
+        && jobs.all(|j| {
+            job_states
+                .get(j)
+                .is_some_and(|s| !matches!(s.as_str(), "working" | "blocked"))
+        })
 }
 
 /// Pack candidates into the budget. Highest priority first, oldest first inside
@@ -871,5 +957,119 @@ mod tests {
         assert_eq!(t, ProposalTrigger::IdleFiveHour);
         let mins = (at - Utc::now()).num_minutes();
         assert!((224..=226).contains(&mins), "{mins} minutes");
+    }
+
+    fn idle_plan() -> Proposal {
+        let q = quota(10.0, 20.0, 100);
+        plan(
+            ProposalTrigger::IdleFiveHour,
+            "idle".into(),
+            vec![
+                candidate("a", 10.0, 2),
+                candidate("b", 10.0, 1),
+                candidate("c", 90.0, 0),
+            ],
+            &ctx(&q, 0),
+            &settings(),
+        )
+        .unwrap()
+    }
+
+    fn names(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// "The 5-hour window is free" stayed on the board for two hours after
+    /// somebody started to work and the window filled.
+    #[test]
+    fn an_open_plan_leaves_when_its_trigger_stops() {
+        let all = names(&["a", "b", "c"]);
+        let mut p = idle_plan();
+        assert_eq!(refresh_open(&mut p, true, false, &all), Refresh::Keep);
+        assert_eq!(refresh_open(&mut p, false, false, &all), Refresh::Withdraw);
+        // Automation off retires an automatic plan too.
+        let mut p = idle_plan();
+        assert_eq!(refresh_open(&mut p, true, true, &all), Refresh::Withdraw);
+    }
+
+    #[test]
+    fn the_idle_trigger_stops_when_somebody_works() {
+        let q = quota(10.0, 20.0, 100);
+        let mut c = ctx(&q, 0);
+        assert!(trigger_reason(&c, &settings(), ProposalTrigger::IdleFiveHour).is_some());
+        c.any_busy = true;
+        assert!(trigger_reason(&c, &settings(), ProposalTrigger::IdleFiveHour).is_none());
+        // The weekly check does not speak for the idle plan.
+        let q = quota(10.0, 20.0, 20);
+        let c = ctx(&q, 0);
+        assert!(trigger_reason(&c, &settings(), ProposalTrigger::WeeklyReset).is_some());
+        assert!(trigger_reason(&c, &settings(), ProposalTrigger::Manual).is_none());
+    }
+
+    /// A card started by hand stayed in the plan and could be started twice.
+    #[test]
+    fn a_card_that_left_the_candidates_leaves_the_plan() {
+        let mut p = idle_plan();
+        let before = p.total_pct;
+        assert_eq!(
+            refresh_open(&mut p, true, false, &names(&["b", "c"])),
+            Refresh::Trimmed
+        );
+        assert_eq!(p.items.len(), 2);
+        assert!(p.total_pct < before);
+        assert!((p.used_pct_after - (p.used_pct_before + p.total_pct)).abs() < 1e-9);
+        // Only a card that does not fit is left: an automatic plan has nothing to offer.
+        assert_eq!(
+            refresh_open(&mut p, true, false, &names(&["c"])),
+            Refresh::Withdraw
+        );
+    }
+
+    #[test]
+    fn a_manual_plan_leaves_only_when_its_cards_are_gone() {
+        let q = quota(10.0, 20.0, 100);
+        let mut p = plan(
+            ProposalTrigger::Manual,
+            "manual".into(),
+            vec![candidate("a", 90.0, 0)],
+            &ctx(&q, 0),
+            &settings(),
+        )
+        .unwrap();
+        assert_eq!(
+            refresh_open(&mut p, false, true, &names(&["a"])),
+            Refresh::Keep
+        );
+        assert_eq!(
+            refresh_open(&mut p, false, true, &names(&[])),
+            Refresh::Withdraw
+        );
+    }
+
+    /// "Autopilot started these" stayed for 30 minutes after its jobs ended.
+    #[test]
+    fn an_accepted_plan_ends_with_its_jobs() {
+        let mut p = idle_plan();
+        let states = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect()
+        };
+        // Nothing started: the panel still holds the errors.
+        assert!(!jobs_ended(&p, &states(&[])));
+        p.items[0].job_id = Some("j1".into());
+        p.items[1].job_id = Some("j2".into());
+        // A job that no scan listed yet counts as running.
+        assert!(!jobs_ended(&p, &states(&[("j1", "done")])));
+        assert!(!jobs_ended(
+            &p,
+            &states(&[("j1", "done"), ("j2", "working")])
+        ));
+        assert!(!jobs_ended(
+            &p,
+            &states(&[("j1", "done"), ("j2", "blocked")])
+        ));
+        assert!(jobs_ended(&p, &states(&[("j1", "done"), ("j2", "failed")])));
     }
 }

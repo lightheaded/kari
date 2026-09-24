@@ -1121,7 +1121,11 @@ impl Hub {
                             queue: q.clone(),
                         });
                     }
-                    if let Some(p) = &b.proposal {
+                    // The board of a node that stopped answering keeps the
+                    // plan it last sent, and nothing on this side retires it.
+                    // A plan is an offer with an end, not a card, so the
+                    // board drops it at that end.
+                    if let Some(p) = b.proposal.as_ref().filter(|p| p.is_live(Utc::now())) {
                         proposals.push(NodeProposal {
                             node_id: r.rec.id.clone(),
                             node_name: status.name.clone(),
