@@ -11,7 +11,8 @@ import type { Act } from "../toasts";
 import { ProjectPicker, type PickerItem } from "./ProjectPicker";
 import { Markdown } from "./Markdown";
 import { NodeTag } from "./NodeTag";
-import { ConversationList, popOutConversation, useConversation } from "./Conversation";
+import { ConversationList, PendingTurns, popOutConversation, useConversation } from "./Conversation";
+import { NO_TURNS, isSending, trackSend, usePendingSends } from "../pending";
 import { AttachButton, AttachmentList, collectFiles } from "./Attachments";
 
 interface Props {
@@ -197,6 +198,22 @@ export function Drawer({
     more: moreConv,
     all: allConv,
   } = useConversation(node, c.id, chatting && !!c.session_id, view.last_activity_at);
+  /** What this screen knows of the transcript. With the whole conversation
+   *  closed, that is only the last prompt, and it is enough to see that the
+   *  session read a prompt that was sent. */
+  const lastPrompt = s?.last_prompt;
+  const lastPromptAt = s?.last_user_at ?? null;
+  const seen = useMemo(
+    () => (conv ? conv.messages : lastPrompt ? [{ role: "user", text: lastPrompt, at: lastPromptAt }] : NO_TURNS),
+    [conv, lastPrompt, lastPromptAt],
+  );
+  const pending = usePendingSends(node, c.id, seen);
+  const sending = isSending(pending);
+  /** The box as it is now, for a send that fails after the user typed again. */
+  const draftNow = useRef(draft);
+  useEffect(() => {
+    draftNow.current = draft;
+  }, [draft]);
 
   useEffect(() => {
     setCwd(c.project_cwd ?? "");
@@ -388,20 +405,30 @@ export function Drawer({
           : hasDir
             ? { label: "Start in bg", hint: "Starts the task as a background job with this prompt. Empty uses the title and the body." }
             : { label: "Start in bg", hint: "This card needs a project directory before it can run." };
-  const canSend = !offline && !jobBusy && (running || hasDir) && (draft.trim() !== "" || (!running && !!(c.kind === "task" || c.run_prompt)));
+  const canSend = !offline && !jobBusy && !sending && (running || hasDir) && (draft.trim() !== "" || (!running && !!(c.kind === "task" || c.run_prompt)));
 
   const send = () => {
     const text = draft.trim();
     if (!canSend) return;
     // An empty prompt on a task or a saved continue prompt starts the run as
     // the scheduler would: the title and the body, or the standing prompt.
-    const fn = text ? () => api.sendPrompt(node, c.id, text) : () => api.startCard(node, c.id);
-    // The composer empties only after the send goes through, so a failed send
-    // costs a retry and not the prompt. The text the user typed while the send
-    // was in flight is not the text that went, so that text stays.
-    void onAction(fn, text ? "Sent" : "Started in background", undefined, picked).then((sent) => {
-      setDraft((d) => (clearsBox(d, text, sent) ? "" : d));
-      if (convOpen) loadConv();
+    if (!text) {
+      void onAction(() => api.startCard(node, c.id), "Started in background", undefined, picked);
+      return;
+    }
+    // The composer empties at once, and the prompt shows in the conversation
+    // as a pending turn until the session reads it. A failed send puts the
+    // text back in the box, so it costs a retry and not the prompt. When the
+    // user typed again while the send was in flight, the new text stays and
+    // the failed prompt stays on screen with its error.
+    setDraft("");
+    const restore = (t: string) => {
+      if (draftNow.current.trim() !== "") return false;
+      setDraft(t);
+      return true;
+    };
+    void onAction(() => trackSend(node, c.id, text, () => api.sendPrompt(node, c.id, text), restore), "Sent", undefined, picked).then(() => {
+      if (chatting) loadConv();
     });
   };
 
@@ -1030,13 +1057,17 @@ export function Drawer({
                 onMore={moreConv}
                 onLoadAll={allConv}
                 tail={!view.permission}
+                pending={pending}
               />
             ) : (
-              <div className="hint">
-                {c.session_id
-                  ? "This session has said nothing yet."
-                  : "This card has not run yet. What you send at the foot starts it, and the reply lands here."}
-              </div>
+              <>
+                <div className="hint">
+                  {c.session_id
+                    ? "This session has said nothing yet."
+                    : "This card has not run yet. What you send at the foot starts it, and the reply lands here."}
+                </div>
+                <PendingTurns list={pending} />
+              </>
             )}
           </div>
         )}
@@ -1093,6 +1124,14 @@ export function Drawer({
         )}
       </div>
       <footer className="composer">
+        {/* The conversation of a desktop drawer sits below the fields, out of
+            sight, so a prompt that left shows here, beside the box it came
+            from. The phone page shows it at the end of the conversation. */}
+        {!mobile && (
+          <div className="outbox">
+            <PendingTurns list={pending} />
+          </div>
+        )}
         <AttachmentList
           nodeId={node}
           cardId={c.id}
@@ -1137,7 +1176,7 @@ export function Drawer({
             label={attachBusy ? "Attaching…" : "Attach"}
           />
           <button className="btn primary sm" disabled={!canSend} onClick={send}>
-            {draft.trim() || running ? target.label : `▶ ${target.label}`}
+            {sending ? "Sending…" : draft.trim() || running ? target.label : `▶ ${target.label}`}
           </button>
         </div>
       </footer>

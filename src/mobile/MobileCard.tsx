@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Act } from "../toasts";
 import { api } from "../api";
 import type { Column, HubCard } from "../types";
 import { STATE_LABEL } from "../types";
-import { STATE_TONE, clearsBox, clock, fmtM, relTime, weighted } from "../util";
+import { STATE_TONE, clock, fmtM, relTime, weighted } from "../util";
 import { NodeTag } from "../components/NodeTag";
+import { PendingTurns } from "../components/Conversation";
+import { NO_TURNS, isSending, trackSend, usePendingSends } from "../pending";
 
 interface Props {
   view: HubCard;
@@ -41,7 +43,6 @@ export function MobileCard({ view, columns, showNode, account, offline, actions,
   const bg = view.bg_job;
   const running = !!view.live?.alive;
   const [reply, setReply] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
   const doneCol = columns.find((k) => k.accepts.includes("done"));
   // A running session takes a reply into its own queue. Anything else needs a
   // directory to start a background job in. The box opens either way, as it
@@ -54,15 +55,32 @@ export function MobileCard({ view, columns, showNode, account, offline, actions,
   const perm = view.permission ?? null;
   const permText = perm ? describeInput(perm.tool_name, perm.tool_input) : "";
 
-  // The box empties only after the send goes through. A phone sends over a link
-  // that drops, so a failed send must cost a retry and not the message. The
-  // error itself arrives as a toast, from `onAction`.
+  /** The card knows only the last prompt of its session, and that is enough
+   *  to see that the session read a prompt that was sent. */
+  const lastPrompt = s?.last_prompt;
+  const lastPromptAt = s?.last_user_at ?? null;
+  const seen = useMemo(() => (lastPrompt ? [{ role: "user", text: lastPrompt, at: lastPromptAt }] : NO_TURNS), [lastPrompt, lastPromptAt]);
+  const pending = usePendingSends(node, c.id, seen);
+  const sending = isSending(pending);
+  /** The box as it is now, for a send that fails after the user typed again. */
+  const replyNow = useRef(reply);
+  useEffect(() => {
+    replyNow.current = reply;
+  }, [reply]);
+
+  // The box closes at once, and the message shows under the card until the
+  // session reads it. A phone sends over a link that drops, so a failed send
+  // opens the box again with the message in it: it costs a retry and not the
+  // message. The error itself arrives as a toast, from `onAction`.
   const send = async (text: string) => {
     if (sending) return;
-    setSending(true);
-    const sent = await onAction(() => api.sendPrompt(node, c.id, text), "Sent", undefined, { node, id: c.id });
-    setSending(false);
-    setReply((r) => (clearsBox(r, text, sent) ? null : r));
+    setReply(null);
+    const restore = (t: string) => {
+      if ((replyNow.current ?? "").trim() !== "") return false;
+      setReply(t);
+      return true;
+    };
+    await onAction(() => trackSend(node, c.id, text, () => api.sendPrompt(node, c.id, text), restore), "Sent", undefined, { node, id: c.id });
   };
 
   return (
@@ -153,6 +171,7 @@ export function MobileCard({ view, columns, showNode, account, offline, actions,
         </div>
       )}
 
+      <PendingTurns list={pending} />
 
       {view.state === "needs_approval" && actions && !bg && !perm && (
         <div className="mhint">A permission prompt waits in the terminal. Turn on Away mode for {view.node_name} in Nodes to answer the next one here.</div>

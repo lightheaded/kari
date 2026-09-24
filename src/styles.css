@@ -302,6 +302,21 @@ a { color: var(--accent); }
 .convmore { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .turn.user .quote { border-left: 2px solid var(--line); }
 .turn.hit .quote { border-color: var(--accent); }
+/* A prompt that left this screen and that the transcript does not show yet.
+   It is faint until the session reads it, and it says how far the send got. */
+.turn.pending .quote { border-left: 2px solid var(--accent); opacity: 0.75; }
+.turn.pending.sending .quote { opacity: 0.55; }
+.turn.pending.failed .quote { border-left-color: var(--rust); opacity: 1; }
+.turn.pending .hint.err { color: var(--rust); }
+.turn.pending .who .linkbtn { margin-left: auto; text-transform: none; font-size: 13px; line-height: 1; }
+.turn.pending.sending .who .when::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--accent); animation: pendingpulse 1s ease-in-out infinite; }
+.outbox:empty { display: none; }
+.outbox { max-height: 160px; overflow-y: auto; margin-bottom: 8px; }
+.outbox .turns { margin: 0; gap: 6px; }
+.outbox .turn + .turn { margin-top: 0; }
+.outbox .turn .quote { max-height: 3.4em; overflow: hidden; padding-top: 3px; padding-bottom: 3px; }
+@keyframes pendingpulse { 50% { opacity: 0.2; } }
+@media (prefers-reduced-motion: reduce) { .turn.pending.sending .who .when::after { animation: none; } }
 /* The composer: what to say next. Sits at the foot so it is always in reach. */
 .composer { border-top: 1px solid var(--line-soft); padding: 10px 18px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
 .composer textarea {
