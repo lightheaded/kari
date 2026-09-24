@@ -424,6 +424,7 @@ mod tests {
             away_mode: false,
             queue: None,
             automation_mode: String::new(),
+            default_permission_mode: String::new(),
         }
     }
 

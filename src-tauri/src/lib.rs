@@ -361,9 +361,32 @@ fn get_settings_json(state: State<'_, AppState>) -> R<String> {
     serde_json::to_string(&state.hub.local_engine().settings()).map_err(err)
 }
 
+/// Save the settings of this machine. A new default permission mode also goes
+/// to every other node, because a card runs under the default of the node
+/// that runs it. Without this, a card on another node that names no mode ran
+/// in that node's own default, while the drawer here showed this one.
+/// Returns what the toast says: the nodes that did not take the mode, if any.
 #[tauri::command]
-fn set_settings(state: State<'_, AppState>, settings: Settings) -> R<()> {
-    state.hub.local_engine().set_settings(settings).map_err(err)
+async fn set_settings(state: State<'_, AppState>, settings: Settings) -> R<String> {
+    let engine = state.hub.local_engine();
+    let mode = settings.default_permission_mode.clone();
+    let changed = engine.settings().default_permission_mode != mode;
+    engine.set_settings(settings).map_err(err)?;
+    if !changed {
+        return Ok(String::new());
+    }
+    off_thread(&state.hub, move |h| {
+        let failed = h.set_default_permission_mode_all(&mode);
+        Ok(if failed.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "Settings saved. The default permission mode did not reach {}",
+                failed.join(", ")
+            )
+        })
+    })
+    .await
 }
 
 /// Name an account, or clear the name with an empty string. `key` is the one

@@ -856,6 +856,11 @@ pub struct BoardView {
     /// `off`, `ask` or `auto`. The board shows it on the automation switch.
     #[serde(default)]
     pub automation_mode: String,
+    /// The permission mode this node runs a card under when the card names
+    /// none. Each node holds its own, so the drawer must read it from the
+    /// node that runs the card, not from the machine that shows it.
+    #[serde(default)]
+    pub default_permission_mode: String,
 }
 
 impl BoardView {
@@ -875,6 +880,7 @@ impl BoardView {
             away_mode: false,
             queue: None,
             automation_mode: String::new(),
+            default_permission_mode: String::new(),
         }
     }
 }
@@ -1470,6 +1476,10 @@ pub struct NodeStatus {
     /// How much automatic behaviour the node allows: `off`, `ask` or `auto`.
     #[serde(default)]
     pub automation_mode: String,
+    /// The permission mode the node runs a card under when the card names
+    /// none. Empty when the node has not answered, or runs an older kari.
+    #[serde(default)]
+    pub default_permission_mode: String,
     /// The quota row this node spends against: its Claude Code account id, or
     /// `node:<id>` when kari cannot read one. The same key as `AccountQuota`,
     /// so a write aimed at one account finds the nodes that spend it.

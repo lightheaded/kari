@@ -115,6 +115,10 @@ pub trait HubApi: Send + Sync + 'static {
     /// Best effort across the nodes signed in to one account, keyed as
     /// `AccountQuota` keys them. Returns the ids that refused.
     fn set_automation_mode_account(&self, key: &str, mode: AutomationMode) -> Vec<String>;
+    /// The permission mode a card with no mode of its own runs under, set on
+    /// every node. Each node holds its own, and a run reads the one of the
+    /// node that runs it. Returns the nodes that did not take it.
+    fn set_default_permission_mode_all(&self, mode: &str) -> Vec<String>;
     fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()>;
 
     // --- the planner -----------------------------------------------------
@@ -286,6 +290,9 @@ impl HubApi for crate::hub::Hub {
     }
     fn set_automation_mode_account(&self, key: &str, mode: AutomationMode) -> Vec<String> {
         crate::hub::Hub::set_automation_mode_account(self, key, mode)
+    }
+    fn set_default_permission_mode_all(&self, mode: &str) -> Vec<String> {
+        crate::hub::Hub::set_default_permission_mode_all(self, mode)
     }
     fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()> {
         crate::hub::Hub::set_away_mode(self, node, on)

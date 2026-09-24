@@ -1282,6 +1282,7 @@ impl Engine {
             away_mode: settings.away_mode,
             queue: None,
             automation_mode: settings.automation().key().into(),
+            default_permission_mode: settings.default_permission_mode.clone(),
         };
         // The queue reads the finished view, so it comes last.
         view.queue = Some(self.queue_of(&view, &settings, now, checked_at));
@@ -1530,6 +1531,20 @@ impl Engine {
             return Ok(());
         }
         s.set_automation(mode);
+        self.set_settings(s)
+    }
+
+    /// Write the permission mode that a card with no mode of its own runs under.
+    pub fn set_default_permission_mode(&self, mode: &str) -> anyhow::Result<()> {
+        let mode = mode.trim();
+        if mode.is_empty() {
+            anyhow::bail!("the permission mode is empty");
+        }
+        let mut s = self.settings();
+        if s.default_permission_mode == mode {
+            return Ok(());
+        }
+        s.default_permission_mode = mode.to_string();
         self.set_settings(s)
     }
 
@@ -3438,6 +3453,7 @@ mod tests {
                 away_mode: false,
                 queue: None,
                 automation_mode: "auto".into(),
+                default_permission_mode: "auto".into(),
             }
         };
 

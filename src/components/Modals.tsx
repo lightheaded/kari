@@ -1311,6 +1311,9 @@ export function SettingsModal({
               </option>
             ))}
           </select>
+          <div className="hint">
+            A card with no mode of its own runs under this mode. Save sets it on every node that answers.
+          </div>
         </div>
       </div>
       <NodesSection

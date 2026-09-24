@@ -913,6 +913,7 @@ impl Hub {
             away_mode: self.engine.settings().away_mode,
             addresses: crate::net::bound_reachable(),
             automation_mode: self.engine.settings().automation().key().into(),
+            default_permission_mode: self.engine.settings().default_permission_mode,
             account_key: crate::account::group_key(LOCAL, crate::account::read().as_ref()),
             // This machine writes to its own store. Nothing waits for it.
             pending_writes: 0,
@@ -955,6 +956,11 @@ impl Hub {
                 .board
                 .as_ref()
                 .map(|b| b.automation_mode.clone())
+                .unwrap_or_default(),
+            default_permission_mode: st
+                .board
+                .as_ref()
+                .map(|b| b.default_permission_mode.clone())
                 .unwrap_or_default(),
             // The same key `board()` groups this node's quota under, read from
             // the health it answered with. A node that reports no account keeps
@@ -1716,6 +1722,32 @@ impl Hub {
         for n in nodes {
             if self.set_automation_mode(&n.id, mode).is_err() {
                 failed.push(n.name.clone());
+            }
+        }
+        failed
+    }
+
+    /// Set the permission mode that one node runs a card under when the card
+    /// names none.
+    pub fn set_default_permission_mode(&self, node: &str, mode: &str) -> anyhow::Result<()> {
+        self.on_node(
+            node,
+            |e| e.set_default_permission_mode(mode),
+            |c| c.set_default_permission_mode(mode),
+        )
+    }
+
+    /// Set the default permission mode on every node. Returns the nodes that
+    /// did not take it, and a node that does not answer is one of them: it
+    /// keeps its old mode until the user saves again.
+    pub fn set_default_permission_mode_all(&self, mode: &str) -> Vec<String> {
+        let mut failed = vec![];
+        for n in self.nodes() {
+            if !n.enabled {
+                continue;
+            }
+            if !n.online || self.set_default_permission_mode(&n.id, mode).is_err() {
+                failed.push(n.name);
             }
         }
         failed

@@ -213,8 +213,10 @@ export const api = {
       : inDevServer
         ? devFixture<Settings>("settings")
         : noBridge<Settings>("settings"),
+  /** Save the settings. A new default permission mode goes to every node too.
+   *  The answer names the nodes that did not take it, or is empty. */
   setSettings: (settings: Settings) =>
-    invoke<void>("set_settings", { settings }),
+    invoke<string>("set_settings", { settings }),
   /** Name an account, or clear the name with an empty string. */
   setAccountAlias: (key: string, alias: string) =>
     invoke<void>("set_account_alias", { key, alias }),

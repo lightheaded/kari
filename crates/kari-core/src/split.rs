@@ -487,6 +487,12 @@ impl HubApi for SplitHub {
         refused
     }
 
+    fn set_default_permission_mode_all(&self, mode: &str) -> Vec<String> {
+        let mut refused = self.machine.set_default_permission_mode_all(mode);
+        refused.extend(self.server.set_default_permission_mode_all(mode));
+        refused
+    }
+
     fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()> {
         if self.is_local(node) {
             return self.on_local(|h| h.set_away_mode(LOCAL, on));
