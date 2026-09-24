@@ -523,6 +523,10 @@ export interface NodeStatus {
   addresses: string[];
   /** How much automatic behaviour the node allows. Empty from an older node. */
   automation_mode: AutomationMode | "";
+  /** The permission mode the node runs a card under when the card names none.
+   *  Each node holds its own. Empty when the node has not answered, or runs an
+   *  older kari. */
+  default_permission_mode?: string;
   /** The quota row this node spends against: the key of its `AccountQuota`.
    *  Empty from a hub that predates the field. */
   account_key?: string;

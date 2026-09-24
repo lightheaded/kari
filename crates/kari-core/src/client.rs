@@ -540,6 +540,17 @@ impl ApiClient {
         self.set_settings(&s)
     }
 
+    /// Write the default permission mode through the settings, so a node
+    /// that predates this call still takes it.
+    pub fn set_default_permission_mode(&self, mode: &str) -> anyhow::Result<()> {
+        let mut s = self.settings()?;
+        if s.default_permission_mode == mode {
+            return Ok(());
+        }
+        s.default_permission_mode = mode.to_string();
+        self.set_settings(&s)
+    }
+
     // ---- lease ----
 
     /// The node's column lease. `Ok(None)` when free. An older node without

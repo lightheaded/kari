@@ -141,6 +141,13 @@ export function Drawer({
   const node = view.node_id;
   const s = view.session;
   const picked = useMemo(() => ({ node, id: c.id }), [node, c.id]);
+  // A card with no mode runs under the default of the node that runs it, not
+  // under the settings of this screen. A node that has not said its default
+  // gets no guess.
+  const nodeDefaultMode =
+    nodes.find((n) => n.id === node)?.default_permission_mode ||
+    (nodes.length > 1 ? "set on its node" : settings?.default_permission_mode) ||
+    "auto";
 
   /** Write one change to the card. No toast on success: the field shows it. */
   const patch = useCallback((p: CardPatch) => onAction(() => api.patchCard(node, c.id, p), undefined, undefined, picked), [onAction, node, c.id, picked]);
@@ -939,7 +946,7 @@ export function Drawer({
                   <select value={c.permission_mode ?? ""} onChange={(e) => patch({ permission_mode: e.target.value })}>
                     {MODES.map((m) => (
                       <option key={m} value={m}>
-                        {m || `default (${settings?.default_permission_mode ?? "auto"})`}
+                        {m || `default (${nodeDefaultMode})`}
                       </option>
                     ))}
                   </select>

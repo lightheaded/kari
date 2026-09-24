@@ -488,6 +488,18 @@ async fn hub_set_automation_all(
     ))
 }
 
+/// The default permission mode on every node behind the server. The names
+/// that refused come back, as they do for the automation mode.
+async fn hub_set_permission_mode_all(
+    State(st): State<ServerState>,
+    Json(mode): Json<String>,
+) -> Result<Json<Vec<String>>, ApiError> {
+    let h = Arc::clone(hub(&st)?);
+    Ok(Json(
+        blocking(move || Ok(h.set_default_permission_mode_all(&mode))).await?,
+    ))
+}
+
 /// Best effort across the nodes on one account. The names that refused come
 /// back, as they do for every node.
 async fn hub_set_automation_account(
@@ -759,6 +771,7 @@ pub fn router(registry: Arc<LinkRegistry>, token: String, hub: Option<Arc<Hub>>)
         .route("/hub/stop-all", post(hub_stop_all))
         .route("/hub/automation", post(hub_set_automation_all))
         .route("/hub/accounts/automation", post(hub_set_automation_account))
+        .route("/hub/permission-mode", post(hub_set_permission_mode_all))
         .route("/hub/nodes/{node}/cards", post(hub_add_task))
         .route("/hub/nodes/{node}/cards/restore", post(hub_restore_card))
         .route("/hub/nodes/{node}/cards/reorder", post(hub_reorder_cards))

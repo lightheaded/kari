@@ -463,6 +463,18 @@ impl HubApi for RemoteHub {
         )
     }
 
+    /// A server that predates the route refuses the call. That is reported as
+    /// a refusal, because every node behind that server keeps its old mode.
+    fn set_default_permission_mode_all(&self, mode: &str) -> Vec<String> {
+        match self.post("/kari/v1/hub/permission-mode", v(mode)) {
+            Ok(refused) => refused,
+            Err(e) => {
+                warn!("permission mode from {}: {e}", self.base);
+                vec![format!("the server at {}", self.base)]
+            }
+        }
+    }
+
     fn set_away_mode(&self, node: &str, on: bool) -> anyhow::Result<()> {
         self.post(&format!("/kari/v1/hub/nodes/{node}/away"), v(OnBody { on }))
     }
