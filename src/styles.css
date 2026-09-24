@@ -434,6 +434,8 @@ pre.code { font: 11.5px/1.5 var(--mono); background: var(--ground); border: 1px 
   background: currentColor; opacity: 0.16; transform-origin: left center;
 }
 .toast.err { background: var(--rust); color: #fff; }
+/* A session that waits for an answer. The toast has no clock, so the edge marks it. */
+.toast.sticky { box-shadow: inset 3px 0 0 var(--rust), var(--shadow); }
 .empty { padding: 30px; text-align: center; color: var(--ink-3); font-size: 12.5px; }
 
 /* summaries */

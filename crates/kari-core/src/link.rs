@@ -680,9 +680,15 @@ async fn connect_once(
                     title,
                     body,
                     card_id,
+                    sticky,
                 }) => Frame::Evt {
                     event: "notice".into(),
-                    data: serde_json::json!({ "title": title, "body": body, "card_id": card_id }),
+                    data: serde_json::json!({
+                        "title": title,
+                        "body": body,
+                        "card_id": card_id,
+                        "sticky": sticky,
+                    }),
                 },
                 // A slow reader lost events; the server refetches the board.
                 Err(broadcast::error::RecvError::Lagged(_)) => Frame::Evt {

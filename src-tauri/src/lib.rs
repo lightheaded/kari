@@ -1,3 +1,5 @@
+mod notify;
+
 use kari_core::hub::HubEvent;
 use kari_core::hubapi::HubApi;
 use kari_core::{
@@ -993,6 +995,12 @@ fn forward_events(app: AppHandle, hub: Arc<dyn HubApi>) {
             match rx.recv().await {
                 Ok(HubEvent::BoardChanged { node_id }) => {
                     let _ = app.emit("board_changed", serde_json::json!({ "node_id": node_id }));
+                    {
+                        let (a, h) = (app.clone(), Arc::clone(&hub));
+                        tauri::async_runtime::spawn_blocking(move || {
+                            notify::withdraw_stale(&a, &h)
+                        });
+                    }
                     #[cfg(desktop)]
                     if last_tray.elapsed().as_secs() >= 3 {
                         last_tray = std::time::Instant::now();
@@ -1006,6 +1014,7 @@ fn forward_events(app: AppHandle, hub: Arc<dyn HubApi>) {
                     title,
                     body,
                     card_id,
+                    sticky,
                 }) => {
                     let shown_title = if node_id == kari_core::hub::LOCAL {
                         title.clone()
@@ -1020,14 +1029,20 @@ fn forward_events(app: AppHandle, hub: Arc<dyn HubApi>) {
                             "card_id": card_id,
                             "node_id": node_id,
                             "node_name": node_name,
+                            "sticky": sticky,
                         }),
                     );
-                    let _ = app
-                        .notification()
-                        .builder()
-                        .title(&shown_title)
-                        .body(&body)
-                        .show();
+                    notify::show(
+                        &app,
+                        &hub,
+                        notify::Notice {
+                            node_id,
+                            card_id,
+                            title: shown_title,
+                            body,
+                            sticky,
+                        },
+                    );
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => break,

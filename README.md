@@ -258,6 +258,20 @@ When herdr runs and "Open new sessions in a herdr pane" is on, Jump in creates a
 
 Settings can also close the tab again. When "Close the herdr tab when a card is done or archived" is on, kari closes the tab of the pane that holds the card as soon as you move the card to Done or archive it. The tab closes on the machine that runs the session, and it closes even when its agent still works. Undo puts the card back, never the tab. The option is off by default.
 
+## Notifications
+
+kari sends a notification of the system when a session needs you:
+
+- **Approval needed** and **Decision needed**: the session waits for a permission, a plan approval or an answer. These notifications stay on screen until you act. On macOS they are alerts with Open and Dismiss buttons, and they play the default sound. The toast in the kari window also stays, with no clock.
+- **Your turn**: a session finished its turn and waits for your next prompt. The notification shows what the session said last.
+- **Background job finished** and **Background job failed**.
+
+A click on a notification, or on Open, goes to the session. If this machine runs the session in a herdr pane, kari focuses that pane. Otherwise kari opens the card in its window.
+
+On macOS, kari takes a notification back when it stops being true. An approval that you give in the terminal also clears its alert. A "Your turn" notification goes when the session works again. A card holds one notification at a time, so a new one replaces the old one.
+
+If you use herdr, you can turn off its own notifications. kari covers the same events and opens the correct pane.
+
 ## Remote nodes
 
 A second machine can join the board. The app stays the only window; the other host runs the headless node.

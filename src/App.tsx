@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
+import { api, onBoardChanged, onConfirmQuit, onNotice, onOpenCard } from "./api";
 import type { AutomationMode, Column, HubBoard, HubCard, Project, Settings } from "./types";
 import { setAccountAutomation, setAutomation } from "./automation";
 import { Board, type Picked, type Reorder } from "./components/Board";
@@ -12,7 +12,7 @@ import { ProjectPicker, type PickerItem } from "./components/ProjectPicker";
 import { AddTaskModal, ColumnsModal, SettingsModal } from "./components/Modals";
 import { ProposalPanel } from "./components/Proposals";
 import { Toasts } from "./components/Toasts";
-import { useToasts, type Undo } from "./toasts";
+import { useToasts, waitsOn, type Undo } from "./toasts";
 import { restartApp, updatesSupported, useUpdater } from "./update";
 import { useSticky } from "./hooks";
 import { anyDirty } from "./dirty";
@@ -83,26 +83,33 @@ export default function App() {
   const [quitAsk, setQuitAsk] = useState<{ grace: number | null } | null>(null);
   const [refreshingQuota, setRefreshingQuota] = useState(false);
 
-  const { toasts, toast, drop: dropToast, clear: clearToasts } = useToasts();
+  const { toasts, toast, drop: dropToast, clear: clearToasts, settle } = useToasts();
 
   const load = useCallback(async () => {
     try {
       const b = await api.board();
       setBoard(b);
+      // A sticky toast goes when its card stops waiting, wherever the user answered.
+      settle(waitsOn(b.cards));
       setError(null);
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [settle]);
 
   useEffect(() => {
     load();
     api.settings().then(setSettings).catch(() => {});
     const un1 = onBoardChanged(load);
     const un2 = onNotice((n) =>
-      toast(`${n.title} — ${n.body}`, { card: n.card_id ? { node: n.node_id, id: n.card_id } : null, ttl: 20000 }),
+      toast(`${n.title} — ${n.body}`, {
+        card: n.card_id ? { node: n.node_id, id: n.card_id } : null,
+        ttl: 20000,
+        sticky: n.sticky,
+      }),
     );
     const un3 = onConfirmQuit((grace) => setQuitAsk({ grace }));
+    const un4 = onOpenCard((node, id) => setSelected({ node, id }));
     const t = window.setInterval(load, 30000);
     // A reload from the dev server, or a navigation: warn while a form holds input.
     const onUnload = (e: BeforeUnloadEvent) => {
@@ -116,6 +123,7 @@ export default function App() {
       un1();
       un2();
       un3();
+      un4();
       window.clearInterval(t);
       window.removeEventListener("beforeunload", onUnload);
     };

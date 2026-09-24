@@ -2329,6 +2329,8 @@ dependencies = [
  "anyhow",
  "axum",
  "kari-core",
+ "mac-notification-sys",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tauri",

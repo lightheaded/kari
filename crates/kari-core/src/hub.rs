@@ -42,6 +42,10 @@ pub enum HubEvent {
         title: String,
         body: String,
         card_id: Option<String>,
+        /// The session waits for an answer. See `Event::Notice`. A node from
+        /// before the flag sends none, and its notices are plain.
+        #[serde(default)]
+        sticky: bool,
     },
 }
 
@@ -171,12 +175,14 @@ impl Hub {
                         title,
                         body,
                         card_id,
+                        sticky,
                     }) => h.emit(HubEvent::Notice {
                         node_id: LOCAL.into(),
                         node_name: h.engine.node_name(),
                         title,
                         body,
                         card_id,
+                        sticky,
                     }),
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(_) => break,
@@ -268,6 +274,7 @@ impl Hub {
                 "This device follows. Columns are read-only here until you make it primary again."
                     .into(),
             card_id: None,
+            sticky: false,
         });
     }
 
@@ -731,6 +738,7 @@ impl Hub {
                         title: v["title"].as_str().unwrap_or("kari").to_string(),
                         body: v["body"].as_str().unwrap_or("").to_string(),
                         card_id: v["card_id"].as_str().map(|s| s.to_string()),
+                        sticky: v["sticky"].as_bool().unwrap_or(false),
                     });
                 }
                 EventItem::Message(_) => pending = true,

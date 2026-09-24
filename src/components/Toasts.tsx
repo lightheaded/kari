@@ -78,6 +78,8 @@ function ToastItem({ t, held, onClose, onOpen, onUndo }: ItemProps) {
   });
 
   useEffect(() => {
+    // A sticky toast has no clock. It goes when its card stops waiting.
+    if (!Number.isFinite(t.ttl)) return;
     const el = bar.current;
     // No animation engine, for example in a test renderer: fall back to a timer.
     if (!el || typeof el.animate !== "function") {
@@ -106,7 +108,11 @@ function ToastItem({ t, held, onClose, onOpen, onUndo }: ItemProps) {
   }, [held]);
 
   return (
-    <div className={`toast ${t.err ? "err" : ""} ${onOpen ? "link" : ""}`} onClick={onOpen} role="status">
+    <div
+      className={`toast ${t.err ? "err" : ""} ${onOpen ? "link" : ""} ${t.sticky ? "sticky" : ""}`}
+      onClick={onOpen}
+      role="status"
+    >
       <span className="msg">{t.text}</span>
       {onOpen && (
         <button
@@ -140,7 +146,7 @@ function ToastItem({ t, held, onClose, onOpen, onUndo }: ItemProps) {
       >
         ✕
       </button>
-      <i className="life" ref={bar} />
+      {Number.isFinite(t.ttl) && <i className="life" ref={bar} />}
     </div>
   );
 }

@@ -211,9 +211,15 @@ async fn events(
                 title,
                 body,
                 card_id,
+                sticky,
             }) => SseEvent::default()
                 .event("notice")
-                .json_data(serde_json::json!({ "title": title, "body": body, "card_id": card_id }))
+                .json_data(serde_json::json!({
+                    "title": title,
+                    "body": body,
+                    "card_id": card_id,
+                    "sticky": sticky,
+                }))
                 .ok()
                 .map(Ok),
             // A slow reader lost events. The next board fetch catches up.

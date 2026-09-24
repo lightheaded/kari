@@ -30,6 +30,12 @@ axum.workspace = true
 # The updater replaces the bundle it runs from, so it exists on the desktop
 # only. The phone installs the APK through Obtainium, which watches the same
 # release and needs nothing in the app.
+# macOS notifications with a click that reports back, and with a way to take
+# one back. See src/notify.rs. The notification plugin already links both.
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSUserNotification", "NSArray", "NSString"] }
+
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
