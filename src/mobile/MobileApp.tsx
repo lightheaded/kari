@@ -6,7 +6,7 @@ import { Drawer } from "../components/Drawer";
 import { AddTaskModal } from "../components/Modals";
 import { uploadPending } from "../components/Attachments";
 import { Toasts } from "../components/Toasts";
-import { useToasts, type Undo } from "../toasts";
+import { useToasts, waitsOn, type Undo } from "../toasts";
 import { useBackClose } from "../back";
 import { accountByNode } from "../util";
 import { Inbox } from "./Inbox";
@@ -68,7 +68,7 @@ export default function MobileApp() {
   const [error, setError] = useState<string | null>(null);
   const [waited, setWaited] = useState(0);
 
-  const { toasts, toast, drop: dropToast, clear: clearToasts } = useToasts();
+  const { toasts, toast, drop: dropToast, clear: clearToasts, settle } = useToasts();
 
   // The hub may still be opening its store when the first call goes out. A
   // failed call comes back in a moment, not at the next poll thirty seconds
@@ -79,6 +79,8 @@ export default function MobileApp() {
       try {
         const b = await within(api.board(), 6, "the board");
         setBoard(b);
+        // A sticky toast goes when its card stops waiting, wherever the user answered.
+        settle(waitsOn(b.cards));
         setError(null);
       } catch (e) {
         setError(String(e));
@@ -86,7 +88,7 @@ export default function MobileApp() {
         retry.current = window.setTimeout(() => void run(attempt + 1), Math.min(8000, 400 * 2 ** attempt));
       }
     },
-    [],
+    [settle],
   );
 
   const loadSettings = useCallback(
@@ -101,7 +103,9 @@ export default function MobileApp() {
     load();
     loadSettings();
     const un1 = onBoardChanged(load);
-    const un2 = onNotice((n) => toast(`${n.title} — ${n.body}`, { card: n.card_id ? { node: n.node_id, id: n.card_id } : null }));
+    const un2 = onNotice((n) =>
+      toast(`${n.title} — ${n.body}`, { card: n.card_id ? { node: n.node_id, id: n.card_id } : null, sticky: n.sticky }),
+    );
     const t = window.setInterval(load, 30000);
     return () => {
       un1();

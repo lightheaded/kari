@@ -329,6 +329,17 @@ export interface Notice {
   card_id: string | null;
   node_id: string;
   node_name: string;
+  /** The session waits for an answer. The toast stays until it stops waiting. */
+  sticky?: boolean;
+}
+
+/** A click on a notification of the system asks the window to open a card. */
+export function onOpenCard(cb: (node: string, card: string) => void) {
+  if (!inTauri) return () => {};
+  const p = listen<{ node_id: string; card_id: string }>("open_card", (e) => cb(e.payload.node_id, e.payload.card_id));
+  return () => {
+    p.then((un) => un());
+  };
 }
 
 export function onNotice(cb: (n: Notice) => void) {

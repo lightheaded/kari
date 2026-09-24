@@ -33,6 +33,9 @@ pub enum Event {
         title: String,
         body: String,
         card_id: Option<String>,
+        /// The session waits for the user and cannot go on without an answer.
+        /// A screen keeps such a notice up until the card leaves that state.
+        sticky: bool,
     },
 }
 
@@ -131,6 +134,7 @@ impl Engine {
                     "Needs me holds the three states that wait for you. Review holds Validate and Waiting on others. {moved} manual placement(s) moved with them. Columns, then Reset to defaults, restores the six at any time."
                 ),
                 card_id: None,
+                sticky: false,
             });
         }
         Ok(engine)
@@ -749,6 +753,7 @@ impl Engine {
             title: format!("Autopilot was stopped short of a {}", r.label()),
             body: format!("The run wanted to run: {short_command}"),
             card_id,
+            sticky: false,
         });
         self.emit_changed();
     }
@@ -824,6 +829,7 @@ impl Engine {
             title: format!("Allow {tool_name}? · {title}"),
             body: summary,
             card_id,
+            sticky: true,
         });
         self.emit_changed();
         Some(rx)
@@ -1071,22 +1077,12 @@ impl Engine {
             if prev.is_none() || prev == Some(cv.state) {
                 continue;
             }
-            let notice = match cv.state {
-                DerivedState::NeedsDecision => Some(("Decision needed", cv.reason.clone())),
-                DerivedState::NeedsApproval => Some(("Approval needed", cv.reason.clone())),
-                DerivedState::Validate if cv.bg_job.is_some() => {
-                    Some(("Background job finished", cv.reason.clone()))
-                }
-                DerivedState::MyTurn if cv.reason.contains("failed") => {
-                    Some(("Background job failed", cv.reason.clone()))
-                }
-                _ => None,
-            };
-            if let Some((title, body)) = notice {
+            if let Some((title, body, sticky)) = transition_notice(prev, cv) {
                 let _ = self.tx.send(Event::Notice {
                     title: format!("{title}: {}", cv.title),
                     body,
                     card_id: Some(cv.card.id.clone()),
+                    sticky,
                 });
             }
         }
@@ -2398,6 +2394,7 @@ impl Engine {
             title: title.to_string(),
             body: body.to_string(),
             card_id: Some(card_id.to_string()),
+            sticky: false,
         });
         self.emit_changed();
     }
@@ -2701,6 +2698,7 @@ impl Engine {
                 p.reason, p.total_pct
             ),
             card_id: None,
+            sticky: false,
         });
         self.emit_changed();
     }
@@ -2779,6 +2777,7 @@ impl Engine {
                 format!("{} could not start: {}", errors.len(), errors.join("; "))
             },
             card_id: None,
+            sticky: false,
         });
         self.emit_changed();
         Ok(started)
@@ -2914,6 +2913,7 @@ impl Engine {
                                 left.num_hours().max(1)
                             ),
                             card_id: None,
+                            sticky: false,
                         });
                     }
                 }
@@ -2935,6 +2935,7 @@ impl Engine {
                     title: format!("{} holds {} cards", col.name, n),
                     body: format!("The limit is {limit}. Finish or park something."),
                     card_id: None,
+                    sticky: false,
                 });
             }
         }
@@ -3063,6 +3064,44 @@ fn booking_action(at: DateTime<Utc>, now: DateTime<Utc>, busy: bool, free: u32) 
         return Booking::Hold;
     }
     Booking::Start
+}
+
+/// The notice a change of state sends, if any, and whether it is sticky.
+///
+/// A session that stops for an answer gets a sticky notice: it cannot go on
+/// until the user acts. A session that ends its turn gets a plain one, so that
+/// no finished turn goes unseen. Only a turn that ends from Working counts. A
+/// session that goes from an approval to its turn got its answer from the
+/// user, who needs no word about it.
+///
+/// The notice of a turn says what the session said last, because the reason
+/// ("idle, between prompts") tells the user nothing they can act on.
+fn transition_notice(
+    prev: Option<DerivedState>,
+    cv: &CardView,
+) -> Option<(&'static str, String, bool)> {
+    let reason = cv.reason.clone();
+    match cv.state {
+        DerivedState::NeedsDecision => Some(("Decision needed", reason, true)),
+        DerivedState::NeedsApproval => Some(("Approval needed", reason, true)),
+        DerivedState::Validate if cv.bg_job.is_some() => {
+            Some(("Background job finished", reason, false))
+        }
+        DerivedState::MyTurn if cv.reason.contains("failed") => {
+            Some(("Background job failed", reason, false))
+        }
+        DerivedState::MyTurn if prev == Some(DerivedState::Working) => {
+            let said = cv
+                .session
+                .as_ref()
+                .and_then(|s| s.last_assistant_text.as_deref())
+                .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|t| !t.is_empty())
+                .map(|t| truncate(&t, 200));
+            Some(("Your turn", said.unwrap_or(reason), false))
+        }
+        _ => None,
+    }
 }
 
 /// One line about a tool call, for a notification: the command, the file, or
@@ -3395,6 +3434,39 @@ mod tests {
         let mut no_pane = view_with_pane(Some("t1"));
         no_pane.herdr = None;
         assert_eq!(tab_to_close(&s, &no_pane), None);
+    }
+
+    #[test]
+    fn a_wait_for_an_answer_is_sticky_and_a_finished_turn_is_not() {
+        let mut cv = view_with_pane(None);
+        cv.reason = "permission prompt".into();
+        cv.state = DerivedState::NeedsApproval;
+        let (title, _, sticky) = transition_notice(Some(DerivedState::Working), &cv).unwrap();
+        assert_eq!((title, sticky), ("Approval needed", true));
+        cv.state = DerivedState::NeedsDecision;
+        assert!(
+            transition_notice(Some(DerivedState::Working), &cv)
+                .unwrap()
+                .2
+        );
+
+        // A turn that ends says what the session said last, on one line.
+        cv.state = DerivedState::MyTurn;
+        cv.reason = "idle, between prompts".into();
+        let (title, body, sticky) = transition_notice(Some(DerivedState::Working), &cv).unwrap();
+        assert_eq!(
+            (title, body.as_str(), sticky),
+            ("Your turn", "idle, between prompts", false)
+        );
+        cv.session = Some(SessionFacts {
+            last_assistant_text: Some("Done.\n\nThe tests pass.".into()),
+            ..Default::default()
+        });
+        let (_, body, _) = transition_notice(Some(DerivedState::Working), &cv).unwrap();
+        assert_eq!(body, "Done. The tests pass.");
+
+        // The user answered an approval, so the turn after it sends nothing.
+        assert!(transition_notice(Some(DerivedState::NeedsApproval), &cv).is_none());
     }
 
     #[test]

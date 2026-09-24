@@ -509,11 +509,32 @@ herdr. A `tab.close` that fails is logged and changes nothing else.
 
 ## 11. Notifications
 
-- Decision needed, approval needed. Click opens the session.
+- Decision needed, approval needed. These are sticky: the session cannot go on
+  without the user, so the notice stays until the card leaves that state.
+- Your turn: a session ended its turn from Working. The body is the last text
+  of the session. A turn that follows an approval sends nothing, because the
+  user just acted on that session.
 - Background job finished or failed.
 - Proposal ready.
 - The weekly window resets within 24 hours and more than 25 percent is unused. Once per window.
 - A column holds more cards than its WIP limit. Once per hour per column.
+
+`Event::Notice` carries a `sticky` flag, and the hub, the node API and the
+server pass it on. A node from before the flag sends none, and its notices are
+plain. The window shows a sticky notice as a toast with no clock. It drops the
+toast when a board shows the card out of Approval and Decision.
+
+On macOS the shell posts through `mac-notification-sys`, not through the
+notification plugin (`src-tauri/src/notify.rs`). The plugin gives no click
+back and cannot take a notification back. A sticky notice carries Open and
+Dismiss buttons, so macOS shows it as an alert that stays. A click focuses the
+herdr pane of the card when this machine runs it, and opens the card in the
+window otherwise. Each notification with a card holds one thread that waits
+for the click. On every board change the shell removes the notifications that
+stopped being true: a sticky one when the card stops waiting, a plain one when
+the session works again. The library does not return its own ids, so the shell
+finds a notification by its title, which names the card. A card holds one
+notification at a time. Other platforms keep the plugin.
 
 ## 12. Architecture
 
