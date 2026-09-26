@@ -349,8 +349,12 @@ pub fn start_background(cwd: &str, prompt: &str, opts: &RunOptions) -> anyhow::R
     // The job id comes from stdout. Colour codes in it would break every later lookup.
     cmd.env("NO_COLOR", "1")
         .env_remove("FORCE_COLOR")
-        .env_remove("CLICOLOR_FORCE");
-    let out = cmd.stdin(Stdio::null()).output()?;
+        .env_remove("CLICOLOR_FORCE")
+        .stdin(Stdio::null());
+    // This call can start the Claude daemon, and every session that daemon
+    // starts later inherits the responsible app. See `proc::disclaim`.
+    crate::proc::disclaim(&mut cmd);
+    let out = cmd.output()?;
     let stdout = strip_ansi(&String::from_utf8_lossy(&out.stdout));
     let stderr = strip_ansi(&String::from_utf8_lossy(&out.stderr));
     if !out.status.success() {
@@ -421,11 +425,11 @@ pub fn stop_background(job_id: &str) -> anyhow::Result<()> {
         paths::which("claude").ok_or_else(|| anyhow::anyhow!("claude not found on PATH"))?;
     let mut cmd = Command::new(claude);
     crate::proc::quiet(&mut cmd);
-    let out = cmd
-        .args(["stop", job_id])
+    cmd.args(["stop", job_id])
         .env("PATH", paths::child_path())
-        .stdin(Stdio::null())
-        .output()?;
+        .stdin(Stdio::null());
+    crate::proc::disclaim(&mut cmd);
+    let out = cmd.output()?;
     if !out.status.success() {
         anyhow::bail!(
             "claude stop failed: {}",
