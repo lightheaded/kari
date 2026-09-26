@@ -128,6 +128,7 @@ pub fn generate(facts: &SessionFacts, model: &str) -> anyhow::Result<Summary> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    crate::proc::disclaim(&mut cmd);
     let mut child = cmd.spawn()?;
     {
         let mut stdin = child

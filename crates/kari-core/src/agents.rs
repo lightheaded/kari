@@ -14,6 +14,7 @@ pub fn list() -> anyhow::Result<Vec<BgJob>> {
     crate::proc::quiet(&mut cmd);
     cmd.args(["agents", "--json", "--all"])
         .env("PATH", paths::child_path());
+    crate::proc::disclaim(&mut cmd);
     let out = run_with_timeout(cmd, Duration::from_secs(20))?;
     let v: Value = serde_json::from_slice(&out)?;
     let Some(arr) = v.as_array() else {
