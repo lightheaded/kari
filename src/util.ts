@@ -197,18 +197,63 @@ export function clearsBox(box: string | null, sent: string, ok: boolean): boolea
 }
 
 /** How many colours the board gives out to nodes. */
-const HUES = 8;
+export const HUES = 8;
+
+/** The colours the user picked on this device, by node id. */
+let picked: Record<string, number> = {};
+
+/** Tell `nodeHue` which colours the user picked. The app calls this with the
+ *  settings each time it draws, so every tag on the screen reads one map and
+ *  no component needs the settings passed down to it. */
+export function setPickedHues(hues: Record<string, number> | null | undefined) {
+  picked = hues ?? {};
+}
+
+/** The colour a node takes when nobody picked one: its id, hashed. */
+export function autoHue(nodeId: string): number {
+  let h = 0;
+  for (let i = 0; i < nodeId.length; i++) h = (Math.imul(h, 31) + nodeId.charCodeAt(i)) >>> 0;
+  return h % HUES;
+}
+
+/** The palette index of one node: the one the user picked, else the hash. */
+export function hueIndex(nodeId: string): number {
+  const p = picked[nodeId];
+  return Number.isInteger(p) && p >= 0 && p < HUES ? p : autoHue(nodeId);
+}
 
 /** The colour class of one node.
  *
  *  A machine keeps one colour on every screen: the chip on its cards, the dot
  *  in the filter bar, and the row in the quota strip. The colour comes from
- *  the node id, so it survives a restart, and two hubs that see the same node
- *  paint it the same. Nothing stores it, and nobody picks it. */
+ *  the node id, so it survives a restart. The user can pick another one in
+ *  the node chips, and this device keeps that choice in its settings. */
 export function nodeHue(nodeId: string): string {
-  let h = 0;
-  for (let i = 0; i < nodeId.length; i++) h = (Math.imul(h, 31) + nodeId.charCodeAt(i)) >>> 0;
-  return `hue-${h % HUES}`;
+  return `hue-${hueIndex(nodeId)}`;
+}
+
+/** The nodes in the order the user gave them. A node the order does not name
+ *  keeps the place the hub gave it, after the named ones, so a new machine
+ *  appears at the end and nothing jumps. */
+export function orderNodes<T extends { id: string }>(nodes: T[], order: string[] | null | undefined): T[] {
+  const o = order ?? [];
+  const pos = new Map(o.map((id, i) => [id, i]));
+  return nodes
+    .map((n, i) => ({ n, k: pos.get(n.id) ?? o.length + i }))
+    .sort((a, b) => a.k - b.k)
+    .map((x) => x.n);
+}
+
+/** The order after one node moves one place left (-1) or right (+1). The
+ *  result names every node on the board, so the next move starts from what
+ *  the user sees. */
+export function moveNode(ids: string[], id: string, step: -1 | 1): string[] {
+  const out = [...ids];
+  const i = out.indexOf(id);
+  const j = i + step;
+  if (i < 0 || j < 0 || j >= out.length) return out;
+  [out[i], out[j]] = [out[j], out[i]];
+  return out;
 }
 
 /** Class for the status dot of a node: accent when online, muted when

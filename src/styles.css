@@ -599,6 +599,26 @@ button.nodetag:focus-visible { outline: 2px solid var(--nc, var(--accent)); outl
 .nodechip.sel { background: var(--nc-soft, var(--accent-soft)); border-color: var(--nc, var(--accent)); color: var(--nc, var(--accent)); }
 .nodechip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .nodechip .dot { width: 7px; height: 7px; border-radius: 50%; }
+.nodeedit { padding: 2px 6px; font-size: 12px; }
+/* A chip in edit mode: the dot opens the palette, the name is a field, and
+   two arrows move the chip. It keeps the shape of the chip, so the row looks
+   the same while it is edited. */
+.nodechip.edit { position: relative; gap: 3px; padding: 2px 4px 2px 6px; border-color: var(--nc, var(--line)); background: var(--nc-soft, var(--ground)); color: var(--nc, var(--ink)); }
+.nodechip.edit .swatch { display: inline-flex; align-items: center; padding: 3px; border: 0; background: transparent; border-radius: 50%; cursor: pointer; }
+.nodechip.edit .swatch .dot { width: 10px; height: 10px; background: var(--nc, var(--accent)); }
+.nodechip.edit .swatch:focus-visible { outline: 2px solid var(--accent); }
+.nodechip.edit .nn { width: auto; border-radius: 0; font: inherit; color: inherit; background: transparent; border: 0; border-bottom: 1px dashed currentColor; padding: 1px 0; min-width: 4ch; outline: none; }
+.nodechip.edit .nn:focus { border-bottom-style: solid; }
+.nodechip.edit .mv { border: 0; background: transparent; color: inherit; font: 600 13px/1 var(--mono); padding: 1px 3px; border-radius: 4px; cursor: pointer; }
+.nodechip.edit .mv:hover:not(:disabled) { background: var(--surface-2); }
+.nodechip.edit .mv:disabled { opacity: 0.3; cursor: default; }
+.nodechip .palette {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; display: grid; grid-template-columns: repeat(4, 18px); gap: 6px;
+  padding: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.palette .sw { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; background: var(--nc); cursor: pointer; padding: 0; }
+.palette .sw.sel { border-color: var(--ink); box-shadow: inset 0 0 0 2px var(--surface); }
+.palette .sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dot.online { background: var(--accent); }
 .dot.offline { background: var(--ink-3); }
 .dot.disabled { background: transparent; border: 1px solid var(--ink-3); }
@@ -620,7 +640,6 @@ button.nodetag:focus-visible { outline: 2px solid var(--nc, var(--accent)); outl
   padding: 6px 0; border-bottom: 1px solid var(--line-soft);
 }
 .noderow .nodename { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.noderow input.nodename { padding: 5px 7px; border-radius: 4px; border: 1px solid var(--line); background: var(--ground); width: 100%; }
 .noderow .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px/1.3 var(--mono); }
 .noderow .nodeacts { display: flex; gap: 4px; justify-content: flex-end; }
 .nodeerr { grid-column: 1 / -1; font-size: 11.5px; color: var(--rust); }
