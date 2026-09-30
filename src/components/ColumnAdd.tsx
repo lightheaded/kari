@@ -16,19 +16,23 @@ interface Props {
   /** Read the draft. The answer holds the node, the project and a tag that
    *  missed. It is read on every keystroke, so the card never goes unseen. */
   preview: (title: string) => AddPreview;
-  /** Save a one-line task. Rejects when the node refuses it. */
-  onAdd: (title: string) => Promise<void>;
+  /** Save a one-line task. Answers false when the node refuses it. */
+  onAdd: (title: string) => Promise<boolean>;
   /** Open the full dialog with what is typed so far. */
   onFull: (title: string) => void;
 }
 
 /** The foot of every column: add a task here without leaving the board. Enter
  *  saves and keeps the field open for the next one. Escape closes it. A
- *  `#project` word in the line picks the project and leaves the title. */
+ *  `#project` word in the line picks the project and leaves the title.
+ *
+ *  The field empties on Enter, not when the node answers. The answer and the
+ *  board after it can take seconds, and a field that still held the line
+ *  read as if the task was not saved. A line the node refuses comes back,
+ *  unless the user already typed the next one. */
 export function ColumnAdd({ columnName, preview, onAdd, onFull }: Props) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
-  const [busy, setBusy] = useState(false);
   const area = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -37,14 +41,13 @@ export function ColumnAdd({ columnName, preview, onAdd, onFull }: Props) {
 
   const save = async () => {
     const t = title.trim();
-    if (!t || busy) return;
-    setBusy(true);
-    try {
-      await onAdd(t);
-      setTitle("");
-      area.current?.focus();
-    } finally {
-      setBusy(false);
+    if (!t) return;
+    setTitle("");
+    area.current?.focus();
+    const ok = await onAdd(t);
+    if (!ok) {
+      setOpen(true);
+      setTitle((now) => (now.trim() ? now : t));
     }
   };
 
@@ -65,7 +68,6 @@ export function ColumnAdd({ columnName, preview, onAdd, onFull }: Props) {
         ref={area}
         rows={2}
         value={title}
-        disabled={busy}
         placeholder="What needs to happen · #project"
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => {
@@ -105,7 +107,7 @@ export function ColumnAdd({ columnName, preview, onAdd, onFull }: Props) {
         <button className="btn ghost sm" onClick={() => onFull(title)} title="Open the full dialog">
           More ⌄
         </button>
-        <button className="btn primary sm" disabled={!title.trim() || busy} onClick={save}>
+        <button className="btn primary sm" disabled={!title.trim()} onClick={save}>
           Add
         </button>
       </div>

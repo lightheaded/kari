@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, onBoardChanged, onNotice } from "../api";
+import { isCard, useBoard } from "../boardload";
 import type { HubBoard, HubCard, Project, Settings } from "../types";
 import type { Picked } from "../components/Board";
 import { Drawer } from "../components/Drawer";
@@ -59,35 +60,25 @@ const EMPTY_BOARD: HubBoard = {
 
 /** The phone: four tabs, one card sheet, the same commands as the desktop. */
 export default function MobileApp() {
-  const [board, setBoard] = useState<HubBoard | null>(null);
+  // The hub may still be opening its store when the first call goes out. A
+  // failed call comes back in a moment, not at the next poll thirty seconds
+  // later, which is what made the first screen look stuck.
+  const retry = useRef<number | null>(null);
+  const fetchBoard = useCallback(() => within(api.board(), 6, "the board"), []);
+  const { board, error, failed, load, wrote, put } = useBoard(fetchBoard);
+  useEffect(() => {
+    if (failed === 0) return;
+    if (retry.current !== null) window.clearTimeout(retry.current);
+    retry.current = window.setTimeout(() => void load(), Math.min(8000, 400 * 2 ** (failed - 1)));
+  }, [failed, load]);
   const [settings, setSettings] = useState<Settings | null>(null);
   // The board opens first, on its Working column: a phone is taken out to see
   // what runs, and the inbox badge says when something needs an answer.
   const [tab, setTab] = useState<Tab>("board");
   const [selected, setSelected] = useState<Picked | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [waited, setWaited] = useState(0);
 
   const { toasts, toast, drop: dropToast, clear: clearToasts } = useToasts();
-
-  // The hub may still be opening its store when the first call goes out. A
-  // failed call comes back in a moment, not at the next poll thirty seconds
-  // later, which is what made the first screen look stuck.
-  const retry = useRef<number | null>(null);
-  const load = useCallback(
-    async function run(attempt = 0): Promise<void> {
-      try {
-        const b = await within(api.board(), 6, "the board");
-        setBoard(b);
-        setError(null);
-      } catch (e) {
-        setError(String(e));
-        if (retry.current !== null) window.clearTimeout(retry.current);
-        retry.current = window.setTimeout(() => void run(attempt + 1), Math.min(8000, 400 * 2 ** attempt));
-      }
-    },
-    [],
-  );
 
   const loadSettings = useCallback(
     () =>
@@ -113,7 +104,8 @@ export default function MobileApp() {
 
   /** `undo` and `card` can read the result, for example the card a new task
    *  became. A card that the action creates has no id until the action
-   *  answers, so the failed action reports no card. */
+   *  answers, so the failed action reports no card. An action that answers
+   *  with a card puts it on the board at once, as the desktop does. */
   const run = useCallback(
     async <T,>(
       fn: () => Promise<T>,
@@ -123,19 +115,22 @@ export default function MobileApp() {
     ) => {
       try {
         const r = await fn();
+        const c = typeof card === "function" ? card(r) : card;
+        const shown = isCard(r) && !!c && c.id === r.id;
+        if (shown) put(c.node, r);
         if (ok) {
           const u = typeof undo === "function" ? undo(r) : undo;
-          const c = typeof card === "function" ? card(r) : card;
           toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined, card: c ?? undefined });
         }
-        await load();
+        if (shown) void wrote();
+        else await wrote();
         return true;
       } catch (e) {
         toast(String(e), { err: true, card: typeof card === "function" ? undefined : (card ?? undefined) });
         return false;
       }
     },
-    [load, toast],
+    [wrote, put, toast],
   );
 
   /** The user pressed Undo. The reversal is an action like any other. */
@@ -197,6 +192,11 @@ export default function MobileApp() {
               run(
                 async () => {
                   const card = await api.addTask(nodeId, t);
+                  put(nodeId, card, {
+                    nodeName: nodes.find((n) => n.id === nodeId)?.name ?? nodeId,
+                    columnId: t.column_id ?? null,
+                    projectName: projectsByNode[nodeId]?.find((p) => p.cwd === t.project_cwd)?.name ?? null,
+                  });
                   const failed = await uploadPending(nodeId, card.id, files);
                   for (const line of failed) toast(line, { err: true });
                   return card;

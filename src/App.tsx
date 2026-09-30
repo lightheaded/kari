@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
-import type { AutomationMode, Column, HubBoard, HubCard, Project, Settings } from "./types";
+import { isCard, useBoard } from "./boardload";
+import type { AutomationMode, Column, HubCard, Project, Settings } from "./types";
 import { setAccountAutomation, setAutomation } from "./automation";
 import { Board, type Picked, type Reorder } from "./components/Board";
 import type { AddPreview } from "./components/ColumnAdd";
@@ -59,7 +60,7 @@ function QuitAsk({ grace, onKeep, onQuit }: { grace: number | null; onKeep: () =
 const PROJ_SEP = "\u0001";
 
 export default function App() {
-  const [board, setBoard] = useState<HubBoard | null>(null);
+  const { board, error, load, wrote, put } = useBoard(api.board);
   const [selected, setSelected] = useState<Picked | null>(null);
   const [query, setQuery] = useState("");
   const [project, setProject] = useState("");
@@ -76,7 +77,6 @@ export default function App() {
    *  dialog, so the tag is not lost when the user asks for more fields. */
   const [addTagged, setAddTagged] = useState<{ node: string; cwd: string | null } | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [planHidden, setPlanHidden] = useState<Set<string>>(() => new Set());
   /** The tray, Cmd+Q, or a rebuild asked to quit while a form holds unsaved
    *  input. `grace` counts the seconds left before kari quits anyway. */
@@ -84,16 +84,6 @@ export default function App() {
   const [refreshingQuota, setRefreshingQuota] = useState(false);
 
   const { toasts, toast, drop: dropToast, clear: clearToasts } = useToasts();
-
-  const load = useCallback(async () => {
-    try {
-      const b = await api.board();
-      setBoard(b);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
 
   useEffect(() => {
     load();
@@ -124,7 +114,11 @@ export default function App() {
   /** Run one action, report it, and offer its undo when it has one. `undo` and
    *  `card` can read the result, for example the card a new task became. A
    *  card that the action creates has no id until the action answers, so the
-   *  failed action reports no card. */
+   *  failed action reports no card.
+   *
+   *  An action that answers with a card puts that card on the board at once,
+   *  and the fresh board follows without a wait. Any other action waits for
+   *  the fresh board, because nothing else shows what it changed. */
   const run = useCallback(
     async <T,>(
       fn: () => Promise<T>,
@@ -134,19 +128,22 @@ export default function App() {
     ) => {
       try {
         const r = await fn();
+        const c = typeof card === "function" ? card(r) : card;
+        const shown = isCard(r) && !!c && c.id === r.id;
+        if (shown) put(c.node, r);
         if (ok) {
           const u = typeof undo === "function" ? undo(r) : undo;
-          const c = typeof card === "function" ? card(r) : card;
           toast(typeof r === "string" && r ? r : ok, { undo: u ?? undefined, card: c ?? undefined });
         }
-        await load();
+        if (shown) void wrote();
+        else await wrote();
         return true;
       } catch (e) {
         toast(String(e), { err: true, card: typeof card === "function" ? undefined : (card ?? undefined) });
         return false;
       }
     },
-    [load, toast],
+    [wrote, put, toast],
   );
 
   /** The user pressed Undo. The reversal is an action like any other. */
@@ -295,13 +292,15 @@ export default function App() {
 
   /** A one-line task from the foot of a column. A `#tag` in the line picks the
    *  project, and the tag itself does not reach the title. The toast carries
-   *  the new card, so the line the user just typed can be opened at once. */
-  const addInline = async (columnId: string, raw: string) => {
+   *  the new card, so the line the user just typed can be opened at once.
+   *  The card goes on the board as soon as the node answers, before the next
+   *  board, so the toast never opens a card that is not there yet. */
+  const addInline = async (columnId: string, raw: string): Promise<boolean> => {
     const d = readDraft(raw);
     const nodeId = d.target.node || localNodeId;
-    await run(
-      () =>
-        api.addTask(nodeId, {
+    const ok = await run(
+      async () => {
+        const card = await api.addTask(nodeId, {
           title: d.title,
           project_cwd: d.target.cwd,
           run_prompt: null,
@@ -310,12 +309,16 @@ export default function App() {
           notes: null,
           model: null,
           column_id: columnId,
-        }),
+        });
+        put(nodeId, card, { nodeName: nodeById.get(nodeId)?.name ?? nodeId, columnId, projectName: d.target.name });
+        return card;
+      },
       "Task added",
       undefined,
-      (c) => ({ node: addNode, id: c.id }),
+      (c) => ({ node: nodeId, id: c.id }),
     );
-    rememberProject(nodeId, d.target.cwd);
+    if (ok) rememberProject(nodeId, d.target.cwd);
+    return ok;
   };
 
   return (
@@ -514,6 +517,11 @@ export default function App() {
             run(
               async () => {
                 const card = await api.addTask(nodeId, t);
+                put(nodeId, card, {
+                  nodeName: nodeById.get(nodeId)?.name ?? nodeId,
+                  columnId: t.column_id ?? null,
+                  projectName: projects.find(([, p]) => p.node === nodeId && p.cwd === t.project_cwd)?.[1].name ?? null,
+                });
                 // The files go up after the card exists, because an
                 // attachment belongs to a card on a node. A file that is
                 // refused is named, and the card stays.
