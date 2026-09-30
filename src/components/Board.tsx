@@ -42,7 +42,7 @@ interface Props {
   onReorder: (r: Reorder) => void;
   onJump: (nodeId: string, cardId: string) => void;
   onFilterNode: (nodeId: string) => void;
-  onAdd: (columnId: string, title: string) => Promise<void>;
+  onAdd: (columnId: string, title: string) => Promise<boolean>;
   onAddFull: (columnId: string, title: string) => void;
   /** Read a draft line: where it lands, and whether a `#tag` missed. Shown at
    *  the foot of every column. */
@@ -93,7 +93,7 @@ interface ColProps {
   onSelect: (nodeId: string, cardId: string) => void;
   onJump: (nodeId: string, cardId: string) => void;
   onFilterNode: (nodeId: string) => void;
-  onAdd: (title: string) => Promise<void>;
+  onAdd: (title: string) => Promise<boolean>;
   onAddFull: (title: string) => void;
   addPreview: (title: string) => AddPreview;
   /** Give every placed card of this column back to the automatic order. */
