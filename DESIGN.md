@@ -729,9 +729,15 @@ node, and every card with its node id and node name. Rules:
 - A card is `(node id, card id)`. Every action routes by node.
 - Each card shows a node tag: the machine, and the account that pays for it.
   A chip row filters the board to one node. The tag holds the colour of the
-  machine, from a hash of the node id over eight colours (`nodeHue`). Nothing
-  stores the colour and nobody picks it, so it survives a restart, and two
-  hubs that see one node paint it the same. The colour marks the machine
+  machine, from a hash of the node id over eight colours (`nodeHue`). The
+  hash survives a restart and needs no setting. The user can pick another of
+  the eight colours with ✎ beside the chips. That edit mode also renames a
+  node and moves it left or right. The picked colours (`node_hues`) and the
+  order (`node_order`) are view settings of this device. They go to no other
+  hub, so a phone keeps the hashed colours. Every list of nodes follows the
+  order: the chips, the stats strip, the task dialog and Settings. The name
+  takes the path it had in Settings: this machine keeps its name in its own
+  settings, and a remote node is renamed on this hub. The colour marks the machine
   everywhere: the tag, the filter chip, the row in the stats strip, the head
   of a queue block and the head of a plan. State keeps its own colours, on
   the left edge of the card and in the state chip, so a machine never reads

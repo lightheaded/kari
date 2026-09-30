@@ -597,9 +597,6 @@ export function ColumnsModal({
 function NodeRow({
   node,
   busy,
-  localName,
-  onLocalName,
-  onRename,
   onToggle,
   onAway,
   onPair,
@@ -607,9 +604,6 @@ function NodeRow({
 }: {
   node: NodeStatus;
   busy: boolean;
-  localName: string;
-  onLocalName: (name: string) => void;
-  onRename: (name: string) => void;
   onToggle: () => void;
   onAway: () => void;
   onPair: () => void;
@@ -617,10 +611,6 @@ function NodeRow({
 }) {
   const [confirm, setConfirm] = useState(false);
   const local = node.kind === "local";
-  const rename = (e: { currentTarget: HTMLInputElement }) => {
-    const name = e.currentTarget.value.trim();
-    if (name && name !== node.name) onRename(name);
-  };
   return (
     <div className="noderow">
       <span
@@ -636,25 +626,11 @@ function NodeRow({
               : "offline"
             : "off"}
       </span>
-      {local ? (
-        <input
-          {...noAutoFill}
-          className="nodename"
-          value={localName}
-          placeholder="the host name"
-          aria-label="Name of this machine"
-          onChange={(e) => onLocalName(e.target.value)}
-        />
-      ) : (
-        <input
-          {...noAutoFill}
-          className="nodename"
-          defaultValue={node.name}
-          aria-label={`Name of ${node.name}`}
-          onBlur={rename}
-          onKeyDown={(e) => e.key === "Enter" && rename(e)}
-        />
-      )}
+      {/* The name is changed in the node chips above the board, with the
+          colour and the order. */}
+      <span className="nodename" title="Rename a node with ✎ beside the node chips above the board">
+        {node.name}
+      </span>
       <span className="hint">
         {local
           ? "local"
@@ -857,16 +833,12 @@ function NodesSection({
   nodes,
   primary,
   onNodesChanged,
-  localName,
-  onLocalName,
   listenOn,
   onListenOn,
 }: {
   nodes: NodeStatus[];
   primary: boolean;
   onNodesChanged: () => void;
-  localName: string;
-  onLocalName: (name: string) => void;
   listenOn: string;
   onListenOn: (value: string) => void;
 }) {
@@ -1027,11 +999,6 @@ function NodesSection({
             key={n.id}
             node={n}
             busy={busy}
-            localName={localName}
-            onLocalName={onLocalName}
-            onRename={(newName) =>
-              change(() => api.updateNode(n.id, { name: newName }))
-            }
             onToggle={() =>
               change(() => api.updateNode(n.id, { enabled: !n.enabled }))
             }
@@ -1317,8 +1284,6 @@ export function SettingsModal({
         nodes={nodes}
         primary={primary}
         onNodesChanged={onNodesChanged}
-        localName={s.node_name ?? ""}
-        onLocalName={(name) => setS({ ...s, node_name: name })}
         listenOn={s.listen_on}
         onListenOn={(on) => {
           setS({ ...s, listen_on: on });

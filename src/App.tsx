@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, onBoardChanged, onConfirmQuit, onNotice } from "./api";
-import type { AutomationMode, Column, HubBoard, HubCard, Project, Settings } from "./types";
+import type { AutomationMode, Column, HubBoard, HubCard, NodeStatus, Project, Settings } from "./types";
 import { setAccountAutomation, setAutomation } from "./automation";
 import { Board, type Picked, type Reorder } from "./components/Board";
 import type { AddPreview } from "./components/ColumnAdd";
 import { Drawer } from "./components/Drawer";
 import { StatsStrip } from "./components/StatsStrip";
+import { NodeChips } from "./components/NodeChips";
 import { AutomationSwitch } from "./components/AutomationSwitch";
 import { QueueStrip } from "./components/QueueStrip";
 import { ProjectPicker, type PickerItem } from "./components/ProjectPicker";
@@ -16,7 +17,7 @@ import { useToasts, type Undo } from "./toasts";
 import { restartApp, updatesSupported, useUpdater } from "./update";
 import { useSticky } from "./hooks";
 import { anyDirty } from "./dirty";
-import { accountByNode, addTarget, nodeDot, nodeHue, noAutoFill, taggedTask } from "./util";
+import { accountByNode, addTarget, moveNode, noAutoFill, orderNodes, setPickedHues, taggedTask } from "./util";
 import { uploadPending } from "./components/Attachments";
 
 /** The quit question. A quit that a rebuild asked for counts down: with nobody
@@ -168,7 +169,11 @@ export default function App() {
   // before the answer arrived.
   const updater = useUpdater(settings ? settings.auto_update : null, updateReady);
 
-  const nodes = useMemo(() => board?.nodes ?? [], [board]);
+  // Every tag on the screen reads the colours from here, so this runs before
+  // anything below draws one.
+  setPickedHues(settings?.node_hues);
+  const nodeOrder = settings?.node_order;
+  const nodes = useMemo(() => orderNodes(board?.nodes ?? [], nodeOrder), [board, nodeOrder]);
   const manyNodes = nodes.length > 1;
   /** The account of each node. Empty while one account pays for everything. */
   const accountOf = useMemo(() => accountByNode(board?.accounts ?? []), [board]);
@@ -284,6 +289,31 @@ export default function App() {
         }
       : undefined;
 
+  /** Save a change to how this device shows the nodes: a colour or the order.
+   *  The screen takes the change at once, and the toast offers it back. */
+  const saveLook = (patch: Partial<Settings>, done: string) => {
+    if (!settings) return;
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    run(() => api.setSettings(next), done, undoSettings(settings)).then((ok) => {
+      if (!ok) setSettings(settings);
+    });
+  };
+
+  /** Rename a node. This machine keeps its own name in its settings, and the
+   *  other nodes do too, so a remote node is renamed on this hub only. */
+  const renameNode = (n: NodeStatus, name: string) => {
+    if (n.kind === "local") {
+      saveLook({ node_name: name }, `Renamed to ${name}`);
+      return;
+    }
+    const was = n.name;
+    run(() => api.updateNode(n.id, { name }), `Renamed to ${name}`, {
+      done: `Named ${was} again`,
+      run: () => api.updateNode(n.id, { name: was }),
+    });
+  };
+
   /** A card dropped in another column. Say where it went, and offer the way back. */
   const moveCard = (nodeId: string, id: string, columnId: string) => {
     const was = board?.cards.find((c) => c.node_id === nodeId && c.card.id === id)?.column_id;
@@ -392,32 +422,21 @@ export default function App() {
           ariaLabel="Filter by project"
           onChange={setProject}
         />
-        {manyNodes && (
-          <div className="nodechips">
-            <button className={`nodechip ${node === "" ? "sel" : ""}`} onClick={() => setNodeFilter("")}>
-              All nodes
-            </button>
-            {nodes.map((n) => (
-              <button
-                key={n.id}
-                // The chip carries the colour of the machine, so the filter
-                // reads in the same colour as the cards it keeps.
-                className={`nodechip ${nodeHue(n.id)} ${node === n.id ? "sel" : ""}`}
-                title={[
-                  (n.error ?? (n.enabled ? (n.online ? "online" : "offline") : "disabled")) +
-                    (n.pending_writes ? `, ${n.pending_writes} change(s) waiting` : ""),
-                  accountOf.get(n.id) ? `Account: ${accountOf.get(n.id)}` : "",
-                ]
-                  .filter(Boolean)
-                  .join("\n")}
-                onClick={() => setNodeFilter(node === n.id ? "" : n.id)}
-              >
-                <span className={nodeDot(n)} />
-                {n.name}
-              </button>
-            ))}
-          </div>
-        )}
+        <NodeChips
+          nodes={nodes}
+          filter={node}
+          onFilter={setNodeFilter}
+          accountOf={accountOf}
+          editable={settings !== null}
+          onHue={(id, hue) => {
+            const hues = { ...(settings?.node_hues ?? {}) };
+            if (hue === null) delete hues[id];
+            else hues[id] = hue;
+            saveLook({ node_hues: hues }, hue === null ? "Colour reset" : "Colour changed");
+          }}
+          onMove={(id, step) => saveLook({ node_order: moveNode(nodes.map((n) => n.id), id, step) }, "Nodes reordered")}
+          onRename={renameNode}
+        />
         <span className="meta">
           {filtered.length} cards{board?.scanning ? " · scanning…" : ""}
           {board ? ` · updated ${new Date(board.generated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}

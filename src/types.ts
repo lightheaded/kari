@@ -455,6 +455,11 @@ export interface Settings {
   listen_on: string;
   /** Install a new kari without asking. Desktop only; the node has a flag. */
   auto_update: boolean;
+  /** The colour this device gives a node, as a palette index, by node id.
+   *  A node with no entry takes the colour of its id. */
+  node_hues: Record<string, number>;
+  /** The order this device shows the nodes in. Unlisted nodes follow. */
+  node_order: string[];
 }
 /** A project directory a node knows, with the name the board shows for it. */
 export interface Project {

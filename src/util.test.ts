@@ -6,12 +6,15 @@ import {
   clearsBox,
   FIVE_HOUR_MS,
   fuzzyScore,
+  moveNode,
   nextReset,
   nodeHue,
+  orderNodes,
   planReorder,
   resetIn,
   RESET_MARGIN_MS,
   schedulePreview,
+  setPickedHues,
   sharedMode,
   sortCards,
   taggedTask,
@@ -456,6 +459,50 @@ describe("nodeHue", () => {
 
   test("two nodes rarely share a colour", () => {
     expect(nodeHue("studio")).not.toBe(nodeHue("lab"));
+  });
+
+  test("a picked colour wins over the hash, and only for its node", () => {
+    const auto = nodeHue("studio");
+    const other = auto === "hue-3" ? 4 : 3;
+    setPickedHues({ studio: other });
+    expect(nodeHue("studio")).toBe(`hue-${other}`);
+    expect(nodeHue("lab")).toBe(nodeHue("lab"));
+    setPickedHues(null);
+    expect(nodeHue("studio")).toBe(auto);
+  });
+
+  test("a colour outside the palette falls back to the hash", () => {
+    const auto = nodeHue("studio");
+    setPickedHues({ studio: 12 });
+    expect(nodeHue("studio")).toBe(auto);
+    setPickedHues({});
+  });
+});
+
+describe("orderNodes", () => {
+  const ns = ["local", "a", "b", "c"].map((id) => ({ id }));
+  const ids = (xs: { id: string }[]) => xs.map((x) => x.id);
+
+  test("no order keeps the order of the hub", () => {
+    expect(ids(orderNodes(ns, []))).toEqual(["local", "a", "b", "c"]);
+    expect(ids(orderNodes(ns, null))).toEqual(["local", "a", "b", "c"]);
+  });
+
+  test("named nodes come first, the rest keep their place after them", () => {
+    expect(ids(orderNodes(ns, ["c", "a"]))).toEqual(["c", "a", "local", "b"]);
+  });
+
+  test("a node the board lost does not hold a place", () => {
+    expect(ids(orderNodes(ns, ["gone", "b"]))).toEqual(["b", "local", "a", "c"]);
+  });
+});
+
+describe("moveNode", () => {
+  test("moves one place and stops at the ends", () => {
+    expect(moveNode(["a", "b", "c"], "b", -1)).toEqual(["b", "a", "c"]);
+    expect(moveNode(["a", "b", "c"], "b", 1)).toEqual(["a", "c", "b"]);
+    expect(moveNode(["a", "b", "c"], "a", -1)).toEqual(["a", "b", "c"]);
+    expect(moveNode(["a", "b", "c"], "c", 1)).toEqual(["a", "b", "c"]);
   });
 });
 

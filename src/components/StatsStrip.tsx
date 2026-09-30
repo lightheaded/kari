@@ -88,6 +88,8 @@ function Name({ row, onRename }: { row: AccountQuota; onRename: (alias: string) 
 
 interface RowProps {
   row: AccountQuota;
+  /** The place of a node in the order the user gave the nodes. */
+  at: (nodeId: string) => number;
   byId: Map<string, NodeStatus>;
   /** Every machine on the board. The row's switch takes the ones it pays for. */
   nodes: NodeStatus[];
@@ -103,7 +105,7 @@ interface RowProps {
   refreshing?: boolean;
 }
 
-function Row({ row, byId, nodes, showNodes, onFill, onHelp, onRename, onMode, onRefresh, refreshing }: RowProps) {
+function Row({ row, at, byId, nodes, showNodes, onFill, onHelp, onRename, onMode, onRefresh, refreshing }: RowProps) {
   const quota = row.quota;
   const stale = quota ? (Date.now() - new Date(quota.at).getTime()) / 1000 > 300 : false;
   const cal = row.calibration
@@ -115,15 +117,15 @@ function Row({ row, byId, nodes, showNodes, onFill, onHelp, onRename, onMode, on
       <Name row={row} onRename={onRename} />
       {showNodes && (
         <span className="anodes" title={`${row.node_names.length} machine(s) spend this quota`}>
-          {row.node_ids.map((id, i) => {
-            const n = byId.get(id);
-            return (
+          {row.node_ids
+            .map((id, i) => ({ id, name: byId.get(id)?.name ?? row.node_names[i], n: byId.get(id) }))
+            .sort((a, b) => at(a.id) - at(b.id))
+            .map(({ id, name, n }) => (
               <span key={id} className={`anode ${nodeHue(id)}`}>
                 <span className={n ? nodeDot(n) : "dot"} />
-                {row.node_names[i]}
+                {name}
               </span>
-            );
-          })}
+            ))}
         </span>
       )}
       {quota ? (
@@ -201,9 +203,16 @@ interface Props {
  *  strip scrolls after that, so the top bar itself never grows. */
 export function StatsStrip({ accounts, nodes, onFill, onHelp, onRename, onMode, onRefresh, refreshing }: Props) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  // The rows, and the machines on each row, follow the order the user gave
+  // the nodes in the chips above the board. A row keeps its own list as it
+  // came, because Fill plans on the first machine of that list.
+  const pos = new Map(nodes.map((n, i) => [n.id, i]));
+  const at = (id: string) => pos.get(id) ?? nodes.length;
   const rows: AccountQuota[] =
     accounts.length > 0
       ? accounts
+          // A row stands where its first machine stands.
+          .sort((a, b) => Math.min(...a.node_ids.map(at)) - Math.min(...b.node_ids.map(at)))
       : [
           {
             key: `node:${nodes[0]?.id ?? "local"}`,
@@ -229,6 +238,7 @@ export function StatsStrip({ accounts, nodes, onFill, onHelp, onRename, onMode, 
             <Row
               key={row.key}
               row={row}
+              at={at}
               byId={byId}
               nodes={nodes}
               showNodes={nodes.length > 1}

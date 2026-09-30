@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// State derived from all signals. Columns accept sets of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1094,6 +1094,14 @@ pub struct Settings {
     /// its host, which pins a version on purpose, so it updates itself only
     /// when `kari-node serve` is started with `--auto-update`.
     pub auto_update: bool,
+    /// The colour this device gives a node, as an index into the node palette,
+    /// keyed on the node id the board uses. A node with no entry takes the
+    /// colour its id hashes to. A view choice of this device: it goes to no
+    /// other hub, and the node itself does not know it.
+    pub node_hues: BTreeMap<String, u8>,
+    /// The order this device shows the nodes in, as node ids. A node that is
+    /// not in the list follows the listed ones, in the order the hub gives.
+    pub node_order: Vec<String>,
     /// The switch this replaced: it bound every private address. Read once so
     /// that a machine set up before the picker keeps answering, then written
     /// back as `*`. Never sent to the UI.
@@ -1177,6 +1185,8 @@ impl Default for Settings {
             attachment_keep_days: 7,
             listen_on: String::new(),
             auto_update: true,
+            node_hues: BTreeMap::new(),
+            node_order: Vec::new(),
             listen_private: false,
         }
     }
