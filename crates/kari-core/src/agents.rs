@@ -108,6 +108,9 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> anyhow::Result<Vec<u
         }
         if start.elapsed() > timeout {
             let _ = child.kill();
+            // Reap it, or the dead process stays in the table as a zombie
+            // for as long as the daemon runs.
+            let _ = child.wait();
             anyhow::bail!("timed out");
         }
         std::thread::sleep(Duration::from_millis(50));

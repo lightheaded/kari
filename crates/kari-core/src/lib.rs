@@ -34,6 +34,7 @@ pub mod store;
 pub mod summary;
 pub mod transcript;
 pub mod tunnel;
+pub mod watch;
 
 pub use engine::{Engine, Event};
 pub use model::*;

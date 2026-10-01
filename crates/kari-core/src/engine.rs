@@ -3,11 +3,10 @@
 use crate::model::*;
 use crate::{
     agents, attach, estimate, gate, herdr, hooks, infer, launcher, paths, peer, planner, quota,
-    registry, store::Store, summary, transcript,
+    registry, store::Store, summary, transcript, watch,
 };
 use chrono::{DateTime, Duration, Utc};
-use notify::RecursiveMode;
-use notify_debouncer_mini::new_debouncer;
+use notify::{RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,6 +17,11 @@ use tracing::{info, warn};
 /// Seconds between two looks at the planner triggers. The poller runs every
 /// 15 seconds and calls `proposal_tick` on every fourth round.
 const PROPOSAL_TICK_SECS: i64 = 60;
+
+/// The least time between two runs of `claude agents`. Each run starts a Node
+/// process, so the watcher, the poller and a user action must not each start
+/// one. See `watch::Gate`.
+const AGENTS_MIN_GAP: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// The first eight characters of an id, for log lines. Never slices bytes.
 fn short(s: &str) -> String {
@@ -71,6 +75,8 @@ pub struct Engine {
     settings: RwLock<Settings>,
     tx: broadcast::Sender<Event>,
     scanning: AtomicBool,
+    /// Serializes and spaces out `claude agents`. Hold it for the whole run.
+    jobs_gate: Mutex<watch::Gate>,
 }
 
 impl Engine {
@@ -118,6 +124,7 @@ impl Engine {
             settings: RwLock::new(settings),
             tx,
             scanning: AtomicBool::new(false),
+            jobs_gate: Mutex::new(watch::Gate::default()),
         });
         if let Some(moved) = merged {
             let _ = engine
@@ -341,7 +348,20 @@ impl Engine {
         }
     }
 
+    /// Ask `claude agents` for the background jobs. One run at a time, and
+    /// at least `AGENTS_MIN_GAP` apart: a caller that arrives while a run is
+    /// in flight waits for it and then skips its own, because that run saw
+    /// the change the caller came for. A caller that arrives soon after a
+    /// run waits out the gap, so a burst of events costs one process.
     pub fn scan_jobs(&self) {
+        let arrived = std::time::Instant::now();
+        let mut gate = self.jobs_gate.lock().unwrap();
+        let Some(wait) = gate.wait_for(arrived, std::time::Instant::now(), AGENTS_MIN_GAP) else {
+            return;
+        };
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
         match agents::list() {
             Ok(jobs) => {
                 let mut snap = self.snap.write().unwrap();
@@ -349,6 +369,8 @@ impl Engine {
             }
             Err(e) => warn!("claude agents: {e}"),
         }
+        gate.done(std::time::Instant::now());
+        drop(gate);
         let jobs: Vec<BgJob> = self.snap.read().unwrap().jobs.clone();
         if let Err(e) = self.link_jobs(&jobs) {
             warn!("link jobs: {e}");
@@ -2953,19 +2975,25 @@ impl Engine {
             })
             .expect("spawn");
 
-        // File watcher: registry, transcripts, jobs, rate limits.
+        // File watcher: registry, transcripts, jobs, rate limits. Reads of a
+        // watched file are events too on Linux, and the engine reads these
+        // files on every scan, so `watch::coalesce` drops them before they
+        // can start the next scan. See the note at the top of `watch.rs`.
         let me = Arc::clone(self);
         std::thread::Builder::new()
             .name("kari-watch".into())
             .spawn(move || {
                 let (tx, rx) = std::sync::mpsc::channel();
-                let mut debouncer = match new_debouncer(std::time::Duration::from_millis(600), tx) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        warn!("watcher failed: {e}");
-                        return;
-                    }
-                };
+                let mut watcher =
+                    match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                        let _ = tx.send(res);
+                    }) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            warn!("watcher failed: {e}");
+                            return;
+                        }
+                    };
                 for (p, mode) in [
                     (paths::claude_sessions_dir(), RecursiveMode::NonRecursive),
                     (paths::claude_projects_dir(), RecursiveMode::Recursive),
@@ -2973,22 +3001,18 @@ impl Engine {
                     (paths::kari_dir(), RecursiveMode::NonRecursive),
                 ] {
                     let _ = std::fs::create_dir_all(&p);
-                    if let Err(e) = debouncer.watcher().watch(Path::new(&p), mode) {
+                    if let Err(e) = watcher.watch(Path::new(&p), mode) {
                         warn!("watch {}: {e}", p.display());
                     }
                 }
-                for res in rx {
-                    match res {
-                        Ok(events) => {
-                            let jobs_dir = paths::claude_jobs_dir();
-                            let touches_jobs = events.iter().any(|e| e.path.starts_with(&jobs_dir));
-                            if touches_jobs {
-                                me.scan_jobs();
-                            }
-                            me.refresh_light();
-                        }
-                        Err(e) => warn!("watch error: {e}"),
+                while let Some(changed) =
+                    watch::coalesce(&rx, std::time::Duration::from_millis(600))
+                {
+                    let jobs_dir = paths::claude_jobs_dir();
+                    if changed.iter().any(|p| p.starts_with(&jobs_dir)) {
+                        me.scan_jobs();
                     }
+                    me.refresh_light();
                 }
             })
             .expect("spawn");

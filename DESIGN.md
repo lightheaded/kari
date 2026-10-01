@@ -67,11 +67,18 @@ kari never asks the user for information that Claude Code already writes to disk
 |---|---|---|---|
 | Live session registry | `~/.claude/sessions/<pid>.json` | pid, session id, cwd, display name, name source, status `idle` / `busy` / `shell`, start time | file watch, instant |
 | Transcripts | `~/.claude/projects/<slug>/<session-id>.jsonl` | AI title, custom title, prompts, per-message token usage, model, git branch, PR links, turn durations, pending tool calls | file watch, tail parse |
-| Background agents | `claude agents --json --all`, `~/.claude/jobs/<id>/state.json` | job id, state `working` / `blocked` / `done` / `failed` / `stopped`, `waitingFor` reason | 15 s poll plus file watch |
+| Background agents | `claude agents --json --all`, `~/.claude/jobs/<id>/state.json` | job id, state `working` / `blocked` / `done` / `failed` / `stopped`, `waitingFor` reason | 15 s poll plus file watch, one run at a time and at least 3 s apart |
 | Hooks | `Notification`, `Stop`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` as `command` hooks that run `~/.config/kari/hook.sh`, which posts the payload to `127.0.0.1:47311/kari/hook` with a token from `~/.config/kari/hook-token` | exact events: `permission_prompt`, `idle_prompt`, `agent_needs_input`, turn start and end, tool runs | instant, optional |
 | Status line | wrapper script writes `~/.config/kari/rate-limits.json` | `rate_limits.five_hour` and `seven_day`: `used_percentage`, `resets_at` | each status line refresh |
 | OAuth usage endpoint | `GET api.anthropic.com/api/oauth/usage` | same windows, server truth, includes other devices | fallback poll every 3 min when no status line sample for 5 min |
 | herdr | `~/.config/herdr/herdr.sock`, newline JSON | workspaces, tabs, panes, agent status `idle` / `working` / `blocked` / `done` | socket poll every 15 s |
+
+The file watcher ignores read events. On Linux, `notify` reports `IN_OPEN`, and
+the engine itself reads the registry, the transcripts and every job's
+`state.json` on each scan. Without the filter, each scan woke the watcher, and
+the watcher started the next scan: `claude agents` ran two to three times a
+second for as long as the daemon lived. The filter and the gap between runs
+live in `watch.rs`; see the note at the top of that file.
 
 Transcript format is internal to Claude Code and can change. The parser is tolerant: unknown record types are skipped, and every field is optional.
 
